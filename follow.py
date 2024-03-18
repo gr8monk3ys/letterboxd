@@ -5,7 +5,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.keys import Keys
-import parameters, csv, os.path, time
+import parameters, csv, os.path, time, random
 
 service = Service(executable_path="C:\\Users\\JoeG&M\\Downloads\\chromedriver-win64\\chromedriver.exe")
 driver = webdriver.Chrome(service=service)
@@ -36,23 +36,23 @@ def is_logged_in():
         return False
 
 def follow():
-    driver.get("https://letterboxd.com/cinemonika/followers/")
+    driver.get("https://letterboxd.com/kurstboy/followers/")
     count = 0
     try:
         elements = WebDriverWait(driver, 10).until(
-            EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'a[data-recaptcha-action=follow]:not([style*="display: none"])'))
+            EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'ajax-click-action button'))
         )
         for el in elements:
-            sleep(1.5)
+            sleep(random.randint(1, 2))
             el.click()
             count += 1
             if count == 25:
                 break
 
-        next_button = driver.find_element(By.CSS_SELECTOR, 'a.next')
+        next_button = driver.find_element(By.CLASS_NAME, 'next')
         if next_button:
             next_button.click()
-            sleep(2)
+            time.sleep(random.randint(1, 4))
     except Exception as e:
         print("An error occurred:", e)
 
@@ -82,8 +82,7 @@ if __name__ == "__main__":
             ignore_list = []
 
         # Search
-        search_and_send_request(keywords=parameters.keywords, till_page=parameters.till_page, writer=writer,
-                                ignore_list=ignore_list)
+        follow()
     except KeyboardInterrupt:
         print("\n\nINFO: User Canceled\n")
     except Exception as e:
