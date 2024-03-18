@@ -14,10 +14,7 @@ def sleep(seconds):
     time.sleep(seconds)
 
 def login(username, password):
-    driver.get("https://letterboxd.com/login")
-    username_field = driver.find_element(By.ID, 'username or email field id')
-    password_field = driver.find_element(By.ID, 'password field id')
-    login_button = driver.find_element(By.ID, 'login button id')
+    login_button = driver.find_element(By.CLASS_NAME, 'standalone-flow-button')
     
     username_field.send_keys(username)
     password_field.send_keys(password)
@@ -39,9 +36,6 @@ def is_logged_in():
         return False
 
 def follow():
-    if not is_logged_in():
-        login('gr8monk3ys', 'Scaturchio8')  # Update with your credentials
-    
     driver.get("https://letterboxd.com/cinemonika/followers/")
     count = 0
     try:
@@ -70,12 +64,12 @@ if __name__ == "__main__":
     driver = webdriver.Chrome(service=service, options=options)
 
     try:
-        # Login
-        driver.get('https://www.linkedin.com/login')
-        driver.find_element('id', 'username').send_keys(parameters.linkedin_username)
-        driver.find_element('id', 'password').send_keys(parameters.linkedin_password)
-        driver.find_element('xpath', '//*[@type="submit"]').click()
+        driver.get("https://letterboxd.com/sign-in/")
+        username_field = driver.find_element(By.ID, 'field-username')
+        password_field = driver.find_element(By.ID, 'field-password')
+        login(username_field, password_field)
         time.sleep(10)
+
         # CSV file loging
         file_name = parameters.file_name
         file_exists = os.path.isfile(file_name)
@@ -86,6 +80,7 @@ if __name__ == "__main__":
             ignore_list = [i.strip() for i in ignore_list.split(',') if i]
         else:
             ignore_list = []
+
         # Search
         search_and_send_request(keywords=parameters.keywords, till_page=parameters.till_page, writer=writer,
                                 ignore_list=ignore_list)
