@@ -1,9 +1,11 @@
-import time
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.keys import Keys
+import parameters, csv, os.path, time
 
 service = Service(executable_path="C:\\Users\\JoeG&M\\Downloads\\chromedriver-win64\\chromedriver.exe")
 driver = webdriver.Chrome(service=service)
@@ -60,6 +62,37 @@ def follow():
     except Exception as e:
         print("An error occurred:", e)
 
-# Example use
 follow()
-# driver.quit()
+if __name__ == "__main__":
+
+    service = Service()
+    options = webdriver.ChromeOptions()
+    driver = webdriver.Chrome(service=service, options=options)
+
+    try:
+        # Login
+        driver.get('https://www.linkedin.com/login')
+        driver.find_element('id', 'username').send_keys(parameters.linkedin_username)
+        driver.find_element('id', 'password').send_keys(parameters.linkedin_password)
+        driver.find_element('xpath', '//*[@type="submit"]').click()
+        time.sleep(10)
+        # CSV file loging
+        file_name = parameters.file_name
+        file_exists = os.path.isfile(file_name)
+        writer = csv.writer(open(file_name, 'a'))
+        if not file_exists: writer.writerow(['Connection Summary'])
+        ignore_list = parameters.ignore_list
+        if ignore_list:
+            ignore_list = [i.strip() for i in ignore_list.split(',') if i]
+        else:
+            ignore_list = []
+        # Search
+        search_and_send_request(keywords=parameters.keywords, till_page=parameters.till_page, writer=writer,
+                                ignore_list=ignore_list)
+    except KeyboardInterrupt:
+        print("\n\nINFO: User Canceled\n")
+    except Exception as e:
+        print('ERROR: Unable to run, error - %s' % (e))
+    finally:
+        # Close browser
+        driver.quit()
