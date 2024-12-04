@@ -32,9 +32,6 @@ wheels/
 .AppleDouble
 .LSOverride
 
-# Data files
-data/
-
 # Environment variables
 .env
 parameters.py
