@@ -1,25 +1,27 @@
-# Letterboxd User Data Scraper
+# Letterboxd Automation Toolkit
 
-A Python-based tool for scraping and analyzing Letterboxd user data. This tool allows you to collect movie ratings, likes, and lists from Letterboxd users and store them in a SQLite database for analysis.
+A comprehensive toolkit for automating Letterboxd interactions, including user following and review generation.
 
 ## Features
 
-- Scrape user movie data from Letterboxd profiles
-- Extract film details including ratings, likes, and watched dates
-- Store data in a SQLite database for efficient querying
-- Generate insights and visualizations about user's movie watching habits
+- Automated user following with anti-detection measures
+- AI-powered movie review generation
+- User data scraping and analysis
+- Detailed logging and progress tracking
 
 ## Project Structure
 
 ```
 letterboxd-followers/
-├── scrape_user_info.py      # Main scraping script
-├── parameters.py            # Configuration settings
-├── requirements.txt         # Project dependencies
-└── data_processing/
-    ├── create_database.py   # Database creation and schema
-    ├── analyze_data.py      # Data analysis and visualization
-    └── db_connect.py        # Database connection utilities
+├── data/                  # Raw data files
+├── logs/                  # Log files
+├── output/               # Generated output files
+├── src/                  # Source code
+│   ├── config/          # Configuration files
+│   ├── utils/           # Utility functions
+│   ├── scraping/        # Scraping related code
+│   ├── following/       # Following related code
+│   └── reviews/         # Review generation code
 ```
 
 ## Setup
@@ -30,97 +32,60 @@ git clone https://github.com/yourusername/letterboxd-followers.git
 cd letterboxd-followers
 ```
 
-2. Install dependencies:
+2. Create and activate a virtual environment:
 ```bash
-pip install -r requirements.txt
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-3. Copy the parameters template and configure your settings:
+3. Install dependencies:
 ```bash
-cp parameters.py.example parameters.py
+pip install -e .
 ```
 
-4. Edit `parameters.py` with your Letterboxd username and desired settings:
-```python
-username = 'your_username'  # Your Letterboxd username
-till_page = 30             # Number of pages to scrape
-min_delay = 2              # Minimum delay between requests
-max_delay = 5              # Maximum delay between requests
+4. Set up environment variables:
+```bash
+cp .env.example .env
+# Edit .env with your API keys
 ```
 
 ## Usage
 
-1. Create the database:
+### User Following
 ```bash
-python data_processing/create_database.py
+python -m src.following.follower
 ```
 
-2. Run the scraper:
+### Review Generation
 ```bash
-python scrape_user_info.py
+python -m src.reviews.generator
 ```
 
-3. Analyze the data:
+### Data Scraping
 ```bash
-python data_processing/analyze_data.py
+python -m src.scraping.scraper
 ```
 
-## Data Analysis
+## Configuration
 
-The tool provides several types of analysis:
+- Edit `src/config/config.py` for general settings
+- Use `.env` file for sensitive information
+- Adjust parameters in each module for specific behavior
 
-- Basic user statistics (total movies watched, rating distribution)
-- Movies watched by year
-- Highest rated movies
-- Movie preferences over time
-- Generated visualizations saved as PNG files
+## Logging
 
-## Database Schema
-
-The SQLite database consists of four main tables:
-
-1. `movies`
-   - film_id (PRIMARY KEY)
-   - title
-   - year
-   - url
-
-2. `users`
-   - username (PRIMARY KEY)
-
-3. `user_movies`
-   - username
-   - film_id
-   - rating
-   - liked
-   - watched_date
-   - PRIMARY KEY (username, film_id)
-
-4. `lists`
-   - list_id (PRIMARY KEY)
-   - username
-   - title
-   - url
-   - film_count
-   - description
-
-## Rate Limiting
-
-The scraper implements rate limiting to avoid overwhelming Letterboxd's servers:
-- Configurable delays between requests
-- Random delay variation
-- Automatic retry mechanism for failed requests
-
-## Error Handling
-
-- Comprehensive logging system
-- Graceful handling of network errors
-- Database transaction management
-- Retry mechanism for API requests
+All logs are stored in the `logs/` directory:
+- `follower.log`: Following activity
+- `scraper.log`: Scraping activity
+- `review_generation.log`: Review generation activity
 
 ## Contributing
 
-Feel free to submit issues, fork the repository, and create pull requests for any improvements.
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
@@ -128,4 +93,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Disclaimer
 
-This tool is for educational purposes only. Please be respectful of Letterboxd's terms of service and rate limiting when using this scraper.
+This tool is for educational purposes only. Use responsibly and in accordance with Letterboxd's terms of service.
