@@ -3,3 +3,5 @@ webdriver-manager>=3.8.6
 agentql
 python-dotenv
 letterboxd
+pandas
+beautifulsoup4
