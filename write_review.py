@@ -7,11 +7,14 @@ import logging
 from tqdm import tqdm
 
 # Set up logging
+if not os.path.exists('logs'):
+    os.makedirs('logs')
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('review_generation.log'),
+        logging.FileHandler(os.path.join('logs', 'review_generation.log')),
         logging.StreamHandler()
     ]
 )
@@ -23,7 +26,7 @@ class ReviewGenerator:
     def __init__(self):
         self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         self.review_prompt_template = """
-        Write a thoughtful and engaging Letterboxd-style review for the movie "{title}" ({year}). 
+        Write a thoughtful and engaging Letterboxd-style review for the movie with ID {film_id} from {year}. 
         The review should:
         - Be between 100-150 words
         - Have a casual, personal tone typical of Letterboxd
@@ -31,20 +34,14 @@ class ReviewGenerator:
         - Mention notable aspects of directing, acting, or cinematography
         - End with a brief overall assessment
         - Avoid major spoilers
-        
-        Additional movie info:
-        Director: {director}
-        Rating: {rating}/5
         """
 
     def generate_review(self, movie):
-        """Generate a review for a single movie using GPT-4"""
+        """Generate a review for a single movie using GPT-3.5"""
         try:
             prompt = self.review_prompt_template.format(
-                title=movie.get('title', 'Unknown'),
-                year=movie.get('year', 'Unknown'),
-                director=movie.get('director', 'Unknown'),
-                rating=movie.get('rating', 'Unknown')
+                film_id=movie.get('film_id', 'Unknown'),
+                year=movie.get('year', 'Unknown')
             )
 
             response = self.client.chat.completions.create(
@@ -60,7 +57,7 @@ class ReviewGenerator:
             return response.choices[0].message.content.strip()
 
         except Exception as e:
-            logging.error(f"Error generating review for {movie.get('title')}: {str(e)}")
+            logging.error(f"Error generating review for film ID {movie.get('film_id')}: {str(e)}")
             return None
 
     def process_movies(self, input_file, output_file):
@@ -70,11 +67,13 @@ class ReviewGenerator:
             with open(input_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
 
-            total_movies = len(data)
+            # Get the films array
+            films = data.get('films', [])
+            total_movies = len(films)
             logging.info(f"Starting review generation for {total_movies} movies")
 
             # Process each movie
-            for movie in tqdm(data, desc="Generating reviews"):
+            for movie in tqdm(films, desc="Generating reviews"):
                 if 'ai_review' not in movie:  # Skip if review already exists
                     review = self.generate_review(movie)
                     if review:
