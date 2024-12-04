@@ -1,58 +1,131 @@
-# Letterboxd Followers
+# Letterboxd User Data Scraper
 
-![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
-
-## Description
-This project automates the process of following users on Letterboxd, a social networking service for film enthusiasts. It utilizes browser automation to interact with the Letterboxd platform and logs the followed users into a CSV file. The motivation behind this project is to simplify the process of building a network on Letterboxd by automating repetitive tasks, thus allowing users to focus on discovering and sharing films.
+A Python-based tool for scraping and analyzing Letterboxd user data. This tool allows you to collect movie ratings, likes, and lists from Letterboxd users and store them in a SQLite database for analysis.
 
 ## Features
-- **Automated Login**: Securely logs into Letterboxd using environment variables for credentials.
-- **User Following**: Automatically follows users based on predefined criteria, such as shared film interests.
-- **CSV Logging**: Records details of followed users in a CSV file for easy tracking and analysis.
-- **Configurable Settings**: Uses a configuration file to adjust parameters like follow limits and time intervals.
-- **Error Handling**: Implements robust error handling to ensure smooth operation and logging of issues.
 
-## Requirements
-- **Python 3.x**: Ensure Python is installed on your system.
-- **Dependencies**: Install using `requirements.txt`. Key libraries include:
-  - `playwright`: For browser automation.
-  - `dotenv`: To manage environment variables.
-  - `agentql`: For querying elements on web pages.
+- Scrape user movie data from Letterboxd profiles
+- Extract film details including ratings, likes, and watched dates
+- Store data in a SQLite database for efficient querying
+- Generate insights and visualizations about user's movie watching habits
 
-## Installation
-1. **Clone the Repository**
-   ```bash
-   git clone https://github.com/yourusername/letterboxd-followers.git
-   cd letterboxd-followers
-   ```
-2. **Install Dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. **Environment Setup**
-   - Create a `.env` file for environment variables (refer to `parameters.py.example` for guidance).
-   - Configure the `parameters.py` file to set up necessary parameters.
+## Project Structure
+
+```
+letterboxd-followers/
+├── scrape_user_info.py      # Main scraping script
+├── parameters.py            # Configuration settings
+├── requirements.txt         # Project dependencies
+└── data_processing/
+    ├── create_database.py   # Database creation and schema
+    ├── analyze_data.py      # Data analysis and visualization
+    └── db_connect.py        # Database connection utilities
+```
+
+## Setup
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/letterboxd-followers.git
+cd letterboxd-followers
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+3. Copy the parameters template and configure your settings:
+```bash
+cp parameters.py.example parameters.py
+```
+
+4. Edit `parameters.py` with your Letterboxd username and desired settings:
+```python
+username = 'your_username'  # Your Letterboxd username
+till_page = 30             # Number of pages to scrape
+min_delay = 2              # Minimum delay between requests
+max_delay = 5              # Maximum delay between requests
+```
 
 ## Usage
-- **Running the Script**
-  ```bash
-  python follow.py
-  ```
-- **Logs and Outputs**
-  - Check `letterboxd_follower.log` for detailed logs.
-  - Review `connections.csv` for a list of followed users.
+
+1. Create the database:
+```bash
+python data_processing/create_database.py
+```
+
+2. Run the scraper:
+```bash
+python scrape_user_info.py
+```
+
+3. Analyze the data:
+```bash
+python data_processing/analyze_data.py
+```
+
+## Data Analysis
+
+The tool provides several types of analysis:
+
+- Basic user statistics (total movies watched, rating distribution)
+- Movies watched by year
+- Highest rated movies
+- Movie preferences over time
+- Generated visualizations saved as PNG files
+
+## Database Schema
+
+The SQLite database consists of four main tables:
+
+1. `movies`
+   - film_id (PRIMARY KEY)
+   - title
+   - year
+   - url
+
+2. `users`
+   - username (PRIMARY KEY)
+
+3. `user_movies`
+   - username
+   - film_id
+   - rating
+   - liked
+   - watched_date
+   - PRIMARY KEY (username, film_id)
+
+4. `lists`
+   - list_id (PRIMARY KEY)
+   - username
+   - title
+   - url
+   - film_count
+   - description
+
+## Rate Limiting
+
+The scraper implements rate limiting to avoid overwhelming Letterboxd's servers:
+- Configurable delays between requests
+- Random delay variation
+- Automatic retry mechanism for failed requests
+
+## Error Handling
+
+- Comprehensive logging system
+- Graceful handling of network errors
+- Database transaction management
+- Retry mechanism for API requests
 
 ## Contributing
-- Fork the repository and create a new branch for your feature or bug fix.
-- Follow the existing code style and add tests for any new functionality.
-- Submit a pull request with a clear description of your changes.
+
+Feel free to submit issues, fork the repository, and create pull requests for any improvements.
 
 ## License
-This project is licensed under the terms specified in the `LICENSE` file.
 
-## Contact
-For support or inquiries, please contact [your-email@example.com](mailto:your-email@example.com).
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Acknowledgments
-- Special thanks to the contributors of the libraries used in this project.
-- Inspired by the community of film enthusiasts on Letterboxd.
+## Disclaimer
+
+This tool is for educational purposes only. Please be respectful of Letterboxd's terms of service and rate limiting when using this scraper.
