@@ -7,14 +7,11 @@ import logging
 from tqdm import tqdm
 
 # Set up logging
-if not os.path.exists('logs'):
-    os.makedirs('logs')
-
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(os.path.join('logs', 'review_generation.log')),
+        logging.FileHandler('../logs/review_generation.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )

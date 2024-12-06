@@ -18,7 +18,7 @@ logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('letterboxd_follower.log', encoding='utf-8'),
+        logging.FileHandler('../logs/letterboxd_follower.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -41,16 +41,6 @@ NEXT_BUTTON_QUERY = """
 class LetterboxdFollower:
     def __init__(self):
         self.followed_count = 0
-        self.csv_writer = None
-        self.setup_csv()
-
-    def setup_csv(self):
-        """Initialize CSV file for logging followed users"""
-        file_exists = os.path.isfile(parameters.file_name)
-        self.csv_file = open(parameters.file_name, 'a', newline='', encoding='utf-8')
-        self.csv_writer = csv.writer(self.csv_file)
-        if not file_exists:
-            self.csv_writer.writerow(['Timestamp', 'Username', 'Status'])
 
     def random_delay(self):
         """Add random delay between actions to simulate human behavior"""
@@ -151,7 +141,6 @@ class LetterboxdFollower:
                                 # Log successful follow
                                 self.followed_count += 1
                                 timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                                self.csv_writer.writerow([timestamp, username, 'Success'])
                                 logging.info(f"Followed user: {username} ({self.followed_count}/{parameters.max_follows_per_session})")
                                 consecutive_timeouts = 0  # Reset timeout counter on success
                             except Exception as e:
@@ -178,7 +167,6 @@ class LetterboxdFollower:
                                 logging.error(f"Error following user: {str(e)}")
                                 if 'username' in locals():
                                     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                                    self.csv_writer.writerow([timestamp, username, 'Failed'])
 
                     # If we had multiple timeouts, move to next page
                     if consecutive_timeouts >= 2:
