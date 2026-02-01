@@ -1,0 +1,279 @@
+"""Simple database migration system for schema updates.
+
+Tracks applied migrations in a `schema_version` table and applies
+pending migrations in order. Each migration is a SQL script that
+transforms the database schema.
+
+Usage:
+    # Check and apply pending migrations
+    uv run python -m src.data_processing.migrations
+
+    # Check current schema version
+    uv run python -m src.data_processing.migrations --status
+"""
+
+import logging
+import sqlite3
+from pathlib import Path
+
+from src.config import DATA_DIR, get_log_path
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(get_log_path("migrations"), encoding="utf-8"),
+        logging.StreamHandler(),
+    ],
+)
+
+# Migration definitions: (version, description, sql)
+# Each migration should be idempotent where possible
+MIGRATIONS: list[tuple[int, str, str]] = [
+    (
+        1,
+        "Initial schema version tracking",
+        """
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY,
+            description TEXT NOT NULL,
+            applied_at TEXT NOT NULL
+        );
+        """,
+    ),
+    (
+        2,
+        "Add index on ai_reviews name and year",
+        """
+        CREATE INDEX IF NOT EXISTS idx_ai_reviews_name_year
+        ON ai_reviews(name, year);
+        """,
+    ),
+    (
+        3,
+        "Add index on diary for date lookups",
+        """
+        CREATE INDEX IF NOT EXISTS idx_diary_date
+        ON diary(date_watched);
+        """,
+    ),
+]
+
+
+class MigrationManager:
+    """Manages database schema migrations."""
+
+    def __init__(self, db_path: Path | None = None):
+        """Initialize the migration manager.
+
+        Args:
+            db_path: Path to the SQLite database. Defaults to the standard
+                     movie_database.db in the data directory.
+        """
+        self.db_path = db_path or (DATA_DIR / "movie_database.db")
+        self._conn: sqlite3.Connection | None = None
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """Get the database connection, raising if not connected."""
+        if self._conn is None:
+            raise RuntimeError("Database not connected. Call connect() first.")
+        return self._conn
+
+    def is_connected(self) -> bool:
+        """Check if database is connected."""
+        return self._conn is not None
+
+    def connect(self) -> None:
+        """Connect to the database."""
+        if not self.db_path.exists():
+            logging.warning(f"Database does not exist: {self.db_path}")
+            logging.info("Run create_database.py first to create the database.")
+            return
+
+        self._conn = sqlite3.connect(self.db_path)
+        self._ensure_version_table()
+
+    def _ensure_version_table(self) -> None:
+        """Ensure the schema_version table exists."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER PRIMARY KEY,
+                description TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            )
+        """)
+        self.conn.commit()
+
+    def get_current_version(self) -> int:
+        """Get the current schema version.
+
+        Returns:
+            The highest applied migration version, or 0 if none applied.
+        """
+        if not self.is_connected():
+            return 0
+
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT MAX(version) FROM schema_version")
+        result = cursor.fetchone()
+        return int(result[0]) if result and result[0] else 0
+
+    def get_pending_migrations(self) -> list[tuple[int, str, str]]:
+        """Get migrations that haven't been applied yet.
+
+        Returns:
+            List of (version, description, sql) tuples for pending migrations.
+        """
+        current = self.get_current_version()
+        return [(v, d, s) for v, d, s in MIGRATIONS if v > current]
+
+    def apply_migration(self, version: int, description: str, sql: str) -> bool:
+        """Apply a single migration.
+
+        Args:
+            version: Migration version number.
+            description: Human-readable description.
+            sql: SQL statements to execute.
+
+        Returns:
+            True if migration succeeded, False otherwise.
+        """
+        cursor = self.conn.cursor()
+        try:
+            cursor.execute("BEGIN TRANSACTION")
+
+            # Execute the migration SQL
+            cursor.executescript(sql)
+
+            # Record the migration
+            from datetime import datetime
+
+            cursor.execute(
+                "INSERT INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)",
+                (version, description, datetime.now().isoformat()),
+            )
+
+            cursor.execute("COMMIT")
+            logging.info(f"Applied migration {version}: {description}")
+            return True
+
+        except sqlite3.Error as e:
+            cursor.execute("ROLLBACK")
+            logging.error(f"Migration {version} failed: {e}")
+            return False
+
+    def run_pending_migrations(self) -> int:
+        """Apply all pending migrations.
+
+        Returns:
+            Number of migrations applied.
+        """
+        if not self.conn:
+            logging.error("Not connected to database")
+            return 0
+
+        pending = self.get_pending_migrations()
+        if not pending:
+            logging.info("No pending migrations")
+            return 0
+
+        logging.info(f"Found {len(pending)} pending migrations")
+        applied = 0
+
+        for version, description, sql in pending:
+            if self.apply_migration(version, description, sql):
+                applied += 1
+            else:
+                logging.error(f"Stopping migrations at version {version}")
+                break
+
+        return applied
+
+    def show_status(self) -> None:
+        """Display migration status."""
+        if not self.conn:
+            print("Database not found or not connected")
+            return
+
+        current = self.get_current_version()
+        pending = self.get_pending_migrations()
+
+        print("\n=== Database Migration Status ===")
+        print(f"Database: {self.db_path}")
+        print(f"Current schema version: {current}")
+        print(f"Latest available version: {MIGRATIONS[-1][0] if MIGRATIONS else 0}")
+        print(f"Pending migrations: {len(pending)}")
+
+        if pending:
+            print("\nPending migrations:")
+            for version, description, _ in pending:
+                print(f"  {version}: {description}")
+
+        # Show applied migrations
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT version, description, applied_at FROM schema_version ORDER BY version"
+        )
+        applied = cursor.fetchall()
+
+        if applied:
+            print("\nApplied migrations:")
+            for version, description, applied_at in applied:
+                print(f"  {version}: {description} (applied {applied_at[:10]})")
+
+    def close(self) -> None:
+        """Close the database connection."""
+        if self._conn:
+            self._conn.close()
+            self._conn = None
+
+
+def main() -> None:
+    """Run database migrations."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Manage database schema migrations",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Apply pending migrations
+  uv run python -m src.data_processing.migrations
+
+  # Check migration status
+  uv run python -m src.data_processing.migrations --status
+""",
+    )
+    parser.add_argument(
+        "--status",
+        action="store_true",
+        help="Show migration status without applying",
+    )
+
+    args = parser.parse_args()
+
+    manager = MigrationManager()
+    manager.connect()
+
+    if not manager.conn:
+        print("\nDatabase not found. Create it first with:")
+        print("  uv run python -m src.data_processing.create_database")
+        return
+
+    try:
+        if args.status:
+            manager.show_status()
+        else:
+            applied = manager.run_pending_migrations()
+            if applied > 0:
+                print(f"\nApplied {applied} migrations successfully")
+            manager.show_status()
+    finally:
+        manager.close()
+
+
+if __name__ == "__main__":
+    main()

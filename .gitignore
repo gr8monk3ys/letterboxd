@@ -4,7 +4,6 @@ __pycache__/
 *$py.class
 *.so
 .Python
-env/
 build/
 develop-eggs/
 dist/
@@ -21,11 +20,30 @@ wheels/
 .installed.cfg
 *.egg
 
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
 # Logs
+logs/
 *.log
 
 # Database
-*.db
+data/*.db
+
+# Data files (keep structure, ignore contents)
+data/*.zip
+data/*.csv
+data/*.json
+data/protected_users.txt
 
 # macOS
 .DS_Store
@@ -34,4 +52,20 @@ wheels/
 
 # Environment variables
 .env
+
+# Legacy config
 parameters.py
+
+# Claude Code
+.claude/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Type checking
+.mypy_cache/
+
+# Ruff
+.ruff_cache/

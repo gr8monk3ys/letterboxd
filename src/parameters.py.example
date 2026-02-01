@@ -1,8 +1,0 @@
-username = ''  # Your Letterboxd username
-password = ''  # Your Letterboxd password
-file_name = 'connections.csv'  # File to log followed users
-till_page = 30  # Number of pages to process
-base_url = 'https://letterboxd.com/members/'  # Base URL for user's followers list
-min_delay = 2  # Minimum delay between actions in seconds
-max_delay = 5  # Maximum delay between actions in seconds
-max_follows_per_session = 100  # Maximum number of follows per session

@@ -1,0 +1,91 @@
+#compdef letterboxd
+
+# Letterboxd CLI completion for zsh
+
+_letterboxd_films() {
+    local films
+    films=(${(f)"$(python3 -c "
+from src.completions import get_film_names
+films = get_film_names('$PREFIX', 20)
+print('\n'.join(films))
+" 2>/dev/null)"})
+    _describe 'films' films
+}
+
+_letterboxd_users() {
+    local users
+    users=(${(f)"$(python3 -c "
+from src.completions import get_usernames
+users = get_usernames('$PREFIX', 20)
+print('\n'.join(users))
+" 2>/dev/null)"})
+    _describe 'users' users
+}
+
+_letterboxd_tones() {
+    local tones
+    tones=(
+        'casual:Relaxed, conversational style'
+        'snarky:Witty, sarcastic, playfully critical'
+        'thoughtful:Reflective and emotionally engaged'
+        'brief:Short and punchy, 1-2 sentences'
+        'analytical:Film criticism with technical observations'
+    )
+    _describe 'tones' tones
+}
+
+_letterboxd_write_review() {
+    _arguments \
+        '-n[Maximum reviews to generate]:limit:' \
+        '--limit[Maximum reviews to generate]:limit:' \
+        '--all[Generate for all unreviewed films]' \
+        '--preview[Preview review for film]:film:_letterboxd_films' \
+        '--export[Export format]:format:(csv json)' \
+        '--tone[Review tone preset]:tone:_letterboxd_tones' \
+        '--list-tones[List available tones]' \
+        '--year[Filter by year]:year:' \
+        '--year-range[Filter by year range]:range:' \
+        '--min-rating[Minimum rating filter]:rating:'
+}
+
+_letterboxd_follow() {
+    _arguments \
+        '-n[Maximum users to follow]:limit:' \
+        '--limit[Maximum users to follow]:limit:' \
+        '--pages[Maximum pages to process]:pages:' \
+        '--url[Custom Letterboxd URL]:url:' \
+        '--fans-of[Follow fans of film]:film:_letterboxd_films' \
+        '--followers-of[Follow followers of user]:user:_letterboxd_users' \
+        '--following-of[Follow users followed by]:user:_letterboxd_users' \
+        '--popular[Follow popular members]:period:(week month year all-time)' \
+        '--dry-run[Preview without following]'
+}
+
+_letterboxd_unfollow() {
+    _arguments \
+        '-n[Maximum users to unfollow]:limit:' \
+        '--limit[Maximum users to unfollow]:limit:' \
+        '--dry-run[Preview without unfollowing]' \
+        '--protect[Add user to protected list]:user:_letterboxd_users' \
+        '--unprotect[Remove user from protected]:user:_letterboxd_users' \
+        '--list-protected[List protected users]'
+}
+
+# Main completion function
+_letterboxd() {
+    case "$words[2]" in
+        src.reviewing.write_review)
+            _letterboxd_write_review
+            ;;
+        src.following.follow_users)
+            _letterboxd_follow
+            ;;
+        src.following.unfollow_users)
+            _letterboxd_unfollow
+            ;;
+    esac
+}
+
+compdef _letterboxd_write_review 'python -m src.reviewing.write_review'
+compdef _letterboxd_follow 'python -m src.following.follow_users'
+compdef _letterboxd_unfollow 'python -m src.following.unfollow_users'

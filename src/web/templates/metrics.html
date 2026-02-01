@@ -1,0 +1,383 @@
+{% extends "base.html" %}
+
+{% block title %}Review Metrics - Letterboxd Toolkit{% endblock %}
+
+{% block extra_styles %}
+<style>
+    .metric-card {
+        text-align: center;
+        padding: 20px;
+    }
+
+    .metric-value {
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: var(--text-bright);
+    }
+
+    .metric-value.positive {
+        color: var(--accent);
+    }
+
+    .metric-label {
+        font-size: 0.875rem;
+        color: var(--text-color);
+        margin-top: 5px;
+    }
+
+    .tone-card {
+        padding: 15px;
+        margin-bottom: 10px;
+        border-radius: 8px;
+        background: rgba(255,255,255,0.05);
+    }
+
+    .tone-card.winner {
+        border-left: 4px solid var(--accent);
+    }
+
+    .tone-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+
+    .tone-name {
+        font-size: 1.25rem;
+        font-weight: bold;
+        color: var(--text-bright);
+    }
+
+    .tone-score {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: var(--accent);
+    }
+
+    .tone-stats {
+        display: flex;
+        gap: 20px;
+        font-size: 0.875rem;
+        color: var(--text-color);
+    }
+
+    .suggestion-item {
+        padding: 15px;
+        margin-bottom: 10px;
+        background: rgba(0, 224, 84, 0.1);
+        border-left: 4px solid var(--accent);
+        border-radius: 4px;
+    }
+
+    .ab-test-box {
+        padding: 20px;
+        background: rgba(255, 128, 0, 0.1);
+        border-radius: 8px;
+        border: 1px solid var(--accent-orange);
+    }
+
+    .ab-test-status {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .review-item {
+        padding: 15px;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .review-item:last-child {
+        border-bottom: none;
+    }
+
+    .review-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 10px;
+    }
+
+    .review-film {
+        font-weight: bold;
+        color: var(--text-bright);
+    }
+
+    .review-tone {
+        font-size: 0.75rem;
+        padding: 2px 8px;
+        background: var(--accent);
+        color: var(--bg-color);
+        border-radius: 10px;
+    }
+
+    .review-text {
+        font-size: 0.875rem;
+        color: var(--text-color);
+        margin-bottom: 10px;
+    }
+
+    .review-engagement {
+        display: flex;
+        gap: 15px;
+        font-size: 0.75rem;
+        color: var(--text-color);
+    }
+
+    .engagement-stat {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .engagement-stat.likes {
+        color: #e03;
+    }
+
+    .engagement-stat.comments {
+        color: var(--accent-orange);
+    }
+
+    .form-group {
+        margin-bottom: 15px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--text-color);
+    }
+
+    .form-group select, .form-group input {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        background: var(--bg-color);
+        color: var(--text-bright);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 style="color: var(--text-bright); margin-bottom: 30px;">Review Quality Metrics</h1>
+
+<!-- Overview Stats -->
+<div class="grid">
+    <div class="card metric-card">
+        <div class="metric-value positive">{{ stats.total_posted }}</div>
+        <div class="metric-label">Posted Reviews</div>
+    </div>
+    <div class="card metric-card">
+        <div class="metric-value" style="color: #e03;">{{ stats.total_likes }}</div>
+        <div class="metric-label">Total Likes</div>
+    </div>
+    <div class="card metric-card">
+        <div class="metric-value" style="color: var(--accent-orange);">{{ stats.total_comments }}</div>
+        <div class="metric-label">Total Comments</div>
+    </div>
+    <div class="card metric-card">
+        <div class="metric-value">{{ stats.pending_check }}</div>
+        <div class="metric-label">Pending Check</div>
+    </div>
+</div>
+
+<div class="grid" style="margin-top: 20px;">
+    <!-- Tone Performance -->
+    <div class="card">
+        <h3>Tone Performance (Last 30 Days)</h3>
+        {% if performance %}
+        <div style="margin-top: 15px;">
+            {% for p in performance %}
+            <div class="tone-card {% if loop.first %}winner{% endif %}">
+                <div class="tone-header">
+                    <span class="tone-name">{{ p.tone | title }}</span>
+                    <span class="tone-score">{{ p.engagement_score }}</span>
+                </div>
+                <div class="tone-stats">
+                    <span>{{ p.review_count }} reviews</span>
+                    <span>{{ p.avg_likes }} avg likes</span>
+                    <span>{{ p.avg_comments }} avg comments</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p style="color: var(--text-color); margin-top: 15px;">
+            No performance data yet. Post some reviews to see analytics!
+        </p>
+        {% endif %}
+    </div>
+
+    <!-- Suggestions -->
+    <div class="card">
+        <h3>Suggestions</h3>
+        {% if suggestions %}
+        <div style="margin-top: 15px;">
+            {% for suggestion in suggestions %}
+            <div class="suggestion-item">{{ suggestion }}</div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p style="color: var(--text-color); margin-top: 15px;">
+            Post more reviews to get personalized suggestions.
+        </p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- A/B Testing -->
+<div class="card" style="margin-top: 20px;">
+    <h3>A/B Testing</h3>
+    {% if ab_test %}
+    <div class="ab-test-box" style="margin-top: 15px;">
+        <div class="ab-test-status">
+            <div>
+                <strong>Active Test:</strong> {{ ab_test.test_name }}
+                <div style="font-size: 0.875rem; color: var(--text-color); margin-top: 5px;">
+                    Comparing: <span style="color: var(--accent);">{{ ab_test.tone_a }}</span>
+                    vs <span style="color: var(--accent-orange);">{{ ab_test.tone_b }}</span>
+                </div>
+                <div style="font-size: 0.75rem; color: var(--text-color); margin-top: 5px;">
+                    Started: {{ ab_test.started_at[:10] }}
+                </div>
+            </div>
+            <button class="btn btn-danger" onclick="endAbTest()">End Test</button>
+        </div>
+    </div>
+    {% else %}
+    <div style="margin-top: 15px;">
+        <p style="color: var(--text-color); margin-bottom: 15px;">
+            Start an A/B test to compare two tone presets.
+        </p>
+        <form id="ab-test-form" onsubmit="startAbTest(event)">
+            <div class="grid" style="gap: 10px;">
+                <div class="form-group">
+                    <label>Test Name</label>
+                    <input type="text" id="test-name" placeholder="e.g., Casual vs Snarky Q1" required>
+                </div>
+                <div class="form-group">
+                    <label>Tone A</label>
+                    <select id="tone-a" required>
+                        <option value="casual">Casual</option>
+                        <option value="snarky">Snarky</option>
+                        <option value="thoughtful">Thoughtful</option>
+                        <option value="brief">Brief</option>
+                        <option value="analytical">Analytical</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Tone B</label>
+                    <select id="tone-b" required>
+                        <option value="snarky">Snarky</option>
+                        <option value="casual">Casual</option>
+                        <option value="thoughtful">Thoughtful</option>
+                        <option value="brief">Brief</option>
+                        <option value="analytical">Analytical</option>
+                    </select>
+                </div>
+            </div>
+            <button type="submit" class="btn" style="margin-top: 10px;">Start A/B Test</button>
+        </form>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Recent Posted Reviews -->
+<div class="card" style="margin-top: 20px;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3>Recent Posted Reviews</h3>
+        <button class="btn btn-secondary" onclick="updateEngagement()">Update Engagement</button>
+    </div>
+    <div style="max-height: 400px; overflow-y: auto; margin-top: 15px;">
+        {% for review in recent_reviews %}
+        <div class="review-item">
+            <div class="review-header">
+                <div>
+                    <span class="review-film">{{ review.film_name }} ({{ review.film_year }})</span>
+                    <div style="font-size: 0.75rem; color: var(--text-color);">
+                        {{ review.posted_at[:10] }}
+                    </div>
+                </div>
+                <span class="review-tone">{{ review.tone_preset }}</span>
+            </div>
+            <div class="review-text">{{ review.review_text[:150] }}{% if review.review_text|length > 150 %}...{% endif %}</div>
+            <div class="review-engagement">
+                <span class="engagement-stat likes">
+                    &#10084; {{ review.latest_likes or 0 }} likes
+                </span>
+                <span class="engagement-stat comments">
+                    &#128172; {{ review.latest_comments or 0 }} comments
+                </span>
+            </div>
+        </div>
+        {% else %}
+        <p style="color: var(--text-color);">No posted reviews yet. Use the review poster to post some!</p>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Reviews by Tone Chart -->
+<div class="card" style="margin-top: 20px;">
+    <h3>Reviews by Tone</h3>
+    <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 15px;">
+        {% for tone, count in stats.by_tone.items() %}
+        <div style="text-align: center;">
+            <div style="font-size: 1.5rem; font-weight: bold; color: var(--text-bright);">{{ count }}</div>
+            <div style="font-size: 0.75rem; color: var(--text-color);">{{ tone | title }}</div>
+        </div>
+        {% else %}
+        <p style="color: var(--text-color);">No reviews tracked yet.</p>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function startAbTest(event) {
+    event.preventDefault();
+    const name = document.getElementById('test-name').value;
+    const toneA = document.getElementById('tone-a').value;
+    const toneB = document.getElementById('tone-b').value;
+
+    if (toneA === toneB) {
+        showToast('Please select different tones to compare', 'error');
+        return;
+    }
+
+    const result = await triggerAction('/api/metrics/ab-test/start', 'POST', {
+        name: name,
+        tone_a: toneA,
+        tone_b: toneB
+    });
+
+    if (result) {
+        location.reload();
+    }
+}
+
+async function endAbTest() {
+    if (!confirm('Are you sure you want to end the A/B test?')) return;
+
+    const result = await triggerAction('/api/metrics/ab-test/end', 'POST');
+    if (result) {
+        showToast('A/B test ended. Winner: ' + (result.winner || 'Inconclusive'), 'success');
+        setTimeout(() => location.reload(), 2000);
+    }
+}
+
+async function updateEngagement() {
+    showToast('Updating engagement metrics...', 'warning', 5000);
+    const result = await triggerAction('/api/metrics/update-engagement', 'POST');
+    if (result) {
+        showToast(`Updated ${result.updated} reviews`, 'success');
+        setTimeout(() => location.reload(), 1500);
+    }
+}
+
+// Auto-refresh every 5 minutes
+setInterval(() => location.reload(), 300000);
+</script>
+{% endblock %}

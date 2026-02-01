@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block title %}Films - Letterboxd Toolkit{% endblock %}
+
+{% block content %}
+<h1 style="color: var(--text-bright); margin-bottom: 30px;">Films</h1>
+
+<div class="grid">
+    <div class="card">
+        <h3>Overview</h3>
+        <div class="stat">
+            <span>Total Films</span>
+            <span class="stat-value">{{ db_stats.total_films }}</span>
+        </div>
+        <div class="stat">
+            <span>Your Reviews</span>
+            <span class="stat-value success">{{ db_stats.user_reviewed }}</span>
+        </div>
+        <div class="stat">
+            <span>AI Reviews</span>
+            <span class="stat-value">{{ db_stats.ai_reviewed }}</span>
+        </div>
+        <div class="stat">
+            <span>Unreviewed</span>
+            <span class="stat-value warning">{{ db_stats.unreviewed }}</span>
+        </div>
+    </div>
+</div>
+
+<div class="card" style="margin-top: 20px;">
+    <h3>Unreviewed Films</h3>
+    <p style="margin-bottom: 15px;">Films that need reviews (sorted by rating)</p>
+    <div id="unreviewed-films">
+        <p>Loading...</p>
+    </div>
+</div>
+
+<div class="card" style="margin-top: 20px;">
+    <h3>AI-Generated Reviews</h3>
+    <p style="margin-bottom: 15px;">Recent AI reviews (newest first)</p>
+    <div id="ai-reviews">
+        <p>Loading...</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadUnreviewedFilms() {
+    try {
+        const res = await fetch('/api/films/unreviewed?limit=20');
+        const data = await res.json();
+
+        const container = document.getElementById('unreviewed-films');
+
+        if (data.films && data.films.length > 0) {
+            let html = '<table><thead><tr><th>Film</th><th>Year</th><th>Rating</th></tr></thead><tbody>';
+            data.films.forEach(film => {
+                const rating = film.rating ? '⭐'.repeat(Math.round(film.rating)) : '-';
+                html += `<tr>
+                    <td><a href="${film.letterboxd_uri}" target="_blank" style="color: var(--accent);">${film.name}</a></td>
+                    <td>${film.year || '-'}</td>
+                    <td>${rating}</td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        } else {
+            container.innerHTML = '<p>All films have reviews!</p>';
+        }
+    } catch (e) {
+        document.getElementById('unreviewed-films').innerHTML = '<p>Error loading films</p>';
+    }
+}
+
+async function loadAIReviews() {
+    try {
+        const res = await fetch('/api/reviews/ai?limit=10');
+        const data = await res.json();
+
+        const container = document.getElementById('ai-reviews');
+
+        if (data.reviews && data.reviews.length > 0) {
+            let html = '';
+            data.reviews.forEach(review => {
+                html += `<div style="border-bottom: 1px solid var(--border-color); padding: 15px 0;">
+                    <strong style="color: var(--text-bright);">${review.name}</strong> (${review.year})
+                    <p style="margin-top: 8px; font-style: italic;">"${review.review}"</p>
+                    <small style="color: var(--text-color);">Generated: ${review.generated_at || 'Unknown'}</small>
+                </div>`;
+            });
+            container.innerHTML = html;
+        } else {
+            container.innerHTML = '<p>No AI reviews yet. Generate some with: <code>uv run python -m src.reviewing.write_review -n 10</code></p>';
+        }
+    } catch (e) {
+        document.getElementById('ai-reviews').innerHTML = '<p>Error loading reviews</p>';
+    }
+}
+
+// Load data on page load
+loadUnreviewedFilms();
+loadAIReviews();
+</script>
+{% endblock %}

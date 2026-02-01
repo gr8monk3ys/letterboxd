@@ -1,15 +1,87 @@
-[tool.poetry]
+[project]
 name = "letterboxd-followers"
 version = "0.1.0"
-description = ""
-authors = ["Lorenzo Scaturchio"]
-license = "GNU General Public License"
+description = "Letterboxd automation toolkit for user following, data scraping, and AI-powered review generation"
+authors = [{name = "Lorenzo Scaturchio"}]
+license = {text = "GPL-3.0"}
 readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "playwright>=1.40.0",
+    "anthropic>=0.40.0",
+    "python-dotenv>=1.0.0",
+    "tqdm>=4.66.0",
+    "httpx>=0.28.1",
+    "fastapi>=0.128.0",
+    "uvicorn[standard]>=0.40.0",
+    "jinja2>=3.1.6",
+    "plyer>=2.1.0",
+    "beautifulsoup4>=4.14.3",
+    "lxml>=6.0.2",
+]
 
-[tool.poetry.dependencies]
-python = "^3.12"
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.8.0",
+    "pre-commit>=3.6.0",
+]
 
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_ignores = true
+ignore_missing_imports = true
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "pre-commit>=4.5.1",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.14.11",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = [
+    "src/web/templates/*",
+    "src/completions/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
+fail_under = 50
+show_missing = true
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]

@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+
+{% block title %}Logs - Letterboxd Toolkit{% endblock %}
+
+{% block extra_styles %}
+<style>
+    .log-tabs {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+
+    .log-tab {
+        padding: 10px 20px;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        cursor: pointer;
+        color: var(--text-color);
+        transition: all 0.2s;
+    }
+
+    .log-tab:hover, .log-tab.active {
+        background: var(--accent);
+        color: var(--bg-color);
+        border-color: var(--accent);
+    }
+
+    .log-viewer {
+        background: #0d1117;
+        border-radius: 8px;
+        padding: 15px;
+        font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+        font-size: 12px;
+        max-height: 600px;
+        overflow-y: auto;
+        line-height: 1.8;
+    }
+
+    .log-line {
+        padding: 2px 8px;
+        border-radius: 2px;
+    }
+
+    .log-line:hover {
+        background: rgba(255,255,255,0.05);
+    }
+
+    .log-info { color: #58a6ff; }
+    .log-warning { color: #d29922; }
+    .log-error { color: #f85149; }
+    .log-debug { color: #8b949e; }
+
+    .refresh-btn {
+        margin-bottom: 20px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 style="color: var(--text-bright); margin-bottom: 30px;">Logs</h1>
+
+<div class="log-tabs">
+    {% for log in available_logs %}
+    <button class="log-tab {% if loop.first %}active{% endif %}" data-log="{{ log }}">
+        {{ log.replace('_', ' ').title() }}
+    </button>
+    {% endfor %}
+</div>
+
+<div style="display: flex; gap: 10px; margin-bottom: 20px; align-items: center;">
+    <button class="btn" onclick="loadLogs()">Refresh Logs</button>
+    <button class="btn btn-secondary" id="stream-btn" onclick="toggleStreaming()">
+        <span class="status-indicator disconnected" id="stream-status"></span>
+        Start Live Stream
+    </button>
+    <button class="btn btn-secondary" onclick="clearLogViewer()">Clear Display</button>
+</div>
+
+<div class="card">
+    <h3 id="log-title">Follower Log</h3>
+    <div class="log-viewer" id="log-content">
+        <p>Loading...</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentLog = 'follower';
+let websocket = null;
+let isStreaming = false;
+
+function highlightLog(line) {
+    if (line.includes(' - INFO - ')) return 'log-info';
+    if (line.includes(' - WARNING - ')) return 'log-warning';
+    if (line.includes(' - ERROR - ')) return 'log-error';
+    if (line.includes(' - DEBUG - ')) return 'log-debug';
+    return '';
+}
+
+async function loadLogs() {
+    const container = document.getElementById('log-content');
+    container.innerHTML = '<p>Loading...</p>';
+
+    try {
+        const res = await fetch(`/api/logs/${currentLog}?lines=100`);
+        const data = await res.json();
+
+        if (data.logs && data.logs.length > 0) {
+            let html = '';
+            data.logs.forEach(line => {
+                const cls = highlightLog(line);
+                html += `<div class="log-line ${cls}">${escapeHtml(line.trim())}</div>`;
+            });
+            container.innerHTML = html;
+            // Scroll to bottom
+            container.scrollTop = container.scrollHeight;
+        } else {
+            container.innerHTML = '<p style="color: var(--text-color);">No log entries found</p>';
+        }
+    } catch (e) {
+        container.innerHTML = '<p style="color: var(--text-color);">Error loading logs</p>';
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function clearLogViewer() {
+    const container = document.getElementById('log-content');
+    container.innerHTML = '<p style="color: var(--text-color);">Display cleared</p>';
+}
+
+function updateStreamButton() {
+    const btn = document.getElementById('stream-btn');
+    const status = document.getElementById('stream-status');
+
+    if (isStreaming) {
+        btn.innerHTML = '<span class="status-indicator connected" id="stream-status"></span> Stop Live Stream';
+        status.className = 'status-indicator connected';
+    } else {
+        btn.innerHTML = '<span class="status-indicator disconnected" id="stream-status"></span> Start Live Stream';
+        status.className = 'status-indicator disconnected';
+    }
+}
+
+function toggleStreaming() {
+    if (isStreaming) {
+        stopStreaming();
+    } else {
+        startStreaming();
+    }
+}
+
+function startStreaming() {
+    if (websocket) {
+        websocket.close();
+    }
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws/logs/${currentLog}`;
+
+    websocket = new WebSocket(wsUrl);
+
+    websocket.onopen = () => {
+        isStreaming = true;
+        updateStreamButton();
+        showToast('Live streaming started', 'success');
+    };
+
+    websocket.onmessage = (event) => {
+        const container = document.getElementById('log-content');
+        const line = event.data;
+        const cls = highlightLog(line);
+
+        // Remove "No log entries" placeholder if present
+        if (container.querySelector('p')) {
+            container.innerHTML = '';
+        }
+
+        const lineDiv = document.createElement('div');
+        lineDiv.className = `log-line ${cls}`;
+        lineDiv.textContent = line;
+        container.appendChild(lineDiv);
+
+        // Auto-scroll to bottom
+        container.scrollTop = container.scrollHeight;
+
+        // Limit displayed lines to prevent memory issues
+        while (container.children.length > 500) {
+            container.removeChild(container.firstChild);
+        }
+    };
+
+    websocket.onclose = () => {
+        isStreaming = false;
+        updateStreamButton();
+    };
+
+    websocket.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        isStreaming = false;
+        updateStreamButton();
+        showToast('WebSocket connection failed', 'error');
+    };
+}
+
+function stopStreaming() {
+    if (websocket) {
+        websocket.close();
+        websocket = null;
+    }
+    isStreaming = false;
+    updateStreamButton();
+    showToast('Live streaming stopped', 'success');
+}
+
+// Tab click handlers
+document.querySelectorAll('.log-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.log-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+
+        currentLog = tab.dataset.log;
+        document.getElementById('log-title').textContent =
+            currentLog.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()) + ' Log';
+
+        // Stop streaming when switching tabs
+        if (isStreaming) {
+            stopStreaming();
+        }
+
+        loadLogs();
+    });
+});
+
+// Initial load
+loadLogs();
+
+// Auto-refresh every 10 seconds (only if not streaming)
+setInterval(() => {
+    if (!isStreaming) {
+        loadLogs();
+    }
+}, 10000);
+</script>
+{% endblock %}

@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics - Letterboxd Toolkit{% endblock %}
+
+{% block extra_styles %}
+<style>
+    .metric-card {
+        text-align: center;
+        padding: 20px;
+    }
+
+    .metric-value {
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: var(--text-bright);
+    }
+
+    .metric-value.positive {
+        color: var(--accent);
+    }
+
+    .metric-value.negative {
+        color: #e03;
+    }
+
+    .metric-label {
+        font-size: 0.875rem;
+        color: var(--text-color);
+        margin-top: 5px;
+    }
+
+    .chart-container {
+        height: 200px;
+        display: flex;
+        align-items: flex-end;
+        gap: 4px;
+        padding: 10px;
+    }
+
+    .chart-bar {
+        flex: 1;
+        min-width: 20px;
+        background: var(--accent);
+        border-radius: 4px 4px 0 0;
+        position: relative;
+        transition: height 0.3s;
+    }
+
+    .chart-bar.unfollow {
+        background: var(--accent-orange);
+    }
+
+    .chart-bar:hover::after {
+        content: attr(data-tooltip);
+        position: absolute;
+        bottom: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--card-bg);
+        padding: 5px 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        white-space: nowrap;
+        border: 1px solid var(--border-color);
+    }
+
+    .activity-item {
+        display: flex;
+        align-items: center;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .activity-item:last-child {
+        border-bottom: none;
+    }
+
+    .activity-icon {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-right: 15px;
+        font-size: 14px;
+    }
+
+    .activity-icon.follow {
+        background: rgba(0, 224, 84, 0.2);
+        color: var(--accent);
+    }
+
+    .activity-icon.unfollow {
+        background: rgba(255, 128, 0, 0.2);
+        color: var(--accent-orange);
+    }
+
+    .streak-badge {
+        display: inline-block;
+        background: var(--accent);
+        color: var(--bg-color);
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-weight: bold;
+        font-size: 0.875rem;
+    }
+
+    .user-list-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+
+    .user-list-item:last-child {
+        border-bottom: none;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1 style="color: var(--text-bright); margin-bottom: 30px;">Connection Analytics</h1>
+
+{% if analytics %}
+<!-- Growth Metrics -->
+<div class="grid">
+    <div class="card metric-card">
+        <div class="metric-value positive">{{ analytics.growth.total_follows }}</div>
+        <div class="metric-label">Total Follows (30d)</div>
+    </div>
+    <div class="card metric-card">
+        <div class="metric-value" style="color: var(--accent-orange);">{{ analytics.growth.total_unfollows }}</div>
+        <div class="metric-label">Total Unfollows (30d)</div>
+    </div>
+    <div class="card metric-card">
+        <div class="metric-value {% if analytics.growth.net_change > 0 %}positive{% elif analytics.growth.net_change < 0 %}negative{% endif %}">
+            {% if analytics.growth.net_change > 0 %}+{% endif %}{{ analytics.growth.net_change }}
+        </div>
+        <div class="metric-label">Net Change</div>
+    </div>
+    <div class="card metric-card">
+        <div class="metric-value {% if analytics.growth.growth_rate > 0 %}positive{% elif analytics.growth.growth_rate < 0 %}negative{% endif %}">
+            {% if analytics.growth.growth_rate > 0 %}+{% endif %}{{ analytics.growth.growth_rate }}%
+        </div>
+        <div class="metric-label">Growth Rate</div>
+    </div>
+</div>
+
+<div class="grid" style="margin-top: 20px;">
+    <!-- Activity Streaks -->
+    <div class="card">
+        <h3>Activity Streaks</h3>
+        <div style="display: flex; justify-content: space-around; text-align: center; margin-top: 20px;">
+            <div>
+                <div class="streak-badge">{{ analytics.streaks.current_streak }} days</div>
+                <div class="metric-label" style="margin-top: 10px;">Current Streak</div>
+            </div>
+            <div>
+                <div class="streak-badge" style="background: var(--accent-orange);">{{ analytics.streaks.longest_streak }} days</div>
+                <div class="metric-label" style="margin-top: 10px;">Longest Streak</div>
+            </div>
+        </div>
+        {% if analytics.streaks.last_active_date %}
+        <p style="text-align: center; margin-top: 20px; color: var(--text-color);">
+            Last active: {{ analytics.streaks.last_active_date }}
+        </p>
+        {% endif %}
+    </div>
+
+    <!-- Daily Averages -->
+    <div class="card">
+        <h3>Daily Averages</h3>
+        <div class="stat">
+            <span>Avg follows/day</span>
+            <span class="stat-value success">{{ analytics.growth.avg_daily_follows }}</span>
+        </div>
+        <div class="stat">
+            <span>Avg unfollows/day</span>
+            <span class="stat-value warning">{{ analytics.growth.avg_daily_unfollows }}</span>
+        </div>
+        <div class="stat">
+            <span>Active days</span>
+            <span class="stat-value">{{ analytics.growth.active_days }} / 30</span>
+        </div>
+    </div>
+</div>
+
+<!-- Daily Activity Chart -->
+<div class="card" style="margin-top: 20px;">
+    <h3>Daily Activity (Last 14 Days)</h3>
+    <div class="chart-container" id="daily-chart">
+        {% for day in analytics.daily_activity %}
+        <div class="chart-bar"
+             style="height: {{ [day.follows * 10, 100] | min }}%;"
+             data-tooltip="{{ day.date }}: {{ day.follows }} follows">
+        </div>
+        {% endfor %}
+    </div>
+    <div style="display: flex; gap: 20px; justify-content: center; margin-top: 10px;">
+        <span><span style="display: inline-block; width: 12px; height: 12px; background: var(--accent); border-radius: 2px;"></span> Follows</span>
+    </div>
+</div>
+
+<!-- Recent Activity and Top Users -->
+<div class="grid" style="margin-top: 20px;">
+    <!-- Recent Activity -->
+    <div class="card">
+        <h3>Recent Activity</h3>
+        <div style="max-height: 300px; overflow-y: auto;">
+            {% for activity in analytics.recent_activity[:10] %}
+            <div class="activity-item">
+                <div class="activity-icon {{ activity.action_type }}">
+                    {% if activity.action_type == 'follow' %}+{% else %}-{% endif %}
+                </div>
+                <div>
+                    <strong>{{ activity.username }}</strong>
+                    <div style="font-size: 0.75rem; color: var(--text-color);">
+                        {{ activity.action_type | title }} - {{ activity.timestamp[:16] }}
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <p style="color: var(--text-color);">No recent activity</p>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Most Interacted Users -->
+    <div class="card">
+        <h3>Most Interacted Users</h3>
+        <div style="max-height: 300px; overflow-y: auto;">
+            {% for user in analytics.top_interacted %}
+            <div class="user-list-item">
+                <div>
+                    <strong>{{ user.username }}</strong>
+                    <span style="font-size: 0.75rem; color: var(--text-color); margin-left: 10px;">
+                        {{ user.total_interactions }} interactions
+                    </span>
+                </div>
+                <span class="stat-value {% if user.net_status == 'following' %}success{% elif user.net_status == 'unfollowed' %}warning{% endif %}" style="font-size: 0.75rem;">
+                    {{ user.net_status }}
+                </span>
+            </div>
+            {% else %}
+            <p style="color: var(--text-color);">No repeated interactions</p>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<!-- Peak Hours -->
+<div class="card" style="margin-top: 20px;">
+    <h3>Activity by Hour</h3>
+    <div class="chart-container" style="height: 150px;">
+        {% for hour in range(24) %}
+        {% set data = analytics.hourly_distribution[hour] %}
+        {% set total = data.follows + data.unfollows %}
+        {% set max_height = 100 %}
+        <div class="chart-bar"
+             style="height: {{ [(total * 5), max_height] | min }}%;"
+             data-tooltip="{{ '%02d' | format(hour) }}:00 - {{ total }} actions">
+        </div>
+        {% endfor %}
+    </div>
+    <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-color);">
+        <span>00:00</span>
+        <span>06:00</span>
+        <span>12:00</span>
+        <span>18:00</span>
+        <span>23:00</span>
+    </div>
+</div>
+
+{% else %}
+<div class="card">
+    <h3>No Analytics Data</h3>
+    <p>Start following/unfollowing users to generate analytics data.</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Auto-refresh analytics every 60 seconds
+setInterval(async () => {
+    try {
+        const res = await fetch('/api/analytics/summary');
+        if (res.ok) {
+            // Could update DOM here for live updates
+        }
+    } catch (e) {
+        console.error('Failed to refresh analytics:', e);
+    }
+}, 60000);
+</script>
+{% endblock %}
