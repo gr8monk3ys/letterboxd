@@ -1,6 +1,7 @@
 """Letterboxd web scraper for fast data fetching.
 
-Uses httpx + BeautifulSoup for reading data (much faster than Playwright).
+Uses letterboxdpy library for structured data access where available.
+Falls back to httpx + BeautifulSoup for features not in letterboxdpy.
 Playwright is still used for write operations that require authentication.
 """
 
@@ -13,6 +14,11 @@ from typing import Any
 import httpx
 from bs4 import BeautifulSoup
 from bs4.element import Tag
+
+# letterboxdpy imports
+from letterboxdpy.movie import Movie as LBMovie
+from letterboxdpy.search import Search as LBSearch
+from letterboxdpy.user import User as LBUser
 
 from src.config import get_log_path
 
@@ -75,7 +81,7 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://letterboxd.com"
 
-# Common headers to mimic browser
+# Common headers to mimic browser (used for fallback httpx requests)
 _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -138,7 +144,7 @@ class ReviewData:
 
 
 class LetterboxdScraper:
-    """Scraper for Letterboxd data using httpx + BeautifulSoup."""
+    """Scraper for Letterboxd data using letterboxdpy with httpx fallback."""
 
     def __init__(self, timeout: float = 30.0, delay: float = 0.5):
         """Initialize the scraper.
@@ -147,6 +153,7 @@ class LetterboxdScraper:
             timeout: Request timeout in seconds
             delay: Delay between requests to be respectful
         """
+        # httpx client for features not in letterboxdpy
         self.client = httpx.Client(
             base_url=BASE_URL,
             headers=HEADERS,
@@ -164,7 +171,7 @@ class LetterboxdScraper:
         self._last_request = time.time()
 
     def _get(self, url: str) -> BeautifulSoup | None:
-        """Make a GET request and return parsed HTML.
+        """Make a GET request and return parsed HTML (fallback for letterboxdpy gaps).
 
         Args:
             url: URL path (relative to BASE_URL)
@@ -194,7 +201,7 @@ class LetterboxdScraper:
     # ==================== User Scraping ====================
 
     def get_user_profile(self, username: str) -> UserProfile | None:
-        """Scrape a user's profile page.
+        """Get a user's profile using letterboxdpy.
 
         Args:
             username: Letterboxd username
@@ -202,155 +209,91 @@ class LetterboxdScraper:
         Returns:
             UserProfile object or None if not found
         """
-        soup = self._get(f"/{username}/")
-        if not soup:
+        try:
+            lb_user = LBUser(username)
+
+            profile = UserProfile(username=username)
+            profile.display_name = lb_user.display_name
+            profile.bio = lb_user.bio
+            profile.location = lb_user.location
+            profile.website = lb_user.website
+
+            # Get avatar URL
+            if hasattr(lb_user, "avatar") and lb_user.avatar:
+                profile.avatar_url = lb_user.avatar.get("url")
+
+            # Stats from letterboxdpy
+            if hasattr(lb_user, "stats") and lb_user.stats:
+                stats = lb_user.stats
+                profile.films_watched = stats.get("films", 0)
+                profile.films_this_year = stats.get("this_year", 0)
+                profile.lists_count = stats.get("lists", 0)
+                profile.following_count = stats.get("following", 0)
+                profile.followers_count = stats.get("followers", 0)
+
+            # Favorites
+            if hasattr(lb_user, "favorites") and lb_user.favorites:
+                for fav in lb_user.favorites:
+                    if isinstance(fav, dict) and "slug" in fav:
+                        profile.favorites.append(fav["slug"])
+                    elif isinstance(fav, str):
+                        profile.favorites.append(fav)
+
+            return profile
+        except Exception as e:
+            logger.error(f"Error fetching user profile for {username}: {e}")
             return None
 
-        profile = UserProfile(username=username)
-
-        # Display name
-        name_elem = soup.select_one(".profile-name h1")
-        if name_elem:
-            profile.display_name = name_elem.get_text(strip=True)
-
-        # Bio
-        bio_elem = soup.select_one(".profile-bio")
-        if bio_elem:
-            profile.bio = bio_elem.get_text(strip=True)
-
-        # Location
-        location_elem = soup.select_one(".profile-metadata .location")
-        if location_elem:
-            profile.location = location_elem.get_text(strip=True)
-
-        # Avatar
-        avatar_elem = soup.select_one(".profile-avatar img")
-        if avatar_elem:
-            profile.avatar_url = _get_attr_or_none(avatar_elem, "src")
-
-        # Stats
-        stats = soup.select(".profile-stats a")
-        for stat in stats:
-            href = _get_attr(stat, "href")
-            text = stat.get_text(strip=True)
-            # Extract number from text like "1,234"
-            num_match = re.search(r"[\d,]+", text)
-            if num_match:
-                num = int(num_match.group().replace(",", ""))
-                if "/films/" in href:
-                    profile.films_watched = num
-                elif "/following/" in href:
-                    profile.following_count = num
-                elif "/followers/" in href:
-                    profile.followers_count = num
-                elif "/lists/" in href:
-                    profile.lists_count = num
-
-        # Favorites
-        favorites = soup.select(".favourite-films-list .poster-container")
-        for fav in favorites:
-            film_link = fav.select_one("a")
-            if film_link:
-                href = _get_attr(film_link, "href")
-                if "/film/" in href:
-                    slug = href.split("/film/")[1].rstrip("/")
-                    profile.favorites.append(slug)
-
-        return profile
-
     def get_user_followers(self, username: str, max_pages: int = 10) -> list[str]:
-        """Scrape a user's followers list.
+        """Get a user's followers using letterboxdpy.
 
         Args:
             username: Letterboxd username
-            max_pages: Maximum number of pages to scrape
+            max_pages: Maximum number of pages to scrape (approx 25 users per page)
 
         Returns:
             List of follower usernames
         """
-        followers = []
-        page = 1
-
-        while page <= max_pages:
-            url = f"/{username}/followers/"
-            if page > 1:
-                url += f"page/{page}/"
-
-            soup = self._get(url)
-            if not soup:
-                break
-
-            # Find follower links
-            found_any = False
-            for person in soup.select(".person-summary"):
-                link = person.select_one("a.name")
-                if link:
-                    href = _get_attr(link, "href")
-                    if href.startswith("/") and href.count("/") == 2:
-                        follower_username = href.strip("/")
-                        followers.append(follower_username)
-                        found_any = True
-
-            if not found_any:
-                break  # No more pages
-
-            # Check for next page
-            next_link = soup.select_one(".paginate-nextprev a.next")
-            if not next_link:
-                break
-
-            page += 1
-
-        return followers
+        try:
+            lb_user = LBUser(username)
+            # letterboxdpy returns a dict with usernames as keys
+            followers_data = lb_user.get_followers(limit=max_pages * 25)
+            if isinstance(followers_data, dict):
+                return list(followers_data.keys())
+            elif isinstance(followers_data, list):
+                return followers_data
+            return []
+        except Exception as e:
+            logger.error(f"Error fetching followers for {username}: {e}")
+            return []
 
     def get_user_following(self, username: str, max_pages: int = 10) -> list[str]:
-        """Scrape who a user is following.
+        """Get who a user is following using letterboxdpy.
 
         Args:
             username: Letterboxd username
-            max_pages: Maximum number of pages to scrape
+            max_pages: Maximum number of pages to scrape (approx 25 users per page)
 
         Returns:
             List of usernames being followed
         """
-        following = []
-        page = 1
-
-        while page <= max_pages:
-            url = f"/{username}/following/"
-            if page > 1:
-                url += f"page/{page}/"
-
-            soup = self._get(url)
-            if not soup:
-                break
-
-            # Find following links
-            found_any = False
-            for person in soup.select(".person-summary"):
-                link = person.select_one("a.name")
-                if link:
-                    href = _get_attr(link, "href")
-                    if href.startswith("/") and href.count("/") == 2:
-                        following_username = href.strip("/")
-                        following.append(following_username)
-                        found_any = True
-
-            if not found_any:
-                break
-
-            next_link = soup.select_one(".paginate-nextprev a.next")
-            if not next_link:
-                break
-
-            page += 1
-
-        return following
+        try:
+            lb_user = LBUser(username)
+            # letterboxdpy returns a dict with usernames as keys
+            following_data = lb_user.get_following(limit=max_pages * 25)
+            if isinstance(following_data, dict):
+                return list(following_data.keys())
+            elif isinstance(following_data, list):
+                return following_data
+            return []
+        except Exception as e:
+            logger.error(f"Error fetching following for {username}: {e}")
+            return []
 
     # ==================== Film Scraping ====================
 
     def get_film(self, slug: str) -> FilmData | None:
-        """Scrape film data.
+        """Get film data using letterboxdpy.
 
         Args:
             slug: Film slug (e.g., "the-matrix")
@@ -358,80 +301,45 @@ class LetterboxdScraper:
         Returns:
             FilmData object or None if not found
         """
-        soup = self._get(f"/film/{slug}/")
-        if not soup:
+        try:
+            lb_movie = LBMovie(slug)
+
+            film = FilmData(slug=slug, title=lb_movie.title or "")
+            film.year = lb_movie.year
+            film.runtime = lb_movie.runtime
+            film.tagline = lb_movie.tagline
+            film.description = lb_movie.description
+            film.average_rating = lb_movie.rating
+
+            # Get poster URL
+            if hasattr(lb_movie, "poster") and lb_movie.poster:
+                film.poster_url = lb_movie.poster
+
+            # Get director from crew
+            if hasattr(lb_movie, "crew") and lb_movie.crew:
+                directors = lb_movie.crew.get("director", [])
+                if directors and isinstance(directors, list) and len(directors) > 0:
+                    first_director = directors[0]
+                    if isinstance(first_director, dict):
+                        film.director = first_director.get("name")
+                    elif isinstance(first_director, str):
+                        film.director = first_director
+
+            # Get genres
+            if hasattr(lb_movie, "genres") and lb_movie.genres:
+                for genre in lb_movie.genres:
+                    if isinstance(genre, dict) and genre.get("type") == "genre":
+                        film.genres.append(genre.get("name", ""))
+                    elif isinstance(genre, str):
+                        film.genres.append(genre)
+
+            return film
+        except Exception as e:
+            logger.error(f"Error fetching film {slug}: {e}")
             return None
 
-        film = FilmData(slug=slug, title="")
-
-        # Title - try multiple selectors
-        title_elem = soup.select_one(".headline-1.primaryname .name")
-        if not title_elem:
-            title_elem = soup.select_one('h1[itemprop="name"]')
-        if title_elem:
-            film.title = title_elem.get_text(strip=True)
-
-        # Year - parse from og:title meta tag (format: "Title (YYYY)")
-        og_title = soup.select_one('meta[property="og:title"]')
-        if og_title:
-            content = _get_attr(og_title, "content")
-            year_match = re.search(r"\((\d{4})\)$", content)
-            if year_match:
-                film.year = int(year_match.group(1))
-
-        # Director
-        director_elem = soup.select_one('span[itemprop="director"] a')
-        if director_elem:
-            film.director = director_elem.get_text(strip=True)
-
-        # Average rating
-        rating_elem = soup.select_one('meta[name="twitter:data2"]')
-        if rating_elem:
-            content = _get_attr(rating_elem, "content")
-            rating_match = re.search(r"([\d.]+)", content)
-            if rating_match:
-                film.average_rating = float(rating_match.group(1))
-
-        # Rating count
-        rating_count_elem = soup.select_one(".rating-histogram-chart")
-        if rating_count_elem:
-            title_attr = _get_attr(rating_count_elem, "title")
-            count_match = re.search(r"([\d,]+)\s+rating", title_attr)
-            if count_match:
-                film.rating_count = int(count_match.group(1).replace(",", ""))
-
-        # Poster
-        poster_elem = soup.select_one('.film-poster img[src*="ltrbxd"]')
-        if poster_elem:
-            film.poster_url = _get_attr_or_none(poster_elem, "src")
-
-        # Genres
-        for genre_link in soup.select('#tab-genres a[href*="/genre/"]'):
-            film.genres.append(genre_link.get_text(strip=True))
-
-        # Runtime - find p.text-link containing "mins"
-        for p_elem in soup.select("p.text-link"):
-            text = p_elem.get_text()
-            if "mins" in text or "min" in text:
-                runtime_match = re.search(r"(\d+)\s*mins?", text)
-                if runtime_match:
-                    film.runtime = int(runtime_match.group(1))
-                break
-
-        # Tagline
-        tagline_elem = soup.select_one(".tagline")
-        if tagline_elem:
-            film.tagline = tagline_elem.get_text(strip=True)
-
-        # Description
-        desc_elem = soup.select_one(".truncate p")
-        if desc_elem:
-            film.description = desc_elem.get_text(strip=True)
-
-        return film
-
     def search_films(self, query: str, limit: int = 10) -> list[FilmData]:
-        """Search for films.
+        """Search for films using letterboxdpy.
 
         Args:
             query: Search query
@@ -440,22 +348,38 @@ class LetterboxdScraper:
         Returns:
             List of FilmData objects
         """
-        soup = self._get(f"/search/films/{query}/")
-        if not soup:
+        try:
+            lb_search = LBSearch(query, "films")
+            search_results = lb_search.get_results(max=limit)
+
+            results: list[FilmData] = []
+            if search_results and "results" in search_results:
+                for item in search_results["results"]:
+                    slug = item.get("slug", "")
+                    name = item.get("name", "")
+                    year = item.get("year")
+
+                    # Parse title from name (format: "Title (Year)")
+                    title = name
+                    if year and f"({year})" in name:
+                        title = name.replace(f" ({year})", "")
+
+                    film = FilmData(slug=slug, title=title)
+                    film.year = year
+
+                    # Get director if available
+                    directors = item.get("directors", [])
+                    if directors and isinstance(directors, list) and len(directors) > 0:
+                        first_director = directors[0]
+                        if isinstance(first_director, dict):
+                            film.director = first_director.get("name")
+
+                    results.append(film)
+
+            return results
+        except Exception as e:
+            logger.error(f"Error searching for films with query '{query}': {e}")
             return []
-
-        results: list[FilmData] = []
-        for item in soup.select(".film-poster")[:limit]:
-            slug = _get_attr(item, "data-film-slug")
-            if not slug:
-                continue
-
-            title_elem = item.select_one("img")
-            title = _get_attr(title_elem, "alt") if title_elem else ""
-
-            results.append(FilmData(slug=slug, title=title))
-
-        return results
 
     # ==================== Review Scraping ====================
 

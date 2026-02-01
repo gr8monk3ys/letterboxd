@@ -1,6 +1,6 @@
 """Tests for the Letterboxd scraper module."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -11,6 +11,92 @@ from src.scraper import (
     ReviewData,
     UserProfile,
 )
+
+
+def create_mock_lb_user(
+    username: str = "testuser",
+    display_name: str = "Test User",
+    bio: str = "Film enthusiast",
+    location: str = "New York",
+    website: str = "https://example.com",
+    stats: dict | None = None,
+    favorites: list | None = None,
+    avatar: dict | None = None,
+):
+    """Create a mock letterboxdpy User object."""
+    mock_user = Mock()
+    mock_user.username = username
+    mock_user.display_name = display_name
+    mock_user.bio = bio
+    mock_user.location = location
+    mock_user.website = website
+    mock_user.stats = stats or {
+        "films": 123,
+        "this_year": 10,
+        "lists": 5,
+        "following": 50,
+        "followers": 200,
+    }
+    mock_user.favorites = favorites or [{"slug": "the-matrix"}, {"slug": "inception"}]
+    mock_user.avatar = avatar or {"url": "https://example.com/avatar.jpg"}
+    mock_user.get_followers = Mock(return_value={"follower1": {}, "follower2": {}})
+    mock_user.get_following = Mock(return_value={"following1": {}, "following2": {}})
+    return mock_user
+
+
+def create_mock_lb_movie(
+    slug: str = "the-matrix",
+    title: str = "The Matrix",
+    year: int = 1999,
+    runtime: int = 136,
+    rating: float = 4.2,
+    tagline: str = "Believe the unbelievable.",
+    description: str = "A computer hacker learns...",
+    poster: str = "https://example.com/poster.jpg",
+    crew: dict | None = None,
+    genres: list | None = None,
+):
+    """Create a mock letterboxdpy Movie object."""
+    mock_movie = Mock()
+    mock_movie.slug = slug
+    mock_movie.title = title
+    mock_movie.year = year
+    mock_movie.runtime = runtime
+    mock_movie.rating = rating
+    mock_movie.tagline = tagline
+    mock_movie.description = description
+    mock_movie.poster = poster
+    mock_movie.crew = crew or {"director": [{"name": "Wachowskis", "slug": "wachowskis"}]}
+    mock_movie.genres = genres or [
+        {"type": "genre", "name": "Action", "slug": "action"},
+        {"type": "genre", "name": "Sci-Fi", "slug": "sci-fi"},
+    ]
+    return mock_movie
+
+
+def create_mock_lb_search(results: list | None = None):
+    """Create a mock letterboxdpy Search object."""
+    mock_search = Mock()
+    default_results = {
+        "available": True,
+        "results": results
+        or [
+            {
+                "slug": "the-matrix",
+                "name": "The Matrix (1999)",
+                "year": 1999,
+                "directors": [{"name": "Wachowskis"}],
+            },
+            {
+                "slug": "matrix-reloaded",
+                "name": "The Matrix Reloaded (2003)",
+                "year": 2003,
+                "directors": [{"name": "Wachowskis"}],
+            },
+        ],
+    }
+    mock_search.get_results = Mock(return_value=default_results)
+    return mock_search
 
 
 class TestUserProfile:
@@ -93,67 +179,6 @@ class TestLetterboxdScraper:
     """Test the LetterboxdScraper class."""
 
     @pytest.fixture
-    def mock_html_user_profile(self):
-        """Sample HTML for user profile."""
-        return """
-        <html>
-        <body>
-            <div class="profile-name"><h1>Test User</h1></div>
-            <div class="profile-bio">Film enthusiast</div>
-            <div class="profile-stats">
-                <a href="/testuser/films/">123 films</a>
-                <a href="/testuser/following/">50 following</a>
-                <a href="/testuser/followers/">200 followers</a>
-            </div>
-            <div class="favourite-films-list">
-                <div class="poster-container">
-                    <a href="/film/the-matrix/">Poster</a>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-
-    @pytest.fixture
-    def mock_html_film(self):
-        """Sample HTML for film page."""
-        return """
-        <html>
-        <head>
-            <meta property="og:title" content="The Matrix (1999)">
-            <meta name="twitter:data2" content="4.2 out of 5">
-        </head>
-        <body>
-            <h1 class="headline-1 primaryname">
-                <span class="name">The Matrix</span>
-            </h1>
-            <span itemprop="director"><a href="/director/wachowskis/">Wachowskis</a></span>
-            <div class="tagline">Believe the unbelievable.</div>
-            <div id="tab-genres">
-                <a href="/films/genre/action/">Action</a>
-                <a href="/films/genre/sci-fi/">Sci-Fi</a>
-            </div>
-        </body>
-        </html>
-        """
-
-    @pytest.fixture
-    def mock_html_followers(self):
-        """Sample HTML for followers page."""
-        return """
-        <html>
-        <body>
-            <div class="person-summary">
-                <a class="name" href="/follower1/">Follower 1</a>
-            </div>
-            <div class="person-summary">
-                <a class="name" href="/follower2/">Follower 2</a>
-            </div>
-        </body>
-        </html>
-        """
-
-    @pytest.fixture
     def mock_html_review(self):
         """Sample HTML for review page."""
         return """
@@ -179,13 +204,10 @@ class TestLetterboxdScraper:
         with LetterboxdScraper() as scraper:
             assert scraper is not None
 
-    @patch("httpx.Client.get")
-    def test_get_user_profile(self, mock_get, mock_html_user_profile):
-        """Test parsing user profile."""
-        mock_response = MagicMock()
-        mock_response.text = mock_html_user_profile
-        mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
+    @patch("src.scraper.LBUser")
+    def test_get_user_profile(self, mock_lb_user_class):
+        """Test getting user profile via letterboxdpy."""
+        mock_lb_user_class.return_value = create_mock_lb_user()
 
         with LetterboxdScraper(delay=0) as scraper:
             profile = scraper.get_user_profile("testuser")
@@ -199,13 +221,10 @@ class TestLetterboxdScraper:
         assert profile.followers_count == 200
         assert "the-matrix" in profile.favorites
 
-    @patch("httpx.Client.get")
-    def test_get_film(self, mock_get, mock_html_film):
-        """Test parsing film data."""
-        mock_response = MagicMock()
-        mock_response.text = mock_html_film
-        mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
+    @patch("src.scraper.LBMovie")
+    def test_get_film(self, mock_lb_movie_class):
+        """Test getting film data via letterboxdpy."""
+        mock_lb_movie_class.return_value = create_mock_lb_movie()
 
         with LetterboxdScraper(delay=0) as scraper:
             film = scraper.get_film("the-matrix")
@@ -218,13 +237,10 @@ class TestLetterboxdScraper:
         assert film.average_rating == 4.2
         assert "Action" in film.genres
 
-    @patch("httpx.Client.get")
-    def test_get_followers(self, mock_get, mock_html_followers):
-        """Test parsing followers list."""
-        mock_response = MagicMock()
-        mock_response.text = mock_html_followers
-        mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
+    @patch("src.scraper.LBUser")
+    def test_get_followers(self, mock_lb_user_class):
+        """Test getting followers via letterboxdpy."""
+        mock_lb_user_class.return_value = create_mock_lb_user()
 
         with LetterboxdScraper(delay=0) as scraper:
             followers = scraper.get_user_followers("testuser", max_pages=1)
@@ -233,13 +249,10 @@ class TestLetterboxdScraper:
         assert "follower1" in followers
         assert "follower2" in followers
 
-    @patch("httpx.Client.get")
-    def test_get_following(self, mock_get, mock_html_followers):
-        """Test parsing following list."""
-        mock_response = MagicMock()
-        mock_response.text = mock_html_followers
-        mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
+    @patch("src.scraper.LBUser")
+    def test_get_following(self, mock_lb_user_class):
+        """Test getting following via letterboxdpy."""
+        mock_lb_user_class.return_value = create_mock_lb_user()
 
         with LetterboxdScraper(delay=0) as scraper:
             following = scraper.get_user_following("testuser", max_pages=1)
@@ -261,28 +274,20 @@ class TestLetterboxdScraper:
         assert engagement["likes_count"] == 25
         assert engagement["comments_count"] == 2
 
-    @patch("httpx.Client.get")
-    def test_get_user_profile_not_found(self, mock_get):
-        """Test handling 404 for user profile."""
-        import httpx
-
-        mock_get.side_effect = httpx.HTTPStatusError(
-            "404", request=MagicMock(), response=MagicMock()
-        )
+    @patch("src.scraper.LBUser")
+    def test_get_user_profile_not_found(self, mock_lb_user_class):
+        """Test handling error for user profile."""
+        mock_lb_user_class.side_effect = Exception("User not found")
 
         with LetterboxdScraper(delay=0) as scraper:
             profile = scraper.get_user_profile("nonexistent")
 
         assert profile is None
 
-    @patch("httpx.Client.get")
-    def test_get_film_not_found(self, mock_get):
-        """Test handling 404 for film."""
-        import httpx
-
-        mock_get.side_effect = httpx.HTTPStatusError(
-            "404", request=MagicMock(), response=MagicMock()
-        )
+    @patch("src.scraper.LBMovie")
+    def test_get_film_not_found(self, mock_lb_movie_class):
+        """Test handling error for film."""
+        mock_lb_movie_class.side_effect = Exception("Film not found")
 
         with LetterboxdScraper(delay=0) as scraper:
             film = scraper.get_film("nonexistent-film")
@@ -293,29 +298,10 @@ class TestLetterboxdScraper:
 class TestSearchFilms:
     """Test film search functionality."""
 
-    @pytest.fixture
-    def mock_html_search(self):
-        """Sample HTML for search results."""
-        return """
-        <html>
-        <body>
-            <div class="film-poster" data-film-slug="the-matrix">
-                <img alt="The Matrix">
-            </div>
-            <div class="film-poster" data-film-slug="matrix-reloaded">
-                <img alt="The Matrix Reloaded">
-            </div>
-        </body>
-        </html>
-        """
-
-    @patch("httpx.Client.get")
-    def test_search_films(self, mock_get, mock_html_search):
-        """Test searching for films."""
-        mock_response = MagicMock()
-        mock_response.text = mock_html_search
-        mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
+    @patch("src.scraper.LBSearch")
+    def test_search_films(self, mock_lb_search_class):
+        """Test searching for films via letterboxdpy."""
+        mock_lb_search_class.return_value = create_mock_lb_search()
 
         with LetterboxdScraper(delay=0) as scraper:
             results = scraper.search_films("matrix", limit=10)
@@ -323,6 +309,7 @@ class TestSearchFilms:
         assert len(results) == 2
         assert results[0].slug == "the-matrix"
         assert results[0].title == "The Matrix"
+        assert results[0].year == 1999
 
 
 class TestPopularMembers:
@@ -521,13 +508,19 @@ class TestAsyncScraper:
 class TestEdgeCases:
     """Test edge cases and error handling."""
 
-    @patch("httpx.Client.get")
-    def test_empty_profile(self, mock_get):
-        """Test handling empty/minimal profile."""
-        mock_response = MagicMock()
-        mock_response.text = "<html><body></body></html>"
-        mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
+    @patch("src.scraper.LBUser")
+    def test_empty_profile(self, mock_lb_user_class):
+        """Test handling empty/minimal profile via letterboxdpy."""
+        mock_user = Mock()
+        mock_user.username = "emptyuser"
+        mock_user.display_name = None
+        mock_user.bio = None
+        mock_user.location = None
+        mock_user.website = None
+        mock_user.stats = {}
+        mock_user.favorites = []
+        mock_user.avatar = None
+        mock_lb_user_class.return_value = mock_user
 
         with LetterboxdScraper(delay=0) as scraper:
             profile = scraper.get_user_profile("emptyuser")
@@ -536,13 +529,21 @@ class TestEdgeCases:
         assert profile.username == "emptyuser"
         assert profile.films_watched == 0
 
-    @patch("httpx.Client.get")
-    def test_empty_film(self, mock_get):
-        """Test handling minimal film page."""
-        mock_response = MagicMock()
-        mock_response.text = "<html><body></body></html>"
-        mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
+    @patch("src.scraper.LBMovie")
+    def test_empty_film(self, mock_lb_movie_class):
+        """Test handling minimal film page via letterboxdpy."""
+        mock_movie = Mock()
+        mock_movie.slug = "empty-film"
+        mock_movie.title = ""
+        mock_movie.year = None
+        mock_movie.runtime = None
+        mock_movie.rating = None
+        mock_movie.tagline = None
+        mock_movie.description = None
+        mock_movie.poster = None
+        mock_movie.crew = {}
+        mock_movie.genres = []
+        mock_lb_movie_class.return_value = mock_movie
 
         with LetterboxdScraper(delay=0) as scraper:
             film = scraper.get_film("empty-film")
@@ -553,7 +554,7 @@ class TestEdgeCases:
 
     @patch("httpx.Client.get")
     def test_review_url_with_full_url(self, mock_get):
-        """Test review engagement with full URL."""
+        """Test review engagement with full URL (still uses httpx)."""
         mock_response = MagicMock()
         mock_response.text = """
         <html><body>
@@ -569,12 +570,10 @@ class TestEdgeCases:
         assert engagement is not None
         assert engagement["likes_count"] == 5
 
-    @patch("httpx.Client.get")
-    def test_network_error_handling(self, mock_get):
-        """Test handling network errors."""
-        import httpx
-
-        mock_get.side_effect = httpx.TimeoutException("Timeout")
+    @patch("src.scraper.LBUser")
+    def test_network_error_handling(self, mock_lb_user_class):
+        """Test handling network errors via letterboxdpy."""
+        mock_lb_user_class.side_effect = Exception("Network error")
 
         with LetterboxdScraper(delay=0) as scraper:
             profile = scraper.get_user_profile("testuser")
