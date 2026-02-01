@@ -397,6 +397,53 @@ class MovieDatabase:
         )
         self.conn.commit()
 
+    def get_diary_date(self, letterboxd_uri: str) -> str | None:
+        """Get the watched date from diary for a film.
+
+        Args:
+            letterboxd_uri: The Letterboxd URI of the film
+
+        Returns:
+            Date string (YYYY-MM-DD) or None if not found
+        """
+        self.cursor.execute(
+            "SELECT date_watched FROM diary WHERE letterboxd_uri = ? LIMIT 1",
+            (letterboxd_uri,),
+        )
+        result = self.cursor.fetchone()
+        return result[0] if result else None
+
+    def get_rating_date(self, letterboxd_uri: str) -> str | None:
+        """Get the rating date for a film.
+
+        Args:
+            letterboxd_uri: The Letterboxd URI of the film
+
+        Returns:
+            Date string (YYYY-MM-DD) or None if not found
+        """
+        self.cursor.execute(
+            "SELECT date_rated FROM ratings WHERE letterboxd_uri = ? LIMIT 1",
+            (letterboxd_uri,),
+        )
+        result = self.cursor.fetchone()
+        return result[0] if result else None
+
+    def get_all_rated_films(self) -> list[dict]:
+        """Get all films with ratings for list generation.
+
+        Returns:
+            List of dicts with letterboxd_uri, name, year, rating
+        """
+        self.cursor.execute("""
+            SELECT letterboxd_uri, name, year, rating
+            FROM ratings
+            WHERE rating IS NOT NULL
+            ORDER BY rating DESC, year DESC
+        """)
+        columns = ["letterboxd_uri", "name", "year", "rating"]
+        return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
+
     def close(self) -> None:
         """Close the database connection."""
         if self._conn:

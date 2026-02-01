@@ -58,6 +58,85 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ON diary(date_watched);
         """,
     ),
+    (
+        4,
+        "Add growth tracking tables",
+        """
+        -- Daily follower snapshots for tracking growth over time
+        CREATE TABLE IF NOT EXISTS follower_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            snapshot_date TEXT NOT NULL,
+            followers_count INTEGER NOT NULL,
+            following_count INTEGER NOT NULL,
+            films_watched INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
+            UNIQUE(snapshot_date)
+        );
+        CREATE INDEX IF NOT EXISTS idx_follower_snapshots_date
+        ON follower_snapshots(snapshot_date);
+
+        -- Review-to-follower attribution for tracking which reviews drive growth
+        CREATE TABLE IF NOT EXISTS review_attribution (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            posted_review_id INTEGER NOT NULL,
+            followers_before INTEGER NOT NULL,
+            followers_after INTEGER,
+            follower_delta INTEGER,
+            checked_at TEXT,
+            FOREIGN KEY (posted_review_id) REFERENCES posted_reviews(id)
+        );
+
+        -- Trending films cache for review targeting
+        CREATE TABLE IF NOT EXISTS trending_films (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug TEXT NOT NULL,
+            title TEXT NOT NULL,
+            year INTEGER,
+            popularity_score REAL,
+            review_count INTEGER DEFAULT 0,
+            avg_likes REAL DEFAULT 0,
+            last_updated TEXT NOT NULL,
+            UNIQUE(slug)
+        );
+        CREATE INDEX IF NOT EXISTS idx_trending_films_score
+        ON trending_films(popularity_score DESC);
+
+        -- Growth campaigns for tracking grouped activities
+        CREATE TABLE IF NOT EXISTS growth_campaigns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            description TEXT,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            is_active INTEGER DEFAULT 1,
+            followers_start INTEGER,
+            followers_end INTEGER
+        );
+
+        -- Actions within campaigns
+        CREATE TABLE IF NOT EXISTS campaign_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            campaign_id INTEGER NOT NULL,
+            action_type TEXT NOT NULL,
+            target TEXT,
+            performed_at TEXT NOT NULL,
+            FOREIGN KEY (campaign_id) REFERENCES growth_campaigns(id)
+        );
+
+        -- Smart follow queue for similar taste users
+        CREATE TABLE IF NOT EXISTS smart_follow_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            source TEXT NOT NULL,
+            similarity_score REAL,
+            added_at TEXT NOT NULL,
+            followed_at TEXT,
+            status TEXT DEFAULT 'pending'
+        );
+        CREATE INDEX IF NOT EXISTS idx_smart_follow_status
+        ON smart_follow_queue(status);
+        """,
+    ),
 ]
 
 
