@@ -644,6 +644,138 @@ async def get_ab_test_assignment():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+# Growth Dashboard Endpoints
+@app.get("/growth", response_class=HTMLResponse)
+async def growth_page(request: Request):
+    """Growth tracking dashboard page."""
+    try:
+        from src.growth import GrowthDashboard
+
+        dashboard = GrowthDashboard()
+        dashboard.connect()
+        summary = dashboard.get_growth_summary(30)
+        correlation = dashboard.get_correlation_analysis(60)
+        dashboard.close()
+    except Exception as e:
+        logger.error(f"Error loading growth dashboard: {e}")
+        summary = {}
+        correlation = {}
+
+    return templates.TemplateResponse(
+        "growth.html",
+        {
+            "request": request,
+            "summary": summary,
+            "correlation": correlation,
+        },
+    )
+
+
+@app.get("/api/growth/summary")
+async def api_growth_summary(days: int = 30):
+    """Get comprehensive growth summary."""
+    try:
+        from src.growth import GrowthDashboard
+
+        dashboard = GrowthDashboard()
+        dashboard.connect()
+        summary = dashboard.get_growth_summary(days)
+        dashboard.close()
+        return JSONResponse(summary)
+    except Exception as e:
+        logger.error(f"Error getting growth summary: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/growth/history")
+async def api_growth_history(days: int = 30):
+    """Get follower history data."""
+    try:
+        from src.growth import FollowerTracker
+
+        tracker = FollowerTracker()
+        tracker.connect()
+        history = tracker.get_history(days)
+        tracker.close()
+        return JSONResponse({"data": history, "days": days})
+    except Exception as e:
+        logger.error(f"Error getting growth history: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/growth/milestones")
+async def api_growth_milestones():
+    """Get milestone progress."""
+    try:
+        from src.growth import FollowerTracker
+
+        tracker = FollowerTracker()
+        tracker.connect()
+        latest = tracker.get_latest_snapshot()
+        if latest:
+            milestones = tracker.get_milestones(latest["followers_count"])
+        else:
+            milestones = {}
+        tracker.close()
+        return JSONResponse(milestones)
+    except Exception as e:
+        logger.error(f"Error getting milestones: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/growth/snapshot")
+async def api_take_snapshot():
+    """Take a new follower snapshot."""
+    try:
+        from src.growth import FollowerTracker
+
+        tracker = FollowerTracker()
+        tracker.connect()
+        snapshot = tracker.take_snapshot()
+        tracker.close()
+
+        if snapshot:
+            return JSONResponse({"message": "Snapshot taken", "data": snapshot})
+        else:
+            return JSONResponse({"error": "Failed to take snapshot"}, status_code=500)
+    except Exception as e:
+        logger.error(f"Error taking snapshot: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/growth/trending")
+async def api_trending_films(limit: int = 20):
+    """Get trending films for review opportunities."""
+    try:
+        from src.growth import TrendingDetector
+
+        detector = TrendingDetector()
+        detector.connect()
+        opportunities = detector.get_review_opportunities(limit=limit)
+        detector.close()
+        return JSONResponse({"films": opportunities, "count": len(opportunities)})
+    except Exception as e:
+        logger.error(f"Error getting trending films: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/growth/campaigns")
+async def api_campaigns(limit: int = 10):
+    """Get list of growth campaigns."""
+    try:
+        from src.growth import CampaignManager
+
+        manager = CampaignManager()
+        manager.connect()
+        campaigns = manager.list_campaigns(limit)
+        active = manager.get_active_campaign()
+        manager.close()
+        return JSONResponse({"campaigns": campaigns, "active": active})
+    except Exception as e:
+        logger.error(f"Error getting campaigns: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 def main():
     """Run the web server."""
     import uvicorn
