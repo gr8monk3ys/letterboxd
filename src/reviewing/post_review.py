@@ -1,7 +1,9 @@
 """Post AI-generated reviews to Letterboxd."""
 
 import logging
+import random
 import time
+from datetime import datetime, timedelta
 
 from playwright.sync_api import Page, sync_playwright
 
@@ -10,6 +12,81 @@ from src.data_processing.create_database import MovieDatabase
 from src.review_metrics import ReviewMetricsDB
 from src.utils.auth import goto_with_retry, login
 from src.utils.errors import handle_exception
+
+
+def calculate_watch_date(
+    film_year: int | None,
+    letterboxd_uri: str,
+    db: MovieDatabase,
+) -> str:
+    """Calculate the watch date based on film release year.
+
+    Logic:
+    - Pre-2009 films: Use diary date if exists, else rating date, else today
+    - 2009-2022 films: Release date + random 1-14 days
+    - 2023+ films: Release date + random 1-7 days
+
+    Args:
+        film_year: The film's release year
+        letterboxd_uri: The Letterboxd URI for database lookups
+        db: MovieDatabase instance for date lookups
+
+    Returns:
+        Date string in YYYY-MM-DD format
+    """
+    today = datetime.now()
+
+    if film_year is None:
+        return today.strftime("%Y-%m-%d")
+
+    if film_year < 2009:
+        # For older films, use actual watched date from diary or rating date
+        diary_date = db.get_diary_date(letterboxd_uri)
+        if diary_date:
+            return diary_date
+
+        rating_date = db.get_rating_date(letterboxd_uri)
+        if rating_date:
+            return rating_date
+
+        # Fallback to today
+        return today.strftime("%Y-%m-%d")
+
+    elif film_year <= 2022:
+        # 2009-2022: Watched within 2 weeks of release
+        # Use a random month (Jan-Mar) for theatrical releases
+        release_month = random.randint(1, 12)
+        release_day = random.randint(1, 28)
+        try:
+            release = datetime(film_year, release_month, release_day)
+        except ValueError:
+            release = datetime(film_year, 1, 15)
+
+        offset = random.randint(1, 14)
+        watch_date = release + timedelta(days=offset)
+
+        # Don't return future dates
+        if watch_date > today:
+            return today.strftime("%Y-%m-%d")
+        return watch_date.strftime("%Y-%m-%d")
+
+    else:
+        # 2023+: Watched within 1 week of release
+        release_month = random.randint(1, 12)
+        release_day = random.randint(1, 28)
+        try:
+            release = datetime(film_year, release_month, release_day)
+        except ValueError:
+            release = datetime(film_year, 1, 15)
+
+        offset = random.randint(1, 7)
+        watch_date = release + timedelta(days=offset)
+
+        # Don't return future dates
+        if watch_date > today:
+            return today.strftime("%Y-%m-%d")
+        return watch_date.strftime("%Y-%m-%d")
+
 
 # Set up logging
 logging.basicConfig(
@@ -63,6 +140,10 @@ class ReviewPoster:
             review_text = film["review"]
             uri = film["letterboxd_uri"]
 
+            # Calculate the watch date based on release year
+            watch_date = calculate_watch_date(year, uri, self.db)
+            logging.info(f"Calculated watch date for {name} ({year}): {watch_date}")
+
             # Go to the film page directly using the URI with retry
             logging.info(f"Navigating to film: {name} ({year})")
 
@@ -109,6 +190,39 @@ class ReviewPoster:
             review_textarea.fill(review_text)
             page.wait_for_timeout(1000)
 
+            # Set the watch date if date input exists
+            # Letterboxd uses various date input formats
+            date_input = page.locator(
+                'input[name="viewingDate"], '
+                "input.viewing-date, "
+                'input[type="date"], '
+                "#diary-entry-date"
+            ).first
+
+            if date_input.count() > 0:
+                try:
+                    # Clear and fill the date
+                    date_input.fill(watch_date)
+                    logging.info(f"Set watch date to: {watch_date}")
+                except Exception as e:
+                    logging.warning(f"Could not set watch date: {e}")
+            else:
+                # Try clicking a date picker button and using JS to set date
+                date_picker = page.locator(".date-picker, .viewing-date-picker").first
+                if date_picker.count() > 0:
+                    try:
+                        # Use JavaScript to set date value
+                        js_code = (
+                            f"document.querySelector('input[name=\"viewingDate\"]')."
+                            f"value = '{watch_date}'"
+                        )
+                        page.evaluate(js_code)
+                        logging.info(f"Set watch date via JS to: {watch_date}")
+                    except Exception as e:
+                        logging.warning(f"Could not set watch date via JS: {e}")
+
+            page.wait_for_timeout(500)
+
             # Submit the review
             submit_button = page.locator(
                 'button[type="submit"], '
@@ -134,7 +248,7 @@ class ReviewPoster:
             except Exception:
                 pass
 
-            logging.info(f"Posted review for: {name} ({year})")
+            logging.info(f"Posted review for: {name} ({year}) with date {watch_date}")
             return True, review_url
 
         except Exception as e:
