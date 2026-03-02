@@ -493,9 +493,10 @@ class TestReviewGenerationIntegration:
 
         # Mock the API and database
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_cls,
+            patch("src.reviewing.write_review.get_provider") as mock_cls,
             patch("src.reviewing.write_review.MovieDatabase") as mock_db_cls,
         ):
+            mock_anthropic_client.generate = MagicMock(return_value="A brilliant exploration of themes.")
             mock_cls.return_value = mock_anthropic_client
 
             # Set up mock database
@@ -523,9 +524,10 @@ class TestReviewGenerationIntegration:
         from src.reviewing.write_review import ReviewGenerator
 
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_cls,
+            patch("src.reviewing.write_review.get_provider") as mock_cls,
             patch("src.reviewing.write_review.MovieDatabase") as mock_db_cls,
         ):
+            mock_anthropic_client.generate = MagicMock(return_value="A brilliant exploration of themes.")
             mock_cls.return_value = mock_anthropic_client
 
             mock_db = MagicMock()
@@ -575,7 +577,7 @@ class TestReviewGenerationIntegration:
 
         # Export using ReviewGenerator with the real database
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_cls,
+            patch("src.reviewing.write_review.get_provider") as mock_cls,
             patch("src.reviewing.write_review.DATA_DIR", temp_dir),
         ):
             mock_cls.return_value = MagicMock()
@@ -638,9 +640,10 @@ class TestEndToEndFlow:
         # Step 5: Generate review for first film using ReviewGenerator
         film = films_needing_reviews[0]
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_cls,
+            patch("src.reviewing.write_review.get_provider") as mock_cls,
             patch("src.reviewing.write_review.MovieDatabase") as mock_db_cls,
         ):
+            mock_anthropic_client.generate = MagicMock(return_value="A brilliant exploration of themes.")
             mock_cls.return_value = mock_anthropic_client
 
             # Mock database for ReviewGenerator

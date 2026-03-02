@@ -29,39 +29,21 @@
         margin-top: 5px;
     }
 
-    .chart-container {
-        height: 200px;
-        display: flex;
-        align-items: flex-end;
-        gap: 4px;
-        padding: 10px;
-    }
-
-    .chart-bar {
-        flex: 1;
-        min-width: 20px;
-        background: var(--accent);
-        border-radius: 4px 4px 0 0;
+    .chart-wrapper {
         position: relative;
-        transition: height 0.3s;
+        width: 100%;
     }
 
-    .chart-bar.unfollow {
-        background: var(--accent-orange);
+    .chart-wrapper.large {
+        height: 300px;
     }
 
-    .chart-bar:hover::after {
-        content: attr(data-tooltip);
-        position: absolute;
-        bottom: 100%;
-        left: 50%;
-        transform: translateX(-50%);
-        background: var(--card-bg);
-        padding: 5px 10px;
-        border-radius: 4px;
-        font-size: 12px;
-        white-space: nowrap;
-        border: 1px solid var(--border-color);
+    .chart-wrapper.medium {
+        height: 250px;
+    }
+
+    .chart-wrapper.small {
+        height: 200px;
     }
 
     .activity-item {
@@ -116,6 +98,15 @@
 
     .user-list-item:last-child {
         border-bottom: none;
+    }
+
+    .chart-loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 200px;
+        color: var(--text-color);
+        font-size: 0.875rem;
     }
 </style>
 {% endblock %}
@@ -190,16 +181,8 @@
 <!-- Daily Activity Chart -->
 <div class="card" style="margin-top: 20px;">
     <h3>Daily Activity (Last 14 Days)</h3>
-    <div class="chart-container" id="daily-chart">
-        {% for day in analytics.daily_activity %}
-        <div class="chart-bar"
-             style="height: {{ [day.follows * 10, 100] | min }}%;"
-             data-tooltip="{{ day.date }}: {{ day.follows }} follows">
-        </div>
-        {% endfor %}
-    </div>
-    <div style="display: flex; gap: 20px; justify-content: center; margin-top: 10px;">
-        <span><span style="display: inline-block; width: 12px; height: 12px; background: var(--accent); border-radius: 2px;"></span> Follows</span>
+    <div class="chart-wrapper large">
+        <canvas id="dailyActivityChart"></canvas>
     </div>
 </div>
 
@@ -253,23 +236,29 @@
 <!-- Peak Hours -->
 <div class="card" style="margin-top: 20px;">
     <h3>Activity by Hour</h3>
-    <div class="chart-container" style="height: 150px;">
-        {% for hour in range(24) %}
-        {% set data = analytics.hourly_distribution[hour] %}
-        {% set total = data.follows + data.unfollows %}
-        {% set max_height = 100 %}
-        <div class="chart-bar"
-             style="height: {{ [(total * 5), max_height] | min }}%;"
-             data-tooltip="{{ '%02d' | format(hour) }}:00 - {{ total }} actions">
-        </div>
-        {% endfor %}
+    <div class="chart-wrapper medium">
+        <canvas id="hourlyActivityChart"></canvas>
     </div>
-    <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-color);">
-        <span>00:00</span>
-        <span>06:00</span>
-        <span>12:00</span>
-        <span>18:00</span>
-        <span>23:00</span>
+</div>
+
+<!-- Film Data Charts -->
+<div class="grid" style="margin-top: 20px;">
+    <!-- Ratings Distribution -->
+    <div class="card">
+        <h3>Ratings Distribution</h3>
+        <div class="chart-wrapper medium" id="ratingsChartContainer">
+            <canvas id="ratingsChart"></canvas>
+        </div>
+        <div class="chart-loading" id="ratingsLoading">Loading ratings data...</div>
+    </div>
+
+    <!-- Films by Decade -->
+    <div class="card">
+        <h3>Films by Decade</h3>
+        <div class="chart-wrapper medium" id="decadesChartContainer">
+            <canvas id="decadesChart"></canvas>
+        </div>
+        <div class="chart-loading" id="decadesLoading">Loading decade data...</div>
     </div>
 </div>
 
@@ -282,7 +271,442 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script>
+// Detect current theme for chart colors
+function getThemeColors() {
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    return {
+        accent: '#00e054',
+        orange: '#ff8000',
+        red: '#ee0033',
+        textColor: isLight ? '#555' : '#9ab',
+        textBright: isLight ? '#1a1a1a' : '#ffffff',
+        gridColor: isLight ? 'rgba(0, 0, 0, 0.1)' : 'rgba(255, 255, 255, 0.1)',
+        cardBg: isLight ? '#ffffff' : '#1c2228',
+    };
+}
+
+// Default Chart.js settings for the Letterboxd theme
+function applyChartDefaults() {
+    const colors = getThemeColors();
+    Chart.defaults.color = colors.textColor;
+    Chart.defaults.borderColor = colors.gridColor;
+    Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+}
+
+applyChartDefaults();
+
+// Store chart instances for theme updates
+const charts = {};
+
+{% if analytics %}
+// ---- Daily Activity Chart (Bar) ----
+(function() {
+    const ctx = document.getElementById('dailyActivityChart');
+    if (!ctx) return;
+
+    const dailyData = {{ analytics.daily_activity | tojson }};
+    const labels = dailyData.map(d => {
+        const date = new Date(d.date);
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    });
+    const followsData = dailyData.map(d => d.follows);
+    const unfollowsData = dailyData.map(d => d.unfollows || 0);
+
+    const colors = getThemeColors();
+    charts.daily = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Follows',
+                    data: followsData,
+                    backgroundColor: colors.accent + 'cc',
+                    borderColor: colors.accent,
+                    borderWidth: 1,
+                    borderRadius: 4,
+                },
+                {
+                    label: 'Unfollows',
+                    data: unfollowsData,
+                    backgroundColor: colors.orange + 'cc',
+                    borderColor: colors.orange,
+                    borderWidth: 1,
+                    borderRadius: 4,
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: 'index',
+            },
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        usePointStyle: true,
+                        padding: 20,
+                    }
+                },
+                tooltip: {
+                    backgroundColor: colors.cardBg,
+                    titleColor: colors.textBright,
+                    bodyColor: colors.textColor,
+                    borderColor: colors.gridColor,
+                    borderWidth: 1,
+                    padding: 12,
+                    displayColors: true,
+                }
+            },
+            scales: {
+                x: {
+                    grid: {
+                        display: false,
+                    },
+                    ticks: {
+                        maxRotation: 45,
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1,
+                        precision: 0,
+                    },
+                    grid: {
+                        color: colors.gridColor,
+                    }
+                }
+            }
+        }
+    });
+})();
+
+// ---- Hourly Activity Chart (Bar) ----
+(function() {
+    const ctx = document.getElementById('hourlyActivityChart');
+    if (!ctx) return;
+
+    const hourlyRaw = {{ analytics.hourly_distribution | tojson }};
+    const labels = [];
+    const followsData = [];
+    const unfollowsData = [];
+
+    for (let h = 0; h < 24; h++) {
+        labels.push(String(h).padStart(2, '0') + ':00');
+        const data = hourlyRaw[h] || { follows: 0, unfollows: 0 };
+        followsData.push(data.follows);
+        unfollowsData.push(data.unfollows);
+    }
+
+    const colors = getThemeColors();
+    charts.hourly = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Follows',
+                    data: followsData,
+                    backgroundColor: colors.accent + '99',
+                    borderColor: colors.accent,
+                    borderWidth: 1,
+                    borderRadius: 3,
+                },
+                {
+                    label: 'Unfollows',
+                    data: unfollowsData,
+                    backgroundColor: colors.orange + '99',
+                    borderColor: colors.orange,
+                    borderWidth: 1,
+                    borderRadius: 3,
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: 'index',
+            },
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        usePointStyle: true,
+                        padding: 20,
+                    }
+                },
+                tooltip: {
+                    backgroundColor: colors.cardBg,
+                    titleColor: colors.textBright,
+                    bodyColor: colors.textColor,
+                    borderColor: colors.gridColor,
+                    borderWidth: 1,
+                    padding: 12,
+                }
+            },
+            scales: {
+                x: {
+                    grid: {
+                        display: false,
+                    },
+                    ticks: {
+                        maxRotation: 0,
+                        callback: function(value, index) {
+                            // Show every 3rd hour label to reduce clutter
+                            return index % 3 === 0 ? this.getLabelForValue(value) : '';
+                        }
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1,
+                        precision: 0,
+                    },
+                    grid: {
+                        color: colors.gridColor,
+                    }
+                }
+            }
+        }
+    });
+})();
+{% endif %}
+
+// ---- Ratings Distribution Chart (fetched via API) ----
+(function() {
+    const container = document.getElementById('ratingsChartContainer');
+    const loading = document.getElementById('ratingsLoading');
+    const ctx = document.getElementById('ratingsChart');
+    if (!ctx || !container || !loading) return;
+
+    container.style.display = 'none';
+
+    fetch('/api/analytics/ratings')
+        .then(res => res.json())
+        .then(data => {
+            loading.style.display = 'none';
+
+            if (!data.ratings || data.ratings.length === 0) {
+                loading.style.display = 'flex';
+                loading.textContent = 'No rating data available';
+                return;
+            }
+
+            container.style.display = 'block';
+            const colors = getThemeColors();
+
+            const labels = data.ratings.map(r => r.rating % 1 === 0 ? r.rating.toFixed(0) : r.rating.toFixed(1));
+            const counts = data.ratings.map(r => r.count);
+
+            // Gradient colors from red (low) to green (high)
+            const barColors = data.ratings.map(r => {
+                const ratio = (r.rating - 0.5) / 4.5;
+                if (ratio < 0.5) {
+                    return colors.orange;
+                }
+                return colors.accent;
+            });
+
+            charts.ratings = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Films',
+                        data: counts,
+                        backgroundColor: barColors.map(c => c + 'cc'),
+                        borderColor: barColors,
+                        borderWidth: 1,
+                        borderRadius: 4,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false,
+                        },
+                        tooltip: {
+                            backgroundColor: colors.cardBg,
+                            titleColor: colors.textBright,
+                            bodyColor: colors.textColor,
+                            borderColor: colors.gridColor,
+                            borderWidth: 1,
+                            padding: 12,
+                            callbacks: {
+                                title: function(items) {
+                                    return 'Rating: ' + items[0].label + ' stars';
+                                },
+                                label: function(item) {
+                                    return item.raw + ' film' + (item.raw !== 1 ? 's' : '');
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Rating (stars)',
+                                color: colors.textColor,
+                            },
+                            grid: {
+                                display: false,
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Number of Films',
+                                color: colors.textColor,
+                            },
+                            ticks: {
+                                precision: 0,
+                            },
+                            grid: {
+                                color: colors.gridColor,
+                            }
+                        }
+                    }
+                }
+            });
+        })
+        .catch(err => {
+            loading.textContent = 'Failed to load ratings data';
+            console.error('Ratings chart error:', err);
+        });
+})();
+
+// ---- Films by Decade Chart (Doughnut, fetched via API) ----
+(function() {
+    const container = document.getElementById('decadesChartContainer');
+    const loading = document.getElementById('decadesLoading');
+    const ctx = document.getElementById('decadesChart');
+    if (!ctx || !container || !loading) return;
+
+    container.style.display = 'none';
+
+    fetch('/api/analytics/watch-years')
+        .then(res => res.json())
+        .then(data => {
+            loading.style.display = 'none';
+
+            if (!data.decades || data.decades.length === 0) {
+                loading.style.display = 'flex';
+                loading.textContent = 'No film year data available';
+                return;
+            }
+
+            container.style.display = 'block';
+            const colors = getThemeColors();
+
+            const labels = data.decades.map(d => d.decade);
+            const counts = data.decades.map(d => d.count);
+
+            // Generate a palette based on the Letterboxd theme
+            const palette = [
+                '#00e054', '#ff8000', '#40bcf4', '#ee7b30',
+                '#e03', '#8b5cf6', '#06b6d4', '#f59e0b',
+                '#10b981', '#ec4899', '#6366f1', '#84cc16',
+                '#f97316', '#14b8a6', '#a855f7', '#ef4444',
+            ];
+
+            charts.decades = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: counts,
+                        backgroundColor: palette.slice(0, labels.length).map(c => c + 'cc'),
+                        borderColor: palette.slice(0, labels.length),
+                        borderWidth: 2,
+                        hoverOffset: 8,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '45%',
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: {
+                                usePointStyle: true,
+                                padding: 12,
+                                font: {
+                                    size: 11,
+                                }
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: colors.cardBg,
+                            titleColor: colors.textBright,
+                            bodyColor: colors.textColor,
+                            borderColor: colors.gridColor,
+                            borderWidth: 1,
+                            padding: 12,
+                            callbacks: {
+                                label: function(item) {
+                                    const total = item.dataset.data.reduce((a, b) => a + b, 0);
+                                    const pct = ((item.raw / total) * 100).toFixed(1);
+                                    return item.label + ': ' + item.raw + ' films (' + pct + '%)';
+                                }
+                            }
+                        }
+                    },
+                }
+            });
+        })
+        .catch(err => {
+            loading.textContent = 'Failed to load decade data';
+            console.error('Decades chart error:', err);
+        });
+})();
+
+// Theme change observer - update charts when theme toggles
+const originalToggle = window.toggleTheme;
+window.toggleTheme = function() {
+    originalToggle();
+    // Allow DOM to update, then refresh chart colors
+    setTimeout(function() {
+        applyChartDefaults();
+        const colors = getThemeColors();
+        Object.values(charts).forEach(function(chart) {
+            if (!chart) return;
+            // Update tooltip styling for all charts
+            if (chart.options.plugins && chart.options.plugins.tooltip) {
+                chart.options.plugins.tooltip.backgroundColor = colors.cardBg;
+                chart.options.plugins.tooltip.titleColor = colors.textBright;
+                chart.options.plugins.tooltip.bodyColor = colors.textColor;
+                chart.options.plugins.tooltip.borderColor = colors.gridColor;
+            }
+            // Update grid colors for bar/line charts
+            if (chart.options.scales) {
+                Object.values(chart.options.scales).forEach(function(scale) {
+                    if (scale.grid) {
+                        scale.grid.color = colors.gridColor;
+                    }
+                    if (scale.title) {
+                        scale.title.color = colors.textColor;
+                    }
+                });
+            }
+            chart.update('none');
+        });
+    }, 50);
+};
+
 // Auto-refresh analytics every 60 seconds
 setInterval(async () => {
     try {

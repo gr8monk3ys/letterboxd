@@ -434,6 +434,48 @@ async def get_analytics_daily(days: int = 30):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.get("/api/analytics/ratings")
+async def get_ratings_distribution():
+    """Get rating distribution histogram."""
+    try:
+        with MovieDatabase() as db:
+            db.cursor.execute("""
+                SELECT rating, COUNT(*) as count
+                FROM films
+                WHERE rating IS NOT NULL
+                GROUP BY rating
+                ORDER BY rating
+            """)
+            rows = db.cursor.fetchall()
+            return JSONResponse({"ratings": [{"rating": r[0], "count": r[1]} for r in rows]})
+    except Exception as e:
+        logger.error(f"Error getting ratings distribution: {e}")
+        return JSONResponse({"ratings": []})
+
+
+@app.get("/api/analytics/watch-years")
+async def get_watch_years_distribution():
+    """Get distribution of watched films by release year (decade grouping)."""
+    try:
+        with MovieDatabase() as db:
+            db.cursor.execute("""
+                SELECT
+                    (year / 10) * 10 as decade,
+                    COUNT(*) as count
+                FROM films
+                WHERE year IS NOT NULL
+                GROUP BY decade
+                ORDER BY decade
+            """)
+            rows = db.cursor.fetchall()
+            return JSONResponse(
+                {"decades": [{"decade": f"{int(r[0])}s", "count": r[1]} for r in rows]}
+            )
+    except Exception as e:
+        logger.error(f"Error getting watch years distribution: {e}")
+        return JSONResponse({"decades": []})
+
+
 @app.get("/analytics", response_class=HTMLResponse)
 async def analytics_page(request: Request):
     """Analytics dashboard page."""

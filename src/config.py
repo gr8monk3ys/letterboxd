@@ -62,6 +62,7 @@ class Config:
 
     # Review generation settings
     review_tone: str = field(default_factory=lambda: os.getenv("REVIEW_TONE", "casual"))
+    ai_provider: str = field(default_factory=lambda: os.getenv("AI_PROVIDER", "anthropic"))
 
     # Dashboard settings
     dashboard_api_key: str = field(default_factory=lambda: os.getenv("DASHBOARD_API_KEY", ""))

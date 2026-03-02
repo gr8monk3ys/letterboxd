@@ -8,13 +8,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import anthropic
-from anthropic.types import TextBlock
 from tqdm import tqdm
 
 from src.config import DATA_DIR, get_config, get_log_path
 from src.data_processing.create_database import MovieDatabase
-from src.utils.errors import ErrorCategory, handle_exception, log_error_with_suggestions
+from src.providers import get_provider
+from src.providers.base import VALID_PROVIDERS
+from src.utils.errors import handle_exception
 from src.utils.tmdb import TMDBClient, format_film_context
 
 # Set up logging
@@ -95,18 +95,34 @@ VALID_TONES = list(TONE_PRESETS.keys())
 
 
 class ReviewGenerator:
-    def __init__(self, tone: str | None = None, use_tmdb: bool = True):
+    def __init__(
+        self,
+        tone: str | None = None,
+        use_tmdb: bool = True,
+        provider: str | None = None,
+        target_words: int | None = None,
+        custom_tone: str | None = None,
+    ):
         self.config = get_config()
-        self.client = anthropic.Anthropic(api_key=self.config.anthropic_api_key)
         self.db = MovieDatabase()
         self.db.connect()
         self._style_examples: list[dict] | None = None
+        self.target_words = target_words
+        self.custom_tone = custom_tone
+
+        # Initialize AI provider (defaults to Anthropic)
+        provider_name = provider or self.config.ai_provider
+        self.provider_name = provider_name
+        self.ai = get_provider(provider_name, api_key=self.config.anthropic_api_key)
 
         # Set tone from parameter, env var, or default
-        self.tone = tone or self.config.review_tone
-        if self.tone not in VALID_TONES:
-            logging.warning(f"Invalid tone '{self.tone}', using 'casual'")
-            self.tone = "casual"
+        if custom_tone:
+            self.tone = "custom"
+        else:
+            self.tone = tone or self.config.review_tone
+            if self.tone not in VALID_TONES:
+                logging.warning(f"Invalid tone '{self.tone}', using 'casual'")
+                self.tone = "casual"
 
         # Initialize TMDB client for richer film metadata
         self.use_tmdb = use_tmdb
@@ -119,6 +135,15 @@ class ReviewGenerator:
 
     def get_tone_preset(self) -> dict:
         """Get the current tone preset configuration."""
+        if self.tone == "custom" and self.custom_tone:
+            return {
+                "name": "Custom",
+                "description": self.custom_tone,
+                "guidelines": f"- {self.custom_tone}\n- No spoilers",
+                "system": (
+                    f"You are writing Letterboxd reviews. Follow this tone: {self.custom_tone}"
+                ),
+            }
         return TONE_PRESETS[self.tone]
 
     def _get_style_examples(self, count: int = 10) -> list[dict]:
@@ -179,38 +204,28 @@ class ReviewGenerator:
             # Build prompt with optional TMDB context
             context_line = f"\nFilm info: {film_context}" if film_context else ""
 
+            # Add target word count guideline if specified
+            length_guideline = ""
+            if self.target_words:
+                length_guideline = f"\n- Target approximately {self.target_words} words"
+
             prompt = f"""Write a Letterboxd review for "{title}" ({year}).
 {rating_context}{context_line}
 
 Guidelines:
-{tone_preset["guidelines"]}
+{tone_preset["guidelines"]}{length_guideline}
 - Write only the review text, no title or rating
 {style_examples}
 
 Now write a review for "{title}" ({year}):"""
 
-            response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=300,
-                system=tone_preset["system"],
-                messages=[
-                    {"role": "user", "content": prompt},
-                ],
-            )
+            # Scale max_tokens based on target word count
+            max_tokens = 300
+            if self.target_words:
+                max_tokens = max(300, int(self.target_words * 2))
 
-            block = response.content[0]
-            if isinstance(block, TextBlock):
-                text: str = block.text
-                return text.strip()
-            return None
+            return self.ai.generate(prompt, tone_preset["system"], max_tokens)
 
-        except anthropic.APIError as e:
-            log_error_with_suggestions(
-                f"API error generating review for '{film.get('name')}'",
-                ErrorCategory.API,
-                e,
-            )
-            return None
         except Exception as e:
             handle_exception(e, f"Error generating review for '{film.get('name')}'")
             return None
@@ -367,6 +382,21 @@ def main() -> None:
         help=f"Review tone preset (choices: {', '.join(VALID_TONES)})",
     )
     parser.add_argument(
+        "--custom-tone",
+        type=str,
+        help="Custom tone description (e.g., 'poetic and dreamlike')",
+    )
+    parser.add_argument(
+        "--target-words",
+        type=int,
+        help="Target word count for reviews (e.g., 100)",
+    )
+    parser.add_argument(
+        "--provider",
+        choices=VALID_PROVIDERS,
+        help=f"AI provider (choices: {', '.join(VALID_PROVIDERS)})",
+    )
+    parser.add_argument(
         "--list-tones",
         action="store_true",
         help="List available tone presets and exit",
@@ -416,7 +446,12 @@ def main() -> None:
         print("Set tone via --tone flag or REVIEW_TONE env var")
         return
 
-    generator = ReviewGenerator(tone=args.tone)
+    generator = ReviewGenerator(
+        tone=args.tone,
+        provider=args.provider,
+        target_words=args.target_words,
+        custom_tone=args.custom_tone,
+    )
 
     try:
         if args.export:
@@ -444,6 +479,9 @@ def main() -> None:
                 f"{counts['unreviewed']} remaining"
             )
             print(f"Tone: {tone_info['name']} - {tone_info['description']}")
+            print(f"Provider: {generator.provider_name}")
+            if generator.target_words:
+                print(f"Target words: ~{generator.target_words}")
 
             # Show active filters
             filters_active = []
