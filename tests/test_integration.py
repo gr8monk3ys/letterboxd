@@ -496,7 +496,8 @@ class TestReviewGenerationIntegration:
             patch("src.reviewing.write_review.get_provider") as mock_cls,
             patch("src.reviewing.write_review.MovieDatabase") as mock_db_cls,
         ):
-            mock_anthropic_client.generate = MagicMock(return_value="A brilliant exploration of themes.")
+            review_text = "A brilliant exploration of themes."
+            mock_anthropic_client.generate = MagicMock(return_value=review_text)
             mock_cls.return_value = mock_anthropic_client
 
             # Set up mock database
@@ -513,11 +514,11 @@ class TestReviewGenerationIntegration:
             assert review is not None
             assert len(review) > 0
 
-            # Verify API was called
-            assert mock_anthropic_client.messages.create.called
-            call_args = mock_anthropic_client.messages.create.call_args
-            messages = call_args.kwargs.get("messages", [])
-            assert len(messages) > 0
+            # Verify provider's generate() was called
+            assert mock_anthropic_client.generate.called
+            call_args = mock_anthropic_client.generate.call_args
+            prompt = call_args[0][0]  # first positional arg
+            assert len(prompt) > 0
 
     def test_tone_preset_affects_prompt(self, mock_anthropic_client, mock_env_vars):
         """Test that tone presets modify the generation prompt."""
@@ -527,7 +528,8 @@ class TestReviewGenerationIntegration:
             patch("src.reviewing.write_review.get_provider") as mock_cls,
             patch("src.reviewing.write_review.MovieDatabase") as mock_db_cls,
         ):
-            mock_anthropic_client.generate = MagicMock(return_value="A brilliant exploration of themes.")
+            review_text = "A brilliant exploration of themes."
+            mock_anthropic_client.generate = MagicMock(return_value=review_text)
             mock_cls.return_value = mock_anthropic_client
 
             mock_db = MagicMock()
@@ -547,9 +549,9 @@ class TestReviewGenerationIntegration:
             film = {"name": "Test Film", "year": 2024, "rating": 2.0}
             generator.generate_review(film)
 
-            # Verify API was called with snarky system prompt
-            call_args = mock_anthropic_client.messages.create.call_args
-            system = call_args.kwargs.get("system", "")
+            # Verify provider's generate() was called with snarky system prompt
+            call_args = mock_anthropic_client.generate.call_args
+            system = call_args[0][1]  # second positional arg is system prompt
             assert "snarky" in system.lower() or "witty" in system.lower()
 
     def test_export_reviews_to_csv(self, temp_dir, mock_env_vars):
@@ -643,7 +645,8 @@ class TestEndToEndFlow:
             patch("src.reviewing.write_review.get_provider") as mock_cls,
             patch("src.reviewing.write_review.MovieDatabase") as mock_db_cls,
         ):
-            mock_anthropic_client.generate = MagicMock(return_value="A brilliant exploration of themes.")
+            review_text = "A brilliant exploration of themes."
+            mock_anthropic_client.generate = MagicMock(return_value=review_text)
             mock_cls.return_value = mock_anthropic_client
 
             # Mock database for ReviewGenerator
