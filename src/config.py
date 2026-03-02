@@ -63,6 +63,9 @@ class Config:
     # Review generation settings
     review_tone: str = field(default_factory=lambda: os.getenv("REVIEW_TONE", "casual"))
 
+    # Dashboard settings
+    dashboard_api_key: str = field(default_factory=lambda: os.getenv("DASHBOARD_API_KEY", ""))
+
     # File paths
     connections_file: Path = field(default_factory=lambda: DATA_DIR / "connections.csv")
     database_file: Path = field(default_factory=lambda: DATA_DIR / "movie_database.db")

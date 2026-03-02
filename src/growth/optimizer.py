@@ -45,6 +45,13 @@ class PostingOptimizer:
         self.db_path = db_path or (DATA_DIR / "movie_database.db")
         self._conn: sqlite3.Connection | None = None
 
+    def __enter__(self):
+        self.connect()
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
     def connect(self) -> bool:
         """Connect to the database."""
         if not self.db_path.exists():

@@ -109,6 +109,17 @@ src/
 ├── reviewing/
 │   ├── write_review.py                # Style-matched AI review generation (tone presets)
 │   └── post_review.py                 # Post reviews to Letterboxd
+├── growth/
+│   ├── tracker.py                     # Daily follower snapshots and milestones
+│   ├── attribution.py                 # Review-to-follower growth attribution
+│   ├── trending.py                    # Trending film detection for review targeting
+│   ├── campaigns.py                   # Growth campaign tracking
+│   ├── smart_follow.py                # Similar-taste user discovery and queue
+│   ├── optimizer.py                   # Posting time optimization
+│   └── dashboard.py                   # Unified growth dashboard with correlation
+├── lists/
+│   ├── create_list.py                 # Browser automation for creating Letterboxd lists
+│   └── generate_lists.py             # Auto-generate themed lists from rated films
 ├── utils/
 │   ├── auth.py                        # Shared login/navigation logic
 │   ├── retry.py                       # Retry decorators for network failures
@@ -145,6 +156,12 @@ src/
 | `liked_films` | letterboxd_uri | Liked films |
 | `rate_limits` | id (auto) | Follow/unfollow action timestamps |
 | `schema_version` | version | Migration tracking |
+| `follower_snapshots` | id (auto) | Daily follower/following counts |
+| `review_attribution` | id (auto) | Review-to-follower growth correlation |
+| `trending_films` | id (auto) | Cached trending films for review targeting |
+| `growth_campaigns` | id (auto) | Grouped growth activity tracking |
+| `campaign_actions` | id (auto) | Individual actions within campaigns |
+| `smart_follow_queue` | id (auto) | Queue of similar-taste users to follow |
 
 ### Configuration
 Environment variables (`.env`):
@@ -160,6 +177,7 @@ Environment variables (`.env`):
 | `ELEMENT_TIMEOUT` | Optional | Element timeout in ms (default: 10000) |
 | `HOURLY_RATE_LIMIT` | Optional | Hourly follow/unfollow limit (default: 30) |
 | `DAILY_RATE_LIMIT` | Optional | Daily follow/unfollow limit (default: 100) |
+| `DASHBOARD_API_KEY` | Optional | API key for dashboard action endpoints (opt-in) |
 
 ### Data Storage
 - `data/` - Letterboxd export ZIP, SQLite database, CSV logs

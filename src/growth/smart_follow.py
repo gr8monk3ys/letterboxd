@@ -117,10 +117,32 @@ class SmartFollower:
         Returns:
             List of user dicts with similarity info.
         """
-        # TODO: Implement get_film_fans in scraper
-        # The letterboxdpy library doesn't expose film fans directly
-        logger.warning(f"get_film_fans not implemented, returning empty list for {film_slug}")
-        return []
+        try:
+            fans = self.scraper.get_film_fans(film_slug, limit=limit)
+        except Exception as e:
+            logger.error(f"Error fetching fans for {film_slug}: {e}")
+            return []
+
+        if not fans:
+            logger.info(f"No fans found for {film_slug}")
+            return []
+
+        # Get user's top films to calculate similarity
+        top_films = set(self.get_top_rated_films())
+
+        results = []
+        for username in fans:
+            # Base similarity score from sharing a top-rated film
+            similarity = 1.0 / max(len(top_films), 1)
+            results.append(
+                {
+                    "username": username,
+                    "source": f"fans:{film_slug}",
+                    "similarity_score": round(similarity, 3),
+                }
+            )
+
+        return results
 
     def populate_queue(
         self,

@@ -119,6 +119,7 @@ class ReviewPoster:
             SELECT ar.letterboxd_uri, ar.name, ar.year, ar.ai_review, f.rating
             FROM ai_reviews ar
             LEFT JOIN films f ON ar.letterboxd_uri = f.letterboxd_uri
+            WHERE ar.posted_at IS NULL
             ORDER BY ar.generated_at DESC
         """)
         columns = ["letterboxd_uri", "name", "year", "review", "rating"]
@@ -315,6 +316,17 @@ class ReviewPoster:
                                 tone_preset=self.tone,
                                 letterboxd_review_url=review_url,
                             )
+                            # Mark the ai_review as posted
+                            self.db.cursor.execute(
+                                "UPDATE ai_reviews SET posted_at = ?, posted_url = ?"
+                                " WHERE letterboxd_uri = ?",
+                                (
+                                    datetime.now().isoformat(),
+                                    review_url,
+                                    film["letterboxd_uri"],
+                                ),
+                            )
+                            self.db.conn.commit()
                         # Delay between posts
                         time.sleep(2)
 

@@ -42,6 +42,13 @@ class ReviewAttributor:
         self.scraper = LetterboxdScraper()
         self._conn: sqlite3.Connection | None = None
 
+    def __enter__(self):
+        self.connect()
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
     def connect(self) -> bool:
         """Connect to the database."""
         if not self.db_path.exists():

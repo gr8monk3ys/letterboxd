@@ -43,6 +43,13 @@ class MovieDatabase:
             raise RuntimeError("Database not connected. Call connect() first.")
         return self._cursor
 
+    def __enter__(self):
+        self.connect()
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
     def connect(self) -> None:
         """Connect to the SQLite database."""
         try:

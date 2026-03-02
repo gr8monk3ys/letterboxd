@@ -95,6 +95,8 @@ def export_database(
         tables_to_backup = [t for t in tables_to_backup if t != "rate_limits"]
 
     for table_name in tables_to_backup:
+        if table_name not in BACKUP_TABLES:
+            raise ValueError(f"Unknown table: {table_name}")
         try:
             # Get schema
             schema = get_table_schema(cursor, table_name)

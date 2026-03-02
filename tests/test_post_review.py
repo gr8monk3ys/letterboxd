@@ -33,7 +33,9 @@ class TestReviewPoster:
                 name TEXT,
                 year INTEGER,
                 ai_review TEXT,
-                generated_at TEXT
+                generated_at TEXT,
+                posted_at TEXT,
+                posted_url TEXT
             )
         """)
         cursor.execute("""
@@ -62,7 +64,8 @@ class TestReviewPoster:
             ("https://letterboxd.com/film/test-film/", "Test Film", 2024, 4.0),
         )
         cursor.execute(
-            "INSERT INTO ai_reviews VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO ai_reviews (letterboxd_uri, name, year, ai_review, generated_at)"
+            " VALUES (?, ?, ?, ?, ?)",
             (
                 "https://letterboxd.com/film/test-film/",
                 "Test Film",
@@ -184,7 +187,9 @@ class TestReviewPosterPostReview:
                 name TEXT,
                 year INTEGER,
                 ai_review TEXT,
-                generated_at TEXT
+                generated_at TEXT,
+                posted_at TEXT,
+                posted_url TEXT
             )
         """)
         cursor.execute("""
@@ -315,7 +320,9 @@ class TestMain:
                 name TEXT,
                 year INTEGER,
                 ai_review TEXT,
-                generated_at TEXT
+                generated_at TEXT,
+                posted_at TEXT,
+                posted_url TEXT
             )
         """)
         cursor.execute("""
@@ -338,7 +345,8 @@ class TestMain:
         """)
         cursor.execute("INSERT INTO schema_version VALUES (1)")
         cursor.execute(
-            "INSERT INTO ai_reviews VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO ai_reviews (letterboxd_uri, name, year, ai_review, generated_at)"
+            " VALUES (?, ?, ?, ?, ?)",
             (
                 "https://letterboxd.com/film/test/",
                 "Test Film",

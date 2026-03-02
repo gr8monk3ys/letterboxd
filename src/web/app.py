@@ -6,7 +6,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
@@ -30,14 +39,20 @@ TEMPLATE_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
 
+async def verify_api_key(x_api_key: str | None = Header(None)) -> None:
+    """Verify API key for action endpoints. Skips auth if DASHBOARD_API_KEY is not set."""
+    config = get_config()
+    if not config.dashboard_api_key:
+        return
+    if x_api_key != config.dashboard_api_key:
+        raise HTTPException(status_code=403, detail="Invalid or missing API key")
+
+
 def get_database_stats() -> dict:
     """Get stats from the movie database."""
     try:
-        db = MovieDatabase()
-        db.connect()
-        counts = db.get_review_count()
-        db.close()
-        return counts
+        with MovieDatabase() as db:
+            return db.get_review_count()
     except Exception as e:
         logger.error(f"Error getting database stats: {e}")
         return {
@@ -51,11 +66,8 @@ def get_database_stats() -> dict:
 def get_rate_limit_stats() -> dict:
     """Get rate limit statistics."""
     try:
-        limiter = RateLimiter()
-        limiter.connect()
-        stats = limiter.get_stats()
-        limiter.close()
-        return stats
+        with RateLimiter() as limiter:
+            return limiter.get_stats()
     except Exception as e:
         logger.error(f"Error getting rate limit stats: {e}")
         return {}
@@ -125,11 +137,9 @@ async def api_logs(log_name: str, lines: int = 50):
 async def api_unreviewed_films(limit: int = 20):
     """Get list of unreviewed films."""
     try:
-        db = MovieDatabase()
-        db.connect()
-        films = db.get_films_without_reviews()[:limit]
-        db.close()
-        return JSONResponse({"films": films, "total": len(films)})
+        with MovieDatabase() as db:
+            films = db.get_films_without_reviews()[:limit]
+            return JSONResponse({"films": films, "total": len(films)})
     except Exception as e:
         logger.error(f"Error getting unreviewed films: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -139,21 +149,19 @@ async def api_unreviewed_films(limit: int = 20):
 async def api_ai_reviews(limit: int = 20):
     """Get list of AI-generated reviews."""
     try:
-        db = MovieDatabase()
-        db.connect()
-        db.cursor.execute(
-            """
-            SELECT letterboxd_uri, name, year, ai_review, generated_at
-            FROM ai_reviews
-            ORDER BY generated_at DESC
-            LIMIT ?
-        """,
-            (limit,),
-        )
-        columns = ["letterboxd_uri", "name", "year", "review", "generated_at"]
-        reviews = [dict(zip(columns, row)) for row in db.cursor.fetchall()]
-        db.close()
-        return JSONResponse({"reviews": reviews, "total": len(reviews)})
+        with MovieDatabase() as db:
+            db.cursor.execute(
+                """
+                SELECT letterboxd_uri, name, year, ai_review, generated_at
+                FROM ai_reviews
+                ORDER BY generated_at DESC
+                LIMIT ?
+            """,
+                (limit,),
+            )
+            columns = ["letterboxd_uri", "name", "year", "review", "generated_at"]
+            reviews = [dict(zip(columns, row)) for row in db.cursor.fetchall()]
+            return JSONResponse({"reviews": reviews, "total": len(reviews)})
     except Exception as e:
         logger.error(f"Error getting AI reviews: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -266,7 +274,7 @@ async def get_task_status():
     return JSONResponse(running_tasks)
 
 
-@app.post("/api/actions/follow-popular")
+@app.post("/api/actions/follow-popular", dependencies=[Depends(verify_api_key)])
 async def action_follow_popular(
     background_tasks: BackgroundTasks, period: str = "week", limit: int = 20
 ):
@@ -299,7 +307,7 @@ async def action_follow_popular(
     )
 
 
-@app.post("/api/actions/unfollow")
+@app.post("/api/actions/unfollow", dependencies=[Depends(verify_api_key)])
 async def action_unfollow(background_tasks: BackgroundTasks, limit: int = 20):
     """Trigger unfollowing non-followers."""
     if running_tasks.get("unfollow"):
@@ -322,7 +330,7 @@ async def action_unfollow(background_tasks: BackgroundTasks, limit: int = 20):
     )
 
 
-@app.post("/api/actions/generate-reviews")
+@app.post("/api/actions/generate-reviews", dependencies=[Depends(verify_api_key)])
 async def action_generate_reviews(
     background_tasks: BackgroundTasks, limit: int = 10, tone: str = "casual"
 ):
@@ -355,7 +363,7 @@ async def action_generate_reviews(
     )
 
 
-@app.post("/api/actions/clear-tmdb-cache")
+@app.post("/api/actions/clear-tmdb-cache", dependencies=[Depends(verify_api_key)])
 async def action_clear_tmdb_cache():
     """Clear the TMDB metadata cache."""
     try:
@@ -392,11 +400,8 @@ async def get_analytics_summary():
     try:
         from src.analytics import ConnectionAnalytics
 
-        analytics = ConnectionAnalytics()
-        analytics.connect()
-        summary = analytics.get_summary()
-        analytics.close()
-        return JSONResponse(summary)
+        with ConnectionAnalytics() as analytics:
+            return JSONResponse(analytics.get_summary())
     except Exception as e:
         logger.error(f"Error getting analytics: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -408,11 +413,8 @@ async def get_analytics_growth(days: int = 30):
     try:
         from src.analytics import ConnectionAnalytics
 
-        analytics = ConnectionAnalytics()
-        analytics.connect()
-        growth = analytics.get_growth_rate(days)
-        analytics.close()
-        return JSONResponse(growth)
+        with ConnectionAnalytics() as analytics:
+            return JSONResponse(analytics.get_growth_rate(days))
     except Exception as e:
         logger.error(f"Error getting growth analytics: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -424,11 +426,9 @@ async def get_analytics_daily(days: int = 30):
     try:
         from src.analytics import ConnectionAnalytics
 
-        analytics = ConnectionAnalytics()
-        analytics.connect()
-        daily = analytics.get_daily_activity(days)
-        analytics.close()
-        return JSONResponse({"data": daily, "days": days})
+        with ConnectionAnalytics() as analytics:
+            daily = analytics.get_daily_activity(days)
+            return JSONResponse({"data": daily, "days": days})
     except Exception as e:
         logger.error(f"Error getting daily analytics: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -440,10 +440,8 @@ async def analytics_page(request: Request):
     try:
         from src.analytics import ConnectionAnalytics
 
-        analytics = ConnectionAnalytics()
-        analytics.connect()
-        summary = analytics.get_summary()
-        analytics.close()
+        with ConnectionAnalytics() as analytics:
+            summary = analytics.get_summary()
     except Exception as e:
         logger.error(f"Error loading analytics: {e}")
         summary = {}
@@ -463,14 +461,12 @@ async def metrics_page(request: Request):
     try:
         from src.review_metrics import ReviewMetricsDB, get_tone_suggestions
 
-        db = ReviewMetricsDB()
-        db.connect()
-        stats = db.get_stats()
-        performance = db.get_tone_performance()
-        recent_reviews = db.get_posted_reviews(limit=20)
-        ab_test = db.get_active_ab_test()
-        suggestions = get_tone_suggestions(db)
-        db.close()
+        with ReviewMetricsDB() as db:
+            stats = db.get_stats()
+            performance = db.get_tone_performance()
+            recent_reviews = db.get_posted_reviews(limit=20)
+            ab_test = db.get_active_ab_test()
+            suggestions = get_tone_suggestions(db)
 
         # Convert TonePerformance dataclasses to dicts for template
         performance_dicts = [
@@ -516,11 +512,8 @@ async def get_metrics_stats():
     try:
         from src.review_metrics import ReviewMetricsDB
 
-        db = ReviewMetricsDB()
-        db.connect()
-        stats = db.get_stats()
-        db.close()
-        return JSONResponse(stats)
+        with ReviewMetricsDB() as db:
+            return JSONResponse(db.get_stats())
     except Exception as e:
         logger.error(f"Error getting metrics stats: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -532,26 +525,24 @@ async def get_metrics_performance(days: int = 30):
     try:
         from src.review_metrics import ReviewMetricsDB
 
-        db = ReviewMetricsDB()
-        db.connect()
-        performance = db.get_tone_performance(days=days)
-        db.close()
-        return JSONResponse(
-            {
-                "data": [
-                    {
-                        "tone": p.tone,
-                        "review_count": p.review_count,
-                        "total_likes": p.total_likes,
-                        "total_comments": p.total_comments,
-                        "avg_likes": p.avg_likes,
-                        "avg_comments": p.avg_comments,
-                        "engagement_score": p.engagement_score,
-                    }
-                    for p in performance
-                ]
-            }
-        )
+        with ReviewMetricsDB() as db:
+            performance = db.get_tone_performance(days=days)
+            return JSONResponse(
+                {
+                    "data": [
+                        {
+                            "tone": p.tone,
+                            "review_count": p.review_count,
+                            "total_likes": p.total_likes,
+                            "total_comments": p.total_comments,
+                            "avg_likes": p.avg_likes,
+                            "avg_comments": p.avg_comments,
+                            "engagement_score": p.engagement_score,
+                        }
+                        for p in performance
+                    ]
+                }
+            )
     except Exception as e:
         logger.error(f"Error getting tone performance: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -563,12 +554,10 @@ async def update_engagement():
     try:
         from src.review_metrics import EngagementScraper, ReviewMetricsDB
 
-        db = ReviewMetricsDB()
-        db.connect()
-        scraper = EngagementScraper()
-        result = scraper.update_all_engagement(db)
-        db.close()
-        return JSONResponse({"message": f"Updated {result['updated']} reviews", **result})
+        with ReviewMetricsDB() as db:
+            scraper = EngagementScraper()
+            result = scraper.update_all_engagement(db)
+            return JSONResponse({"message": f"Updated {result['updated']} reviews", **result})
     except Exception as e:
         logger.error(f"Error updating engagement: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -588,10 +577,8 @@ async def start_ab_test(request: Request):
         if not all([name, tone_a, tone_b]):
             return JSONResponse({"error": "Missing required fields"}, status_code=400)
 
-        db = ReviewMetricsDB()
-        db.connect()
-        test_id = db.create_ab_test(name, tone_a, tone_b)
-        db.close()
+        with ReviewMetricsDB() as db:
+            test_id = db.create_ab_test(name, tone_a, tone_b)
 
         return JSONResponse(
             {
@@ -610,10 +597,8 @@ async def end_ab_test():
     try:
         from src.review_metrics import ReviewMetricsDB
 
-        db = ReviewMetricsDB()
-        db.connect()
-        results = db.end_ab_test()
-        db.close()
+        with ReviewMetricsDB() as db:
+            results = db.end_ab_test()
 
         if results:
             return JSONResponse({"message": "A/B test ended", **results})
@@ -630,10 +615,8 @@ async def get_ab_test_assignment():
     try:
         from src.review_metrics import ReviewMetricsDB
 
-        db = ReviewMetricsDB()
-        db.connect()
-        tone = db.get_ab_test_assignment()
-        db.close()
+        with ReviewMetricsDB() as db:
+            tone = db.get_ab_test_assignment()
 
         if tone:
             return JSONResponse({"tone": tone})
@@ -651,11 +634,9 @@ async def growth_page(request: Request):
     try:
         from src.growth import GrowthDashboard
 
-        dashboard = GrowthDashboard()
-        dashboard.connect()
-        summary = dashboard.get_growth_summary(30)
-        correlation = dashboard.get_correlation_analysis(60)
-        dashboard.close()
+        with GrowthDashboard() as dashboard:
+            summary = dashboard.get_growth_summary(30)
+            correlation = dashboard.get_correlation_analysis(60)
     except Exception as e:
         logger.error(f"Error loading growth dashboard: {e}")
         summary = {}
@@ -677,11 +658,8 @@ async def api_growth_summary(days: int = 30):
     try:
         from src.growth import GrowthDashboard
 
-        dashboard = GrowthDashboard()
-        dashboard.connect()
-        summary = dashboard.get_growth_summary(days)
-        dashboard.close()
-        return JSONResponse(summary)
+        with GrowthDashboard() as dashboard:
+            return JSONResponse(dashboard.get_growth_summary(days))
     except Exception as e:
         logger.error(f"Error getting growth summary: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -693,11 +671,9 @@ async def api_growth_history(days: int = 30):
     try:
         from src.growth import FollowerTracker
 
-        tracker = FollowerTracker()
-        tracker.connect()
-        history = tracker.get_history(days)
-        tracker.close()
-        return JSONResponse({"data": history, "days": days})
+        with FollowerTracker() as tracker:
+            history = tracker.get_history(days)
+            return JSONResponse({"data": history, "days": days})
     except Exception as e:
         logger.error(f"Error getting growth history: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -709,15 +685,13 @@ async def api_growth_milestones():
     try:
         from src.growth import FollowerTracker
 
-        tracker = FollowerTracker()
-        tracker.connect()
-        latest = tracker.get_latest_snapshot()
-        if latest:
-            milestones = tracker.get_milestones(latest["followers_count"])
-        else:
-            milestones = {}
-        tracker.close()
-        return JSONResponse(milestones)
+        with FollowerTracker() as tracker:
+            latest = tracker.get_latest_snapshot()
+            if latest:
+                milestones = tracker.get_milestones(latest["followers_count"])
+            else:
+                milestones = {}
+            return JSONResponse(milestones)
     except Exception as e:
         logger.error(f"Error getting milestones: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -729,10 +703,8 @@ async def api_take_snapshot():
     try:
         from src.growth import FollowerTracker
 
-        tracker = FollowerTracker()
-        tracker.connect()
-        snapshot = tracker.take_snapshot()
-        tracker.close()
+        with FollowerTracker() as tracker:
+            snapshot = tracker.take_snapshot()
 
         if snapshot:
             return JSONResponse({"message": "Snapshot taken", "data": snapshot})
@@ -749,11 +721,9 @@ async def api_trending_films(limit: int = 20):
     try:
         from src.growth import TrendingDetector
 
-        detector = TrendingDetector()
-        detector.connect()
-        opportunities = detector.get_review_opportunities(limit=limit)
-        detector.close()
-        return JSONResponse({"films": opportunities, "count": len(opportunities)})
+        with TrendingDetector() as detector:
+            opportunities = detector.get_review_opportunities(limit=limit)
+            return JSONResponse({"films": opportunities, "count": len(opportunities)})
     except Exception as e:
         logger.error(f"Error getting trending films: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -765,12 +735,10 @@ async def api_campaigns(limit: int = 10):
     try:
         from src.growth import CampaignManager
 
-        manager = CampaignManager()
-        manager.connect()
-        campaigns = manager.list_campaigns(limit)
-        active = manager.get_active_campaign()
-        manager.close()
-        return JSONResponse({"campaigns": campaigns, "active": active})
+        with CampaignManager() as manager:
+            campaigns = manager.list_campaigns(limit)
+            active = manager.get_active_campaign()
+            return JSONResponse({"campaigns": campaigns, "active": active})
     except Exception as e:
         logger.error(f"Error getting campaigns: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -782,7 +750,7 @@ def main():
 
     print("\nStarting Letterboxd Automation Dashboard...")
     print("Open http://localhost:8000 in your browser\n")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
 
 
 if __name__ == "__main__":

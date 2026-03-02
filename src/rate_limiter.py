@@ -30,6 +30,13 @@ class RateLimiter:
             raise RuntimeError("Database not connected. Call connect() first.")
         return self._conn
 
+    def __enter__(self):
+        self.connect()
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
     def connect(self) -> None:
         """Connect to the database and ensure rate_limits table exists."""
         self._conn = sqlite3.connect(self.db_path, timeout=30.0)

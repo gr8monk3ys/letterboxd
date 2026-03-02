@@ -43,7 +43,8 @@ class TestHelperFunctions:
     def test_get_database_stats_error(self, monkeypatch):
         """Test handling of database errors."""
         mock_db = MagicMock()
-        mock_db.connect.side_effect = Exception("Connection failed")
+        mock_db.__enter__ = MagicMock(side_effect=Exception("Connection failed"))
+        mock_db.__exit__ = MagicMock(return_value=False)
 
         monkeypatch.setattr("src.web.app.MovieDatabase", lambda: mock_db)
 
@@ -56,6 +57,8 @@ class TestHelperFunctions:
     def test_get_rate_limit_stats_success(self, monkeypatch):
         """Test getting rate limit stats."""
         mock_limiter = MagicMock()
+        mock_limiter.__enter__ = MagicMock(return_value=mock_limiter)
+        mock_limiter.__exit__ = MagicMock(return_value=False)
         mock_limiter.get_stats.return_value = {"follow": {"hourly_used": 5, "daily_used": 10}}
 
         monkeypatch.setattr("src.web.app.RateLimiter", lambda: mock_limiter)
@@ -69,7 +72,8 @@ class TestHelperFunctions:
     def test_get_rate_limit_stats_error(self, monkeypatch):
         """Test handling of rate limiter errors."""
         mock_limiter = MagicMock()
-        mock_limiter.connect.side_effect = Exception("Connection failed")
+        mock_limiter.__enter__ = MagicMock(side_effect=Exception("Connection failed"))
+        mock_limiter.__exit__ = MagicMock(return_value=False)
 
         monkeypatch.setattr("src.web.app.RateLimiter", lambda: mock_limiter)
 
@@ -414,6 +418,8 @@ class TestAnalyticsEndpoints:
     def test_analytics_summary_success(self, client, monkeypatch):
         """Test getting analytics summary."""
         mock_analytics = MagicMock()
+        mock_analytics.__enter__ = MagicMock(return_value=mock_analytics)
+        mock_analytics.__exit__ = MagicMock(return_value=False)
         mock_analytics.get_summary.return_value = {
             "total_follows": 100,
             "total_unfollows": 20,
@@ -439,6 +445,8 @@ class TestAnalyticsEndpoints:
     def test_analytics_growth(self, client, monkeypatch):
         """Test getting growth analytics."""
         mock_analytics = MagicMock()
+        mock_analytics.__enter__ = MagicMock(return_value=mock_analytics)
+        mock_analytics.__exit__ = MagicMock(return_value=False)
         mock_analytics.get_growth_rate.return_value = {
             "daily_avg": 5.0,
             "total_change": 150,
@@ -452,6 +460,8 @@ class TestAnalyticsEndpoints:
     def test_analytics_daily(self, client, monkeypatch):
         """Test getting daily analytics."""
         mock_analytics = MagicMock()
+        mock_analytics.__enter__ = MagicMock(return_value=mock_analytics)
+        mock_analytics.__exit__ = MagicMock(return_value=False)
         mock_analytics.get_daily_activity.return_value = [
             {"date": "2024-01-01", "follows": 5},
         ]
@@ -477,6 +487,8 @@ class TestMetricsEndpoints:
     def test_metrics_stats(self, client, monkeypatch):
         """Test getting metrics stats."""
         mock_db = MagicMock()
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
         mock_db.get_stats.return_value = {
             "total_posted": 10,
             "total_likes": 50,
@@ -492,6 +504,8 @@ class TestMetricsEndpoints:
     def test_ab_test_assignment(self, client, monkeypatch):
         """Test getting A/B test assignment."""
         mock_db = MagicMock()
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
         mock_db.get_ab_test_assignment.return_value = "casual"
 
         monkeypatch.setattr("src.review_metrics.ReviewMetricsDB", lambda: mock_db)
@@ -504,6 +518,8 @@ class TestMetricsEndpoints:
     def test_ab_test_assignment_no_test(self, client, monkeypatch):
         """Test A/B test assignment when no test active."""
         mock_db = MagicMock()
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
         mock_db.get_ab_test_assignment.return_value = None
 
         monkeypatch.setattr("src.review_metrics.ReviewMetricsDB", lambda: mock_db)

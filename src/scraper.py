@@ -569,6 +569,49 @@ class LetterboxdScraper:
 
         return members[:limit]
 
+    def get_film_fans(self, film_slug: str, limit: int = 50) -> list[str]:
+        """Scrape fans (users who favorited) a film.
+
+        Args:
+            film_slug: Film slug (e.g., "the-matrix")
+            limit: Maximum fans to return
+
+        Returns:
+            List of usernames
+        """
+        url = f"/film/{film_slug}/fans/"
+        fans: list[str] = []
+        page = 1
+
+        while len(fans) < limit:
+            page_url = url if page == 1 else f"{url}page/{page}/"
+            soup = self._get(page_url)
+            if not soup:
+                break
+
+            found_any = False
+            for person in soup.select(".person-summary"):
+                if len(fans) >= limit:
+                    break
+
+                link = person.select_one("a.name")
+                if link:
+                    href = _get_attr(link, "href")
+                    if href.startswith("/") and href.count("/") == 2:
+                        fans.append(href.strip("/"))
+                        found_any = True
+
+            if not found_any:
+                break
+
+            next_link = soup.select_one(".paginate-nextprev a.next")
+            if not next_link:
+                break
+
+            page += 1
+
+        return fans[:limit]
+
     def get_popular_films(self, period: str = "week", limit: int = 50) -> list[FilmData]:
         """Scrape popular films.
 

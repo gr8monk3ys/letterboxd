@@ -137,6 +137,47 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         ON smart_follow_queue(status);
         """,
     ),
+    (
+        5,
+        "Add performance indexes for common queries",
+        """
+        -- Used in LEFT JOIN for get_films_without_reviews()
+        CREATE INDEX IF NOT EXISTS idx_ai_reviews_uri
+        ON ai_reviews(letterboxd_uri);
+
+        -- Used in filtered rating queries
+        CREATE INDEX IF NOT EXISTS idx_films_rating
+        ON films(rating);
+
+        -- Ensure rate_limits table exists before indexing
+        CREATE TABLE IF NOT EXISTS rate_limits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_type TEXT NOT NULL,
+            username TEXT,
+            timestamp TEXT NOT NULL
+        );
+
+        -- Used in time-window rate limit checks
+        CREATE INDEX IF NOT EXISTS idx_rate_limits_timestamp
+        ON rate_limits(timestamp);
+
+        -- Used in diary lookups by film URI
+        CREATE INDEX IF NOT EXISTS idx_diary_uri
+        ON diary(letterboxd_uri);
+
+        -- Used in top-rated film queries
+        CREATE INDEX IF NOT EXISTS idx_ratings_rating
+        ON ratings(rating);
+        """,
+    ),
+    (
+        6,
+        "Add posted tracking columns to ai_reviews",
+        """
+        ALTER TABLE ai_reviews ADD COLUMN posted_at TEXT;
+        ALTER TABLE ai_reviews ADD COLUMN posted_url TEXT;
+        """,
+    ),
 ]
 
 
@@ -163,6 +204,13 @@ class MigrationManager:
     def is_connected(self) -> bool:
         """Check if database is connected."""
         return self._conn is not None
+
+    def __enter__(self):
+        self.connect()
+        return self
+
+    def __exit__(self, *args):
+        self.close()
 
     def connect(self) -> None:
         """Connect to the database."""
