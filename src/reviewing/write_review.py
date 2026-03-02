@@ -235,48 +235,44 @@ Now write a review for "{title}" ({year}):"""
         Returns:
             Number of reviews generated
         """
-        try:
-            films = self.db.get_films_without_reviews(
-                year=year,
-                year_start=year_start,
-                year_end=year_end,
-                min_rating=min_rating,
-            )
+        films = self.db.get_films_without_reviews(
+            year=year,
+            year_start=year_start,
+            year_end=year_end,
+            min_rating=min_rating,
+        )
 
-            if not films:
-                logging.info("All films already have reviews!")
-                return 0
+        if not films:
+            logging.info("All films already have reviews!")
+            return 0
 
-            if limit:
-                films = films[:limit]
+        if limit:
+            films = films[:limit]
 
-            logging.info(f"Generating reviews for {len(films)} films...")
+        logging.info(f"Generating reviews for {len(films)} films...")
 
-            # Show style info
-            style_count = len(self._get_style_examples(100))
-            logging.info(f"Using {style_count} of your reviews for style matching")
+        # Show style info
+        style_count = len(self._get_style_examples(100))
+        logging.info(f"Using {style_count} of your reviews for style matching")
 
-            generated = 0
-            for film in tqdm(films, desc="Generating reviews"):
-                review = self.generate_review(film)
+        generated = 0
+        for film in tqdm(films, desc="Generating reviews"):
+            review = self.generate_review(film)
 
-                if review:
-                    self.db.save_ai_review(
-                        letterboxd_uri=film["letterboxd_uri"],
-                        name=film["name"],
-                        year=film["year"],
-                        review=review,
-                    )
-                    generated += 1
-                    logging.debug(f"Generated review for: {film['name']} ({film['year']})")
+            if review:
+                self.db.save_ai_review(
+                    letterboxd_uri=film["letterboxd_uri"],
+                    name=film["name"],
+                    year=film["year"],
+                    review=review,
+                )
+                generated += 1
+                logging.debug(f"Generated review for: {film['name']} ({film['year']})")
 
-                # Rate limiting
-                time.sleep(0.5)
+            # Rate limiting
+            time.sleep(0.5)
 
-            return generated
-
-        finally:
-            pass  # Keep connection open for potential follow-up calls
+        return generated
 
     def preview_review(self, film_name: str) -> str | None:
         """Generate a preview review for a specific film (doesn't save)."""

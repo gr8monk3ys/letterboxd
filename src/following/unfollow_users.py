@@ -160,8 +160,11 @@ class LetterboxdUnfollower:
         """
         try:
             # Go to user's profile
-            page.goto(f"https://letterboxd.com/{username}/")
-            page.wait_for_load_state("networkidle")
+            page.goto(
+                f"https://letterboxd.com/{username}/",
+                wait_until="domcontentloaded",
+            )
+            page.wait_for_timeout(1000)
 
             # Find the unfollow/following button
             # When following someone, button shows "Following" and clicking unfollows
