@@ -168,10 +168,13 @@ Environment variables (`.env`):
 | Variable | Required For | Description |
 |----------|--------------|-------------|
 | `ANTHROPIC_API_KEY` | Reviews | Claude API key for generating reviews |
+| `OPENAI_API_KEY` | Optional | OpenAI API key (when `AI_PROVIDER=openai`) |
+| `GOOGLE_API_KEY` | Optional | Google API key (when `AI_PROVIDER=gemini`) |
 | `LETTERBOXD_USERNAME` | Following | Your Letterboxd username |
 | `LETTERBOXD_PASSWORD` | Following | Your Letterboxd password |
 | `TMDB_API_KEY` | Optional | TMDB API key for film metadata enrichment |
 | `HEADLESS` | Optional | Set to `true` for headless browser mode |
+| `AI_PROVIDER` | Optional | AI provider: `anthropic` (default), `openai`, or `gemini` |
 | `REVIEW_TONE` | Optional | Default tone preset |
 | `PAGE_LOAD_TIMEOUT` | Optional | Page load timeout in ms (default: 30000) |
 | `ELEMENT_TIMEOUT` | Optional | Element timeout in ms (default: 10000) |

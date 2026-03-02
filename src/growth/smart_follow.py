@@ -291,8 +291,9 @@ class SmartFollower:
             return {"followed": 0, "skipped": 0, "error": None}
 
         # Check rate limits
-        if not self.rate_limiter.can_perform_action("follow"):
-            return {"followed": 0, "skipped": 0, "error": "Rate limit reached"}
+        allowed, reason = self.rate_limiter.can_perform_action("follow")
+        if not allowed:
+            return {"followed": 0, "skipped": 0, "error": reason or "Rate limit reached"}
 
         followed = 0
         skipped = 0

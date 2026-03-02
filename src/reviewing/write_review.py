@@ -106,6 +106,9 @@ class ReviewGenerator:
         self.config = get_config()
         self.db = MovieDatabase()
         self.db.connect()
+        # Ensure tables exist (handles fresh installs where create_database
+        # hasn't been run yet)
+        self.db.create_tables()
         self._style_examples: list[dict] | None = None
         self.target_words = target_words
         self.custom_tone = custom_tone
@@ -113,7 +116,13 @@ class ReviewGenerator:
         # Initialize AI provider (defaults to Anthropic)
         provider_name = provider or self.config.ai_provider
         self.provider_name = provider_name
-        self.ai = get_provider(provider_name, api_key=self.config.anthropic_api_key)
+        api_key_map = {
+            "anthropic": self.config.anthropic_api_key,
+            "openai": self.config.openai_api_key,
+            "gemini": self.config.google_api_key,
+        }
+        api_key = api_key_map.get(provider_name, "")
+        self.ai = get_provider(provider_name, api_key=api_key)
 
         # Set tone from parameter, env var, or default
         if custom_tone:

@@ -443,7 +443,7 @@ def main() -> None:
             lists_to_create = generator.generate_all_lists()
 
         # Display results
-        if args.dry_run or True:  # Always show preview for now
+        if args.dry_run:
             print(f"\n=== Would create {len(lists_to_create)} lists ===\n")
 
             for lst in lists_to_create:

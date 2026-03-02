@@ -469,14 +469,30 @@ def main():
         db = MovieDatabase()
         db.connect()
 
-        # Drop old tables to recreate with new schema
+        # Check if ai_reviews has data before dropping
+        has_ai_reviews = False
+        try:
+            db.cursor.execute("SELECT COUNT(*) FROM ai_reviews")
+            ai_count = db.cursor.fetchone()[0]
+            if ai_count > 0:
+                has_ai_reviews = True
+                print(f"\nWarning: {ai_count} AI-generated reviews found.")
+                response = input("Preserve AI reviews? [Y/n]: ").strip().lower()
+                if response in ("n", "no"):
+                    has_ai_reviews = False
+                    print("AI reviews will be deleted.")
+        except Exception:
+            pass  # Table doesn't exist yet
+
+        # Drop import tables to recreate with fresh data
         db.cursor.execute("DROP TABLE IF EXISTS films")
         db.cursor.execute("DROP TABLE IF EXISTS ratings")
         db.cursor.execute("DROP TABLE IF EXISTS reviews")
         db.cursor.execute("DROP TABLE IF EXISTS watchlist")
         db.cursor.execute("DROP TABLE IF EXISTS diary")
         db.cursor.execute("DROP TABLE IF EXISTS liked_films")
-        db.cursor.execute("DROP TABLE IF EXISTS ai_reviews")
+        if not has_ai_reviews:
+            db.cursor.execute("DROP TABLE IF EXISTS ai_reviews")
         db.conn.commit()
 
         db.create_tables()

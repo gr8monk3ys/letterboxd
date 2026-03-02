@@ -272,8 +272,19 @@ class MigrationManager:
         try:
             cursor.execute("BEGIN TRANSACTION")
 
-            # Execute the migration SQL
-            cursor.executescript(sql)
+            # Execute each statement individually (executescript auto-commits,
+            # which would break our transaction and make rollback a no-op)
+            for statement in sql.split(";"):
+                statement = statement.strip()
+                if statement:
+                    try:
+                        cursor.execute(statement)
+                    except sqlite3.OperationalError as stmt_err:
+                        # Allow idempotent ALTER TABLE ADD COLUMN
+                        if "duplicate column name" in str(stmt_err):
+                            logging.debug(f"Column already exists, skipping: {stmt_err}")
+                        else:
+                            raise
 
             # Record the migration
             from datetime import datetime
@@ -283,12 +294,12 @@ class MigrationManager:
                 (version, description, datetime.now().isoformat()),
             )
 
-            cursor.execute("COMMIT")
+            self.conn.commit()
             logging.info(f"Applied migration {version}: {description}")
             return True
 
         except sqlite3.Error as e:
-            cursor.execute("ROLLBACK")
+            self.conn.rollback()
             logging.error(f"Migration {version} failed: {e}")
             return False
 
@@ -298,7 +309,7 @@ class MigrationManager:
         Returns:
             Number of migrations applied.
         """
-        if not self.conn:
+        if not self.is_connected():
             logging.error("Not connected to database")
             return 0
 
@@ -321,7 +332,7 @@ class MigrationManager:
 
     def show_status(self) -> None:
         """Display migration status."""
-        if not self.conn:
+        if not self.is_connected():
             print("Database not found or not connected")
             return
 
@@ -385,7 +396,7 @@ Examples:
     manager = MigrationManager()
     manager.connect()
 
-    if not manager.conn:
+    if not manager.is_connected():
         print("\nDatabase not found. Create it first with:")
         print("  uv run python -m src.data_processing.create_database")
         return
