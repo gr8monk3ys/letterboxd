@@ -13,7 +13,7 @@ from tqdm import tqdm
 from src.config import DATA_DIR, get_config, get_log_path
 from src.data_processing.create_database import MovieDatabase
 from src.providers import get_provider
-from src.providers.base import VALID_PROVIDERS
+from src.providers.base import VALID_PROVIDERS, AIProvider
 from src.utils.errors import handle_exception
 from src.utils.tmdb import TMDBClient, format_film_context
 
@@ -113,16 +113,20 @@ class ReviewGenerator:
         self.target_words = target_words
         self.custom_tone = custom_tone
 
-        # Initialize AI provider (defaults to Anthropic)
         provider_name = provider or self.config.ai_provider
+        if provider_name not in VALID_PROVIDERS:
+            raise ValueError(
+                f"Unknown provider: {provider_name}. Valid providers: {', '.join(VALID_PROVIDERS)}"
+            )
+
         self.provider_name = provider_name
         api_key_map = {
             "anthropic": self.config.anthropic_api_key,
             "openai": self.config.openai_api_key,
             "gemini": self.config.google_api_key,
         }
-        api_key = api_key_map.get(provider_name, "")
-        self.ai = get_provider(provider_name, api_key=api_key)
+        self._provider_api_key = api_key_map.get(provider_name, "")
+        self._ai: AIProvider | None = None
 
         # Set tone from parameter, env var, or default
         if custom_tone:
@@ -141,6 +145,12 @@ class ReviewGenerator:
             if not self.tmdb.is_configured():
                 logging.info("TMDB API key not configured, reviews will use basic film info")
                 self.tmdb = None
+
+    def _get_ai_provider(self) -> AIProvider:
+        """Initialize the configured provider on first use."""
+        if self._ai is None:
+            self._ai = get_provider(self.provider_name, api_key=self._provider_api_key)
+        return self._ai
 
     def get_tone_preset(self) -> dict:
         """Get the current tone preset configuration."""
@@ -233,7 +243,7 @@ Now write a review for "{title}" ({year}):"""
             if self.target_words:
                 max_tokens = max(300, int(self.target_words * 2))
 
-            return self.ai.generate(prompt, tone_preset["system"], max_tokens)
+            return self._get_ai_provider().generate(prompt, tone_preset["system"], max_tokens)
 
         except Exception as e:
             handle_exception(e, f"Error generating review for '{film.get('name')}'")

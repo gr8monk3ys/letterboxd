@@ -11,27 +11,33 @@ class GeminiProvider:
 
     def __init__(self, api_key: str = "", model: str = "gemini-2.0-flash"):
         try:
-            import google.generativeai as genai
+            from google import genai
+            from google.genai import types
 
-            key = api_key or os.getenv("GOOGLE_API_KEY", "")
-            genai.configure(api_key=key)
-            self.model = genai.GenerativeModel(model)
+            key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY", "")
+            self.client = genai.Client(api_key=key) if key else genai.Client()
+            self.config_type = types.GenerateContentConfig
+            self.model = model
         except ImportError:
             raise ImportError(
-                "Gemini provider requires the 'google-generativeai' package. "
-                "Install it with: uv add google-generativeai"
+                "Gemini provider requires the 'google-genai' package. "
+                "Install it with: uv sync --extra gemini"
             )
 
     def generate(self, prompt: str, system: str, max_tokens: int) -> str | None:
         """Generate text using Gemini."""
         try:
-            full_prompt = f"{system}\n\n{prompt}"
-            response = self.model.generate_content(
-                full_prompt,
-                generation_config={"max_output_tokens": max_tokens},
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=self.config_type(
+                    system_instruction=system,
+                    max_output_tokens=max_tokens,
+                ),
             )
-            if response.text:
-                return response.text.strip()
+            text = response.text
+            if isinstance(text, str) and text:
+                return text.strip()
             return None
         except Exception as e:
             logger.error(f"Gemini API error: {e}")

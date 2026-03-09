@@ -18,7 +18,8 @@ class OpenAIProvider:
             self.model = model
         except ImportError:
             raise ImportError(
-                "OpenAI provider requires the 'openai' package. Install it with: uv add openai"
+                "OpenAI provider requires the 'openai' package. "
+                "Install it with: uv sync --extra openai"
             )
 
     def generate(self, prompt: str, system: str, max_tokens: int) -> str | None:
@@ -33,8 +34,9 @@ class OpenAIProvider:
                 ],
             )
             choice = response.choices[0]
-            if choice.message.content:
-                return choice.message.content.strip()
+            content = choice.message.content
+            if isinstance(content, str) and content:
+                return content.strip()
             return None
         except Exception as e:
             logger.error(f"OpenAI API error: {e}")
