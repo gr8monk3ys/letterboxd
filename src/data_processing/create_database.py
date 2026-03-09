@@ -8,6 +8,7 @@ Supports importing from:
 import logging
 import sqlite3
 from pathlib import Path
+from typing import Self
 
 from src.config import DATA_DIR, get_log_path
 from src.data_processing.import_letterboxd_export import LetterboxdImporter
@@ -29,6 +30,17 @@ class MovieDatabase:
         self._conn: sqlite3.Connection | None = None
         self._cursor: sqlite3.Cursor | None = None
 
+    def __del__(self) -> None:
+        """Best-effort cleanup if an instance is garbage-collected while open."""
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            finally:
+                self._conn = None
+                self._cursor = None
+
     @property
     def conn(self) -> sqlite3.Connection:
         """Get the database connection, raising if not connected."""
@@ -43,12 +55,27 @@ class MovieDatabase:
             raise RuntimeError("Database not connected. Call connect() first.")
         return self._cursor
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         self.connect()
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args: object) -> None:
         self.close()
+
+    def _ensure_table_columns(self, table_name: str, columns: dict[str, str]) -> None:
+        """Add missing columns to an existing table.
+
+        This keeps older local databases compatible when the base schema gains
+        new nullable columns.
+        """
+        self.cursor.execute(f"PRAGMA table_info({table_name})")
+        existing_columns = {row[1] for row in self.cursor.fetchall()}
+
+        for column_name, column_definition in columns.items():
+            if column_name not in existing_columns:
+                self.cursor.execute(
+                    f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"
+                )
 
     def connect(self) -> None:
         """Connect to the SQLite database."""
@@ -149,9 +176,19 @@ class MovieDatabase:
                     name TEXT NOT NULL,
                     year INTEGER,
                     ai_review TEXT,
-                    generated_at TEXT
+                    generated_at TEXT,
+                    posted_at TEXT,
+                    posted_url TEXT
                 )
             """)
+
+            self._ensure_table_columns(
+                "ai_reviews",
+                {
+                    "posted_at": "TEXT",
+                    "posted_url": "TEXT",
+                },
+            )
 
             self.conn.commit()
             logging.info("Database tables created successfully")
@@ -368,7 +405,7 @@ class MovieDatabase:
         columns = ["name", "year", "rating", "review"]
         return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
 
-    def get_review_count(self) -> dict:
+    def get_review_count(self) -> dict[str, int]:
         """Get counts of reviewed vs unreviewed films."""
         self.cursor.execute("SELECT COUNT(*) FROM films")
         total_films = self.cursor.fetchone()[0]

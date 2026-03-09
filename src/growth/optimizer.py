@@ -166,37 +166,51 @@ class PostingOptimizer:
             "long": [],  # > 600 words
         }
 
-        try:
-            cursor.execute(
-                """
-                SELECT
-                    ar.review_text,
-                    re.likes_count
-                FROM posted_reviews pr
-                JOIN ai_reviews ar ON pr.film_name = ar.name
-                LEFT JOIN review_engagement re ON pr.id = re.posted_review_id
-                WHERE pr.posted_at >= ?
-                """,
-                (cutoff,),
-            )
+        rows = None
+        for query in (
+            """
+            SELECT
+                ar.ai_review AS review_text,
+                re.likes_count
+            FROM posted_reviews pr
+            JOIN ai_reviews ar ON pr.letterboxd_uri = ar.letterboxd_uri
+            LEFT JOIN review_engagement re ON pr.id = re.posted_review_id
+            WHERE pr.posted_at >= ?
+            """,
+            """
+            SELECT
+                ar.review_text,
+                re.likes_count
+            FROM posted_reviews pr
+            JOIN ai_reviews ar ON pr.film_name = ar.name
+            LEFT JOIN review_engagement re ON pr.id = re.posted_review_id
+            WHERE pr.posted_at >= ?
+            """,
+        ):
+            try:
+                cursor.execute(query, (cutoff,))
+                rows = cursor.fetchall()
+                break
+            except sqlite3.OperationalError:
+                continue
 
-            for row in cursor.fetchall():
-                review_text = row["review_text"] or ""
-                likes = row["likes_count"] or 0
-
-                word_count = len(review_text.split())
-
-                if word_count < 200:
-                    length_engagement["short"].append(likes)
-                elif word_count < 400:
-                    length_engagement["medium"].append(likes)
-                elif word_count < 600:
-                    length_engagement["optimal"].append(likes)
-                else:
-                    length_engagement["long"].append(likes)
-
-        except sqlite3.OperationalError:
+        if rows is None:
             return {"error": "Not enough data for length analysis"}
+
+        for row in rows:
+            review_text = row["review_text"] or ""
+            likes = row["likes_count"] or 0
+
+            word_count = len(review_text.split())
+
+            if word_count < 200:
+                length_engagement["short"].append(likes)
+            elif word_count < 400:
+                length_engagement["medium"].append(likes)
+            elif word_count < 600:
+                length_engagement["optimal"].append(likes)
+            else:
+                length_engagement["long"].append(likes)
 
         # Calculate averages
         length_avg = {

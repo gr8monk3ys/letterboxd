@@ -1,8 +1,9 @@
 """Tests for TMDB caching functionality."""
 
 from datetime import datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from src.utils.tmdb import TMDBCache, TMDBClient
@@ -194,6 +195,64 @@ class TestTMDBCache:
         cache.set("Test", 2020, {"title": "Test"})
         assert cache.get("Test", 2020) == {"title": "Test"}
 
+    def test_cache_get_returns_copy(self, cache):
+        """Getting cached data should not expose the stored mutable object."""
+        payload = {"title": "Test", "genres": ["Drama"]}
+        cache.set("Test", 2020, payload)
+
+        cached = cache.get("Test", 2020)
+        assert cached is not None
+        cached["genres"].append("Comedy")
+
+        fresh = cache.get("Test", 2020)
+        assert fresh == {"title": "Test", "genres": ["Drama"]}
+
+    def test_cache_set_stores_copy(self, cache):
+        """Mutating the original payload after caching should not alter stored data."""
+        payload = {"title": "Test", "cast": ["A"]}
+        cache.set("Test", 2020, payload)
+        payload["cast"].append("B")
+
+        assert cache.get("Test", 2020) == {"title": "Test", "cast": ["A"]}
+
+    def test_cache_save_noop_when_uninitialized(self, cache):
+        """Saving before the cache has been loaded should do nothing."""
+        cache._save_cache()
+        assert not cache.cache_file.exists()
+
+    def test_cache_save_handles_os_error(self, cache, monkeypatch):
+        """Cache save failures should be swallowed."""
+        cache._cache = {
+            "test": {
+                "data": {"title": "Test"},
+                "cached_at": datetime.now().isoformat(),
+            }
+        }
+
+        def mock_open(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr("builtins.open", mock_open)
+
+        cache._save_cache()
+        assert cache._cache is not None
+
+    def test_cache_invalid_timestamp_is_expired(self, cache):
+        """Invalid timestamps should be treated as expired."""
+        assert cache._is_expired("not-a-date") is True
+
+    def test_clear_expired_no_matches(self, cache):
+        """Clearing expired entries should not write when nothing is expired."""
+        valid_time = datetime.now().isoformat()
+        cache._cache = {
+            "movie|2020": {
+                "data": {"title": "Movie"},
+                "cached_at": valid_time,
+            }
+        }
+
+        assert cache.clear_expired() == 0
+
 
 class TestTMDBClientCache:
     """Test TMDB client caching integration."""
@@ -321,6 +380,110 @@ class TestTMDBClientCache:
         client = TMDBClient(api_key="test_key", use_cache=False)
         assert client.clear_cache() == 0
 
+    def test_make_request_without_api_key(self):
+        """Requests should short-circuit when the API key is missing."""
+        client = TMDBClient(api_key=None, use_cache=False)
+        assert client._make_request("/search/movie") is None
+
+    def test_make_request_without_params(self):
+        """Requests without extra params should send only the API key."""
+        client = TMDBClient(api_key="test_key", use_cache=False)
+        response = MagicMock()
+        response.json.return_value = {"ok": True}
+        response.raise_for_status = MagicMock()
+
+        with patch.object(client.client, "get", return_value=response) as mock_get:
+            result = client._make_request("/movie/1")
+
+        assert result == {"ok": True}
+        mock_get.assert_called_once_with(
+            "https://api.themoviedb.org/3/movie/1",
+            params={"api_key": "test_key"},
+        )
+        client.close()
+
+    def test_make_request_handles_http_status_error(self):
+        """HTTP status errors should return None."""
+        client = TMDBClient(api_key="test_key", use_cache=False)
+        request = httpx.Request("GET", "https://example.com")
+        response = httpx.Response(500, request=request, text="boom")
+        error = httpx.HTTPStatusError("bad status", request=request, response=response)
+
+        with patch.object(client.client, "get", side_effect=error):
+            assert client._make_request("/movie/1") is None
+        client.close()
+
+    def test_make_request_handles_request_error(self):
+        """Request transport errors should return None."""
+        client = TMDBClient(api_key="test_key", use_cache=False)
+        error = httpx.RequestError("boom", request=httpx.Request("GET", "https://example.com"))
+
+        with patch.object(client.client, "get", side_effect=error):
+            assert client._make_request("/movie/1") is None
+        client.close()
+
+    def test_get_film_metadata_returns_none_when_details_fail(self):
+        """Metadata lookup should fail cleanly if the details request returns nothing."""
+        client = TMDBClient(api_key="test_key", use_cache=False)
+
+        with (
+            patch.object(client, "search_movie", return_value={"id": 123}),
+            patch.object(client, "get_movie_details", return_value=None),
+        ):
+            assert client.get_film_metadata("The Matrix", 1999) is None
+
+    def test_get_film_metadata_handles_missing_credits(self):
+        """Metadata extraction should tolerate missing crew and cast data."""
+        client = TMDBClient(api_key="test_key", use_cache=False)
+
+        with (
+            patch.object(client, "search_movie", return_value={"id": 123}),
+            patch.object(
+                client,
+                "get_movie_details",
+                return_value={
+                    "title": "The Matrix",
+                    "release_date": "1999-03-31",
+                    "genres": [{"name": "Action"}],
+                },
+            ),
+        ):
+            result = client.get_film_metadata("The Matrix", 1999)
+
+        assert result is not None
+        assert result["director"] is None
+        assert result["cast"] == []
+        assert result["cached"] is False
+
+    def test_cache_property(self):
+        """The cache property should expose the configured cache instance."""
+        client = TMDBClient(api_key="test_key", use_cache=False)
+        assert client.cache is None
+
+    def test_convenience_cache_helpers(self):
+        """Convenience cache helpers should delegate to the shared client."""
+        import src.utils.tmdb as tmdb_module
+
+        mock_client = MagicMock()
+        mock_client.get_cache_stats.return_value = {"total_entries": 1}
+        mock_client.clear_cache.return_value = 2
+        mock_client.cache.clear_expired.return_value = 3
+
+        with patch.object(tmdb_module, "get_tmdb_client", return_value=mock_client):
+            assert tmdb_module.get_cache_stats() == {"total_entries": 1}
+            assert tmdb_module.clear_cache() == 2
+            assert tmdb_module.clear_expired_cache() == 3
+
+    def test_clear_expired_cache_without_cache(self):
+        """Expired-cache cleanup should return zero when caching is disabled."""
+        import src.utils.tmdb as tmdb_module
+
+        mock_client = MagicMock()
+        mock_client.cache = None
+
+        with patch.object(tmdb_module, "get_tmdb_client", return_value=mock_client):
+            assert tmdb_module.clear_expired_cache() == 0
+
 
 class TestAsyncTMDBClient:
     """Test async TMDB client functionality."""
@@ -434,3 +597,116 @@ class TestAsyncTMDBClient:
             async with AsyncTMDBClient(api_key=None, use_cache=False) as client:
                 result = await client.get_film_metadata("Test", 2020)
                 assert result is None
+
+    @pytest.mark.asyncio
+    async def test_async_client_property_and_close(self):
+        """Async client property should lazily initialize the HTTP client and close it."""
+        from src.utils.tmdb import AsyncTMDBClient
+
+        client = AsyncTMDBClient(api_key="test_key", use_cache=False)
+        assert client._client is None
+        _ = client.client
+        assert client._client is not None
+        await client.close()
+        assert client._client is None
+
+    @pytest.mark.asyncio
+    async def test_async_make_request_without_api_key(self):
+        """Async requests should short-circuit when the API key is missing."""
+        from src.utils.tmdb import AsyncTMDBClient
+
+        client = AsyncTMDBClient(api_key=None, use_cache=False)
+        assert await client._make_request("/search/movie") is None
+
+    @pytest.mark.asyncio
+    async def test_async_make_request_handles_errors(self):
+        """Async TMDB requests should swallow HTTP and transport failures."""
+        from src.utils.tmdb import AsyncTMDBClient
+
+        client = AsyncTMDBClient(api_key="test_key", use_cache=False)
+        request = httpx.Request("GET", "https://example.com")
+        response = httpx.Response(500, request=request, text="boom")
+        status_error = httpx.HTTPStatusError("bad status", request=request, response=response)
+        transport_error = httpx.RequestError("boom", request=request)
+
+        with patch.object(client.client, "get", new=AsyncMock(side_effect=status_error)):
+            assert await client._make_request("/movie/1") is None
+
+        with patch.object(client.client, "get", new=AsyncMock(side_effect=transport_error)):
+            assert await client._make_request("/movie/1") is None
+
+        await client.close()
+
+    @pytest.mark.asyncio
+    async def test_async_search_movie_without_year(self):
+        """Async movie search should work without a year param."""
+        from src.utils.tmdb import AsyncTMDBClient
+
+        client = AsyncTMDBClient(api_key="test_key", use_cache=False)
+        with patch.object(
+            client,
+            "_make_request",
+            new=AsyncMock(return_value={"results": [{"id": 123, "title": "The Matrix"}]}),
+        ) as mock_request:
+            result = await client.search_movie("The Matrix")
+
+        assert result == {"id": 123, "title": "The Matrix"}
+        mock_request.assert_awaited_once_with("/search/movie", {"query": "The Matrix"})
+        await client.close()
+
+    @pytest.mark.asyncio
+    async def test_async_get_film_metadata_details_missing(self):
+        """Async metadata lookup should return None when movie details fail."""
+        from src.utils.tmdb import AsyncTMDBClient
+
+        client = AsyncTMDBClient(api_key="test_key", use_cache=False)
+        with (
+            patch.object(client, "search_movie", new=AsyncMock(return_value={"id": 123})),
+            patch.object(client, "get_movie_details", new=AsyncMock(return_value=None)),
+        ):
+            assert await client.get_film_metadata("The Matrix", 1999) is None
+
+        await client.close()
+
+    @pytest.mark.asyncio
+    async def test_async_get_film_metadata_handles_missing_credits(self):
+        """Async metadata extraction should tolerate missing crew and cast data."""
+        from src.utils.tmdb import AsyncTMDBClient
+
+        client = AsyncTMDBClient(api_key="test_key", use_cache=False)
+        with (
+            patch.object(client, "search_movie", new=AsyncMock(return_value={"id": 123})),
+            patch.object(
+                client,
+                "get_movie_details",
+                new=AsyncMock(
+                    return_value={
+                        "title": "The Matrix",
+                        "release_date": "1999-03-31",
+                        "genres": [{"name": "Action"}],
+                    }
+                ),
+            ),
+        ):
+            result = await client.get_film_metadata("The Matrix", 1999)
+
+        assert result is not None
+        assert result["director"] is None
+        assert result["cast"] == []
+        assert result["cached"] is False
+        await client.close()
+
+    @pytest.mark.asyncio
+    async def test_async_convenience_get_multiple_film_metadata(self):
+        """Module-level async helper should delegate to the async client."""
+        import src.utils.tmdb as tmdb_module
+
+        mock_client = AsyncMock()
+        mock_client.get_multiple_film_metadata.return_value = [{"title": "The Matrix"}]
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+
+        with patch.object(tmdb_module, "AsyncTMDBClient", return_value=mock_client):
+            result = await tmdb_module.get_multiple_film_metadata([("The Matrix", 1999)])
+
+        assert result == [{"title": "The Matrix"}]

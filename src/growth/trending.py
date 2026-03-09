@@ -117,6 +117,8 @@ class TrendingDetector:
                     INSERT INTO trending_films (slug, title, year, popularity_score, last_updated)
                     VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(slug) DO UPDATE SET
+                        title = ?,
+                        year = ?,
                         popularity_score = ?,
                         last_updated = ?
                     """,
@@ -126,6 +128,8 @@ class TrendingDetector:
                         film.year,
                         popularity_score,
                         now,
+                        film.title,
+                        film.year,
                         popularity_score,
                         now,
                     ),

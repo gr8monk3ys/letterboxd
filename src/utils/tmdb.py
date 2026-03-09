@@ -4,6 +4,7 @@ Provides director, cast, genre, and other film data to enhance reviews.
 Includes local caching with TTL expiration to reduce API calls.
 """
 
+import copy
 import json
 import logging
 from datetime import datetime, timedelta
@@ -105,7 +106,7 @@ class TMDBCache:
 
         logger.debug(f"Cache hit for: {title} ({year})")
         data: dict | None = entry.get("data")
-        return data
+        return copy.deepcopy(data) if data is not None else None
 
     def set(self, title: str, year: int | str | None, data: dict) -> None:
         """Cache metadata for a film.
@@ -119,7 +120,7 @@ class TMDBCache:
         key = self._make_key(title, year)
 
         cache[key] = {
-            "data": data,
+            "data": copy.deepcopy(data),
             "cached_at": datetime.now().isoformat(),
         }
 

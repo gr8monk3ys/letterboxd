@@ -47,6 +47,17 @@ class ReviewMetricsDB:
         self._conn: sqlite3.Connection | None = None
         self._cursor: sqlite3.Cursor | None = None
 
+    def __del__(self) -> None:
+        """Best-effort cleanup if an instance is garbage-collected while open."""
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            finally:
+                self._conn = None
+                self._cursor = None
+
     @property
     def conn(self) -> sqlite3.Connection:
         """Get the database connection, raising if not connected."""

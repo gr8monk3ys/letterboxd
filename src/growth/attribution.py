@@ -187,36 +187,49 @@ class ReviewAttributor:
         """
         cursor = self.conn.cursor()
 
-        try:
-            cursor.execute(
-                """
-                SELECT
-                    ra.*,
-                    pr.review_url,
-                    pr.film_name,
-                    pr.review_tone
-                FROM review_attribution ra
-                JOIN posted_reviews pr ON ra.posted_review_id = pr.id
-                WHERE ra.follower_delta IS NOT NULL
-                ORDER BY ra.follower_delta DESC
-                LIMIT ?
-                """,
-                (limit,),
-            )
-            return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.OperationalError:
-            # posted_reviews table might not have all columns
-            cursor.execute(
-                """
-                SELECT *
-                FROM review_attribution
-                WHERE follower_delta IS NOT NULL
-                ORDER BY follower_delta DESC
-                LIMIT ?
-                """,
-                (limit,),
-            )
-            return [dict(row) for row in cursor.fetchall()]
+        for query in (
+            """
+            SELECT
+                ra.*,
+                pr.letterboxd_review_url AS review_url,
+                pr.film_name,
+                pr.tone_preset AS review_tone
+            FROM review_attribution ra
+            JOIN posted_reviews pr ON ra.posted_review_id = pr.id
+            WHERE ra.follower_delta IS NOT NULL
+            ORDER BY ra.follower_delta DESC
+            LIMIT ?
+            """,
+            """
+            SELECT
+                ra.*,
+                pr.review_url,
+                pr.film_name,
+                pr.review_tone
+            FROM review_attribution ra
+            JOIN posted_reviews pr ON ra.posted_review_id = pr.id
+            WHERE ra.follower_delta IS NOT NULL
+            ORDER BY ra.follower_delta DESC
+            LIMIT ?
+            """,
+        ):
+            try:
+                cursor.execute(query, (limit,))
+                return [dict(row) for row in cursor.fetchall()]
+            except sqlite3.OperationalError:
+                continue
+
+        cursor.execute(
+            """
+            SELECT *
+            FROM review_attribution
+            WHERE follower_delta IS NOT NULL
+            ORDER BY follower_delta DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
     def analyze_patterns(self) -> dict:
         """Analyze patterns in high-performing reviews.
@@ -226,22 +239,37 @@ class ReviewAttributor:
         """
         cursor = self.conn.cursor()
 
-        # Get all reviews with attribution data
-        try:
-            cursor.execute(
-                """
-                SELECT
-                    ra.follower_delta,
-                    pr.review_tone,
-                    ar.rating
-                FROM review_attribution ra
-                JOIN posted_reviews pr ON ra.posted_review_id = pr.id
-                LEFT JOIN ai_reviews ar ON pr.film_name = ar.name
-                WHERE ra.follower_delta IS NOT NULL
-                """
-            )
-            rows = cursor.fetchall()
-        except sqlite3.OperationalError:
+        rows = None
+        for query in (
+            """
+            SELECT
+                ra.follower_delta,
+                pr.tone_preset AS review_tone,
+                f.rating
+            FROM review_attribution ra
+            JOIN posted_reviews pr ON ra.posted_review_id = pr.id
+            LEFT JOIN films f ON pr.letterboxd_uri = f.letterboxd_uri
+            WHERE ra.follower_delta IS NOT NULL
+            """,
+            """
+            SELECT
+                ra.follower_delta,
+                pr.review_tone,
+                ar.rating
+            FROM review_attribution ra
+            JOIN posted_reviews pr ON ra.posted_review_id = pr.id
+            LEFT JOIN ai_reviews ar ON pr.film_name = ar.name
+            WHERE ra.follower_delta IS NOT NULL
+            """,
+        ):
+            try:
+                cursor.execute(query)
+                rows = cursor.fetchall()
+                break
+            except sqlite3.OperationalError:
+                continue
+
+        if rows is None:
             return {"error": "Not enough data for pattern analysis"}
 
         if not rows:

@@ -3,6 +3,7 @@
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Self
 
 from src.config import DATA_DIR, get_config
 
@@ -23,6 +24,16 @@ class RateLimiter:
             "unfollow": {"hourly": config.hourly_rate_limit, "daily": config.daily_rate_limit},
         }
 
+    def __del__(self) -> None:
+        """Best-effort cleanup if an instance is garbage-collected while open."""
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            finally:
+                self._conn = None
+
     @property
     def conn(self) -> sqlite3.Connection:
         """Get the database connection, raising if not connected."""
@@ -30,11 +41,11 @@ class RateLimiter:
             raise RuntimeError("Database not connected. Call connect() first.")
         return self._conn
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         self.connect()
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args: object) -> None:
         self.close()
 
     def connect(self) -> None:
@@ -296,7 +307,7 @@ class RateLimiter:
         self.conn.commit()
         return deleted
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, dict[str, int | bool | str | None]]:
         """Get rate limiting statistics for display.
 
         Returns:
