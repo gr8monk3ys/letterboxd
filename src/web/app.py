@@ -2,9 +2,11 @@
 
 import asyncio
 import logging
-import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from threading import Lock
+from typing import Any
 
 from fastapi import (
     BackgroundTasks,
@@ -22,6 +24,8 @@ from fastapi.templating import Jinja2Templates
 from src.config import LOGS_DIR, get_config
 from src.data_processing.create_database import MovieDatabase
 from src.rate_limiter import RateLimiter
+from src.web import services as web_services
+from src.web.tasks import TaskRegistry
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -38,6 +42,23 @@ app = FastAPI(
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
+VALID_LOG_NAMES = ["follower", "unfollower", "review_generation", "review_posting"]
+VALID_FOLLOW_PERIODS = ["week", "month", "year", "all-time"]
+VALID_REVIEW_TONES = ["casual", "snarky", "thoughtful", "brief", "analytical"]
+DEFAULT_METRICS_CONTEXT = {
+    "stats": {
+        "total_posted": 0,
+        "total_likes": 0,
+        "total_comments": 0,
+        "pending_check": 0,
+        "by_tone": {},
+    },
+    "performance": [],
+    "recent_reviews": [],
+    "ab_test": None,
+    "suggestions": [],
+}
+
 
 async def verify_api_key(x_api_key: str | None = Header(None)) -> None:
     """Verify API key for action endpoints. Skips auth if DASHBOARD_API_KEY is not set."""
@@ -48,44 +69,59 @@ async def verify_api_key(x_api_key: str | None = Header(None)) -> None:
         raise HTTPException(status_code=403, detail="Invalid or missing API key")
 
 
-def get_database_stats() -> dict:
+def get_database_stats() -> dict[str, Any]:
     """Get stats from the movie database."""
-    try:
-        with MovieDatabase() as db:
-            return db.get_review_count()
-    except Exception as e:
-        logger.error(f"Error getting database stats: {e}")
-        return {
-            "total_films": 0,
-            "user_reviewed": 0,
-            "ai_reviewed": 0,
-            "unreviewed": 0,
-        }
+    return web_services.get_database_stats(MovieDatabase, logger)
 
 
-def get_rate_limit_stats() -> dict:
+def get_rate_limit_stats() -> dict[str, Any]:
     """Get rate limit statistics."""
-    try:
-        with RateLimiter() as limiter:
-            return limiter.get_stats()
-    except Exception as e:
-        logger.error(f"Error getting rate limit stats: {e}")
-        return {}
+    return web_services.get_rate_limit_stats(RateLimiter, logger)
 
 
 def get_recent_logs(log_name: str, lines: int = 50) -> list[str]:
     """Get recent log entries."""
-    log_path = LOGS_DIR / f"{log_name}.log"
-    if not log_path.exists():
-        return []
+    return web_services.get_recent_logs(LOGS_DIR, log_name, logger, lines=lines)
 
+
+def _json_response_from_loader(
+    loader: Callable[[], dict[str, Any]],
+    *,
+    error_message: str,
+    status_code: int = 500,
+    fallback: dict[str, Any] | None = None,
+) -> JSONResponse:
+    """Return a JSON response from a loader with standardized error handling."""
     try:
-        with open(log_path, encoding="utf-8") as f:
-            all_lines = f.readlines()
-            return all_lines[-lines:]
-    except Exception as e:
-        logger.error(f"Error reading logs: {e}")
-        return []
+        return JSONResponse(loader())
+    except Exception as exc:
+        logger.error(f"{error_message}: {exc}")
+        body = fallback if fallback is not None else {"error": str(exc)}
+        return JSONResponse(body, status_code=status_code)
+
+
+def _render_template_response(
+    request: Request,
+    template_name: str,
+    context_loader: Callable[[], dict[str, Any]],
+    *,
+    error_message: str,
+    fallback_context: dict[str, Any],
+) -> HTMLResponse:
+    """Render a template with standardized fallback handling."""
+    try:
+        context = context_loader()
+    except Exception as exc:
+        logger.error(f"{error_message}: {exc}")
+        context = fallback_context
+
+    return templates.TemplateResponse(
+        template_name,
+        {
+            "request": request,
+            **context,
+        },
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -125,8 +161,7 @@ async def api_rate_limits():
 @app.get("/api/logs/{log_name}")
 async def api_logs(log_name: str, lines: int = 50):
     """API endpoint for log entries."""
-    valid_logs = ["follower", "unfollower", "review_generation", "review_posting"]
-    if log_name not in valid_logs:
+    if log_name not in VALID_LOG_NAMES:
         return JSONResponse({"error": "Invalid log name"}, status_code=400)
 
     logs = get_recent_logs(log_name, lines)
@@ -136,35 +171,19 @@ async def api_logs(log_name: str, lines: int = 50):
 @app.get("/api/films/unreviewed")
 async def api_unreviewed_films(limit: int = 20):
     """Get list of unreviewed films."""
-    try:
-        with MovieDatabase() as db:
-            films = db.get_films_without_reviews()[:limit]
-            return JSONResponse({"films": films, "total": len(films)})
-    except Exception as e:
-        logger.error(f"Error getting unreviewed films: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.fetch_unreviewed_films(MovieDatabase, limit),
+        error_message="Error getting unreviewed films",
+    )
 
 
 @app.get("/api/reviews/ai")
 async def api_ai_reviews(limit: int = 20):
     """Get list of AI-generated reviews."""
-    try:
-        with MovieDatabase() as db:
-            db.cursor.execute(
-                """
-                SELECT letterboxd_uri, name, year, ai_review, generated_at
-                FROM ai_reviews
-                ORDER BY generated_at DESC
-                LIMIT ?
-            """,
-                (limit,),
-            )
-            columns = ["letterboxd_uri", "name", "year", "review", "generated_at"]
-            reviews = [dict(zip(columns, row)) for row in db.cursor.fetchall()]
-            return JSONResponse({"reviews": reviews, "total": len(reviews)})
-    except Exception as e:
-        logger.error(f"Error getting AI reviews: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.fetch_ai_reviews(MovieDatabase, limit),
+        error_message="Error getting AI reviews",
+    )
 
 
 @app.get("/logs", response_class=HTMLResponse)
@@ -174,7 +193,7 @@ async def logs_page(request: Request):
         "logs.html",
         {
             "request": request,
-            "available_logs": ["follower", "unfollower", "review_generation", "review_posting"],
+            "available_logs": VALID_LOG_NAMES,
         },
     )
 
@@ -182,17 +201,15 @@ async def logs_page(request: Request):
 @app.get("/films", response_class=HTMLResponse)
 async def films_page(request: Request):
     """Films management page."""
-    db_stats = get_database_stats()
     return templates.TemplateResponse(
         "films.html",
         {
             "request": request,
-            "db_stats": db_stats,
+            "db_stats": get_database_stats(),
         },
     )
 
 
-# WebSocket connection manager for real-time log streaming
 class ConnectionManager:
     """Manage WebSocket connections for log streaming."""
 
@@ -224,8 +241,7 @@ manager = ConnectionManager()
 @app.websocket("/ws/logs/{log_name}")
 async def websocket_logs(websocket: WebSocket, log_name: str):
     """WebSocket endpoint for real-time log streaming."""
-    valid_logs = ["follower", "unfollower", "review_generation", "review_posting"]
-    if log_name not in valid_logs:
+    if log_name not in VALID_LOG_NAMES:
         await websocket.close(code=4000)
         return
 
@@ -236,10 +252,10 @@ async def websocket_logs(websocket: WebSocket, log_name: str):
     try:
         while True:
             if log_path.exists():
-                with open(log_path, encoding="utf-8") as f:
-                    f.seek(last_position)
-                    new_lines = f.readlines()
-                    last_position = f.tell()
+                with open(log_path, encoding="utf-8") as file_handle:
+                    file_handle.seek(last_position)
+                    new_lines = file_handle.readlines()
+                    last_position = file_handle.tell()
 
                     for line in new_lines:
                         await websocket.send_text(line.strip())
@@ -249,29 +265,54 @@ async def websocket_logs(websocket: WebSocket, log_name: str):
         manager.disconnect(websocket)
 
 
-# Running task tracking
 running_tasks: dict[str, bool] = {
     "follow": False,
     "unfollow": False,
     "generate_reviews": False,
 }
+task_state_lock = Lock()
 
 
-def run_command_in_background(task_id: str, command: list[str]):
+def _get_task_registry() -> TaskRegistry:
+    """Build a task registry for the current in-memory task state."""
+    return TaskRegistry(running_tasks, task_state_lock, logger)
+
+
+def try_start_task(task_id: str) -> bool:
+    """Atomically mark a task as running if it is currently idle."""
+    return _get_task_registry().try_start(task_id)
+
+
+def finish_task(task_id: str) -> None:
+    """Mark a task as no longer running."""
+    _get_task_registry().finish(task_id)
+
+
+def run_command_in_background(task_id: str, command: list[str]) -> None:
     """Run a command in background and update task status."""
-    try:
-        running_tasks[task_id] = True
-        subprocess.run(command, check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Task {task_id} failed: {e.stderr}")
-    finally:
-        running_tasks[task_id] = False
+    _get_task_registry().run_command_in_background(task_id, command)
+
+
+def _start_background_task(
+    background_tasks: BackgroundTasks,
+    *,
+    task_id: str,
+    command: list[str],
+    busy_error: str,
+    message: str,
+) -> JSONResponse:
+    """Schedule a background command if its task slot is idle."""
+    if not try_start_task(task_id):
+        return JSONResponse({"error": busy_error}, status_code=409)
+
+    background_tasks.add_task(run_command_in_background, task_id, command)
+    return JSONResponse({"message": message, "task_id": task_id})
 
 
 @app.get("/api/tasks/status")
 async def get_task_status():
     """Get status of background tasks."""
-    return JSONResponse(running_tasks)
+    return JSONResponse(_get_task_registry().status())
 
 
 @app.post("/api/actions/follow-popular", dependencies=[Depends(verify_api_key)])
@@ -279,13 +320,8 @@ async def action_follow_popular(
     background_tasks: BackgroundTasks, period: str = "week", limit: int = 20
 ):
     """Trigger following popular members."""
-    if running_tasks.get("follow"):
-        err = {"error": "A follow task is already running"}
-        return JSONResponse(err, status_code=409)
-
-    valid_periods = ["week", "month", "year", "all-time"]
-    if period not in valid_periods:
-        err = {"error": f"Invalid period. Use: {', '.join(valid_periods)}"}
+    if period not in VALID_FOLLOW_PERIODS:
+        err = {"error": f"Invalid period. Use: {', '.join(VALID_FOLLOW_PERIODS)}"}
         return JSONResponse(err, status_code=400)
 
     command = [
@@ -297,22 +333,18 @@ async def action_follow_popular(
         "-n",
         str(limit),
     ]
-
-    background_tasks.add_task(run_command_in_background, "follow", command)
-    return JSONResponse(
-        {
-            "message": f"Started following popular members ({period}), limit: {limit}",
-            "task_id": "follow",
-        }
+    return _start_background_task(
+        background_tasks,
+        task_id="follow",
+        command=command,
+        busy_error="A follow task is already running",
+        message=f"Started following popular members ({period}), limit: {limit}",
     )
 
 
 @app.post("/api/actions/unfollow", dependencies=[Depends(verify_api_key)])
 async def action_unfollow(background_tasks: BackgroundTasks, limit: int = 20):
     """Trigger unfollowing non-followers."""
-    if running_tasks.get("unfollow"):
-        return JSONResponse({"error": "An unfollow task is already running"}, status_code=409)
-
     command = [
         sys.executable,
         "-m",
@@ -320,13 +352,12 @@ async def action_unfollow(background_tasks: BackgroundTasks, limit: int = 20):
         "-n",
         str(limit),
     ]
-
-    background_tasks.add_task(run_command_in_background, "unfollow", command)
-    return JSONResponse(
-        {
-            "message": f"Started unfollowing non-followers, limit: {limit}",
-            "task_id": "unfollow",
-        }
+    return _start_background_task(
+        background_tasks,
+        task_id="unfollow",
+        command=command,
+        busy_error="An unfollow task is already running",
+        message=f"Started unfollowing non-followers, limit: {limit}",
     )
 
 
@@ -335,13 +366,8 @@ async def action_generate_reviews(
     background_tasks: BackgroundTasks, limit: int = 10, tone: str = "casual"
 ):
     """Trigger AI review generation."""
-    if running_tasks.get("generate_reviews"):
-        err = {"error": "A review generation task is already running"}
-        return JSONResponse(err, status_code=409)
-
-    valid_tones = ["casual", "snarky", "thoughtful", "brief", "analytical"]
-    if tone not in valid_tones:
-        err = {"error": f"Invalid tone. Use: {', '.join(valid_tones)}"}
+    if tone not in VALID_REVIEW_TONES:
+        err = {"error": f"Invalid tone. Use: {', '.join(VALID_REVIEW_TONES)}"}
         return JSONResponse(err, status_code=400)
 
     command = [
@@ -353,437 +379,284 @@ async def action_generate_reviews(
         "--tone",
         tone,
     ]
-
-    background_tasks.add_task(run_command_in_background, "generate_reviews", command)
-    return JSONResponse(
-        {
-            "message": f"Started generating {limit} reviews with {tone} tone",
-            "task_id": "generate_reviews",
-        }
+    return _start_background_task(
+        background_tasks,
+        task_id="generate_reviews",
+        command=command,
+        busy_error="A review generation task is already running",
+        message=f"Started generating {limit} reviews with {tone} tone",
     )
 
 
 @app.post("/api/actions/clear-tmdb-cache", dependencies=[Depends(verify_api_key)])
 async def action_clear_tmdb_cache():
     """Clear the TMDB metadata cache."""
-    try:
-        from src.utils.tmdb import clear_cache
+    from src.utils.tmdb import clear_cache
 
+    def load_response() -> dict[str, Any]:
         count = clear_cache()
-        return JSONResponse(
-            {
-                "message": f"Cleared {count} entries from TMDB cache",
-                "entries_cleared": count,
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error clearing TMDB cache: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return {
+            "message": f"Cleared {count} entries from TMDB cache",
+            "entries_cleared": count,
+        }
+
+    return _json_response_from_loader(
+        load_response,
+        error_message="Error clearing TMDB cache",
+    )
 
 
 @app.get("/api/tmdb-cache/stats")
 async def get_tmdb_cache_stats():
     """Get TMDB cache statistics."""
-    try:
-        from src.utils.tmdb import get_cache_stats
+    from src.utils.tmdb import get_cache_stats
 
-        stats = get_cache_stats()
-        return JSONResponse(stats or {"error": "Caching disabled"})
-    except Exception as e:
-        logger.error(f"Error getting TMDB cache stats: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.fetch_tmdb_cache_stats(get_cache_stats),
+        error_message="Error getting TMDB cache stats",
+    )
 
 
 @app.get("/api/analytics/summary")
 async def get_analytics_summary():
     """Get connection analytics summary."""
-    try:
-        from src.analytics import ConnectionAnalytics
+    from src.analytics import ConnectionAnalytics
 
-        with ConnectionAnalytics() as analytics:
-            return JSONResponse(analytics.get_summary())
-    except Exception as e:
-        logger.error(f"Error getting analytics: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.fetch_analytics_summary(ConnectionAnalytics),
+        error_message="Error getting analytics",
+    )
 
 
 @app.get("/api/analytics/growth")
 async def get_analytics_growth(days: int = 30):
     """Get growth rate metrics."""
-    try:
-        from src.analytics import ConnectionAnalytics
+    from src.analytics import ConnectionAnalytics
 
-        with ConnectionAnalytics() as analytics:
-            return JSONResponse(analytics.get_growth_rate(days))
-    except Exception as e:
-        logger.error(f"Error getting growth analytics: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.fetch_analytics_growth(ConnectionAnalytics, days),
+        error_message="Error getting growth analytics",
+    )
 
 
 @app.get("/api/analytics/daily")
 async def get_analytics_daily(days: int = 30):
     """Get daily activity data."""
-    try:
-        from src.analytics import ConnectionAnalytics
+    from src.analytics import ConnectionAnalytics
 
-        with ConnectionAnalytics() as analytics:
-            daily = analytics.get_daily_activity(days)
-            return JSONResponse({"data": daily, "days": days})
-    except Exception as e:
-        logger.error(f"Error getting daily analytics: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.fetch_analytics_daily(ConnectionAnalytics, days),
+        error_message="Error getting daily analytics",
+    )
 
 
 @app.get("/api/analytics/ratings")
 async def get_ratings_distribution():
     """Get rating distribution histogram."""
-    try:
-        with MovieDatabase() as db:
-            db.cursor.execute("""
-                SELECT rating, COUNT(*) as count
-                FROM films
-                WHERE rating IS NOT NULL
-                GROUP BY rating
-                ORDER BY rating
-            """)
-            rows = db.cursor.fetchall()
-            return JSONResponse({"ratings": [{"rating": r[0], "count": r[1]} for r in rows]})
-    except Exception as e:
-        logger.error(f"Error getting ratings distribution: {e}")
-        return JSONResponse({"ratings": []})
+    return _json_response_from_loader(
+        lambda: web_services.fetch_ratings_distribution(MovieDatabase),
+        error_message="Error getting ratings distribution",
+        status_code=200,
+        fallback={"ratings": []},
+    )
 
 
 @app.get("/api/analytics/watch-years")
 async def get_watch_years_distribution():
     """Get distribution of watched films by release year (decade grouping)."""
-    try:
-        with MovieDatabase() as db:
-            db.cursor.execute("""
-                SELECT
-                    (year / 10) * 10 as decade,
-                    COUNT(*) as count
-                FROM films
-                WHERE year IS NOT NULL
-                GROUP BY decade
-                ORDER BY decade
-            """)
-            rows = db.cursor.fetchall()
-            return JSONResponse(
-                {"decades": [{"decade": f"{int(r[0])}s", "count": r[1]} for r in rows]}
-            )
-    except Exception as e:
-        logger.error(f"Error getting watch years distribution: {e}")
-        return JSONResponse({"decades": []})
+    return _json_response_from_loader(
+        lambda: web_services.fetch_watch_years_distribution(MovieDatabase),
+        error_message="Error getting watch years distribution",
+        status_code=200,
+        fallback={"decades": []},
+    )
 
 
 @app.get("/analytics", response_class=HTMLResponse)
 async def analytics_page(request: Request):
     """Analytics dashboard page."""
-    try:
-        from src.analytics import ConnectionAnalytics
+    from src.analytics import ConnectionAnalytics
 
-        with ConnectionAnalytics() as analytics:
-            summary = analytics.get_summary()
-    except Exception as e:
-        logger.error(f"Error loading analytics: {e}")
-        summary = {}
-
-    return templates.TemplateResponse(
+    return _render_template_response(
+        request,
         "analytics.html",
-        {
-            "request": request,
-            "analytics": summary,
-        },
+        lambda: web_services.load_analytics_page_context(ConnectionAnalytics),
+        error_message="Error loading analytics",
+        fallback_context={"analytics": {}},
     )
 
 
 @app.get("/metrics", response_class=HTMLResponse)
 async def metrics_page(request: Request):
     """Review quality metrics page."""
-    try:
-        from src.review_metrics import ReviewMetricsDB, get_tone_suggestions
+    from src.review_metrics import ReviewMetricsDB, get_tone_suggestions
 
-        with ReviewMetricsDB() as db:
-            stats = db.get_stats()
-            performance = db.get_tone_performance()
-            recent_reviews = db.get_posted_reviews(limit=20)
-            ab_test = db.get_active_ab_test()
-            suggestions = get_tone_suggestions(db)
-
-        # Convert TonePerformance dataclasses to dicts for template
-        performance_dicts = [
-            {
-                "tone": p.tone,
-                "review_count": p.review_count,
-                "avg_likes": p.avg_likes,
-                "avg_comments": p.avg_comments,
-                "engagement_score": p.engagement_score,
-            }
-            for p in performance
-        ]
-    except Exception as e:
-        logger.error(f"Error loading metrics: {e}")
-        stats = {
-            "total_posted": 0,
-            "total_likes": 0,
-            "total_comments": 0,
-            "pending_check": 0,
-            "by_tone": {},
-        }
-        performance_dicts = []
-        recent_reviews = []
-        ab_test = None
-        suggestions = []
-
-    return templates.TemplateResponse(
+    return _render_template_response(
+        request,
         "metrics.html",
-        {
-            "request": request,
-            "stats": stats,
-            "performance": performance_dicts,
-            "recent_reviews": recent_reviews,
-            "ab_test": ab_test,
-            "suggestions": suggestions,
-        },
+        lambda: web_services.load_metrics_page_context(ReviewMetricsDB, get_tone_suggestions),
+        error_message="Error loading metrics",
+        fallback_context=DEFAULT_METRICS_CONTEXT,
     )
 
 
 @app.get("/api/metrics/stats")
 async def get_metrics_stats():
     """Get review metrics statistics."""
-    try:
-        from src.review_metrics import ReviewMetricsDB
+    from src.review_metrics import ReviewMetricsDB
 
-        with ReviewMetricsDB() as db:
-            return JSONResponse(db.get_stats())
-    except Exception as e:
-        logger.error(f"Error getting metrics stats: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.fetch_metrics_stats(ReviewMetricsDB),
+        error_message="Error getting metrics stats",
+    )
 
 
 @app.get("/api/metrics/performance")
 async def get_metrics_performance(days: int = 30):
     """Get tone performance metrics."""
-    try:
-        from src.review_metrics import ReviewMetricsDB
+    from src.review_metrics import ReviewMetricsDB
 
-        with ReviewMetricsDB() as db:
-            performance = db.get_tone_performance(days=days)
-            return JSONResponse(
-                {
-                    "data": [
-                        {
-                            "tone": p.tone,
-                            "review_count": p.review_count,
-                            "total_likes": p.total_likes,
-                            "total_comments": p.total_comments,
-                            "avg_likes": p.avg_likes,
-                            "avg_comments": p.avg_comments,
-                            "engagement_score": p.engagement_score,
-                        }
-                        for p in performance
-                    ]
-                }
-            )
-    except Exception as e:
-        logger.error(f"Error getting tone performance: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.fetch_metrics_performance(ReviewMetricsDB, days),
+        error_message="Error getting tone performance",
+    )
 
 
-@app.post("/api/metrics/update-engagement")
+@app.post("/api/metrics/update-engagement", dependencies=[Depends(verify_api_key)])
 async def update_engagement():
     """Trigger engagement metrics update."""
-    try:
-        from src.review_metrics import EngagementScraper, ReviewMetricsDB
+    from src.review_metrics import EngagementScraper, ReviewMetricsDB
 
-        with ReviewMetricsDB() as db:
-            scraper = EngagementScraper()
-            result = scraper.update_all_engagement(db)
-            return JSONResponse({"message": f"Updated {result['updated']} reviews", **result})
-    except Exception as e:
-        logger.error(f"Error updating engagement: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.update_engagement_metrics(ReviewMetricsDB, EngagementScraper),
+        error_message="Error updating engagement",
+    )
 
 
-@app.post("/api/metrics/ab-test/start")
+@app.post("/api/metrics/ab-test/start", dependencies=[Depends(verify_api_key)])
 async def start_ab_test(request: Request):
     """Start a new A/B test."""
-    try:
-        from src.review_metrics import ReviewMetricsDB
+    from src.review_metrics import ReviewMetricsDB
 
-        data = await request.json()
-        name = data.get("name")
-        tone_a = data.get("tone_a")
-        tone_b = data.get("tone_b")
+    data = await request.json()
+    name, tone_a, tone_b = web_services.get_required_ab_test_fields(data)
+    if not all([name, tone_a, tone_b]):
+        return JSONResponse({"error": "Missing required fields"}, status_code=400)
 
-        if not all([name, tone_a, tone_b]):
-            return JSONResponse({"error": "Missing required fields"}, status_code=400)
-
-        with ReviewMetricsDB() as db:
-            test_id = db.create_ab_test(name, tone_a, tone_b)
-
-        return JSONResponse(
-            {
-                "message": f"Started A/B test: {name}",
-                "test_id": test_id,
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error starting A/B test: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.create_ab_test(ReviewMetricsDB, name, tone_a, tone_b),
+        error_message="Error starting A/B test",
+    )
 
 
-@app.post("/api/metrics/ab-test/end")
+@app.post("/api/metrics/ab-test/end", dependencies=[Depends(verify_api_key)])
 async def end_ab_test():
     """End the active A/B test and get results."""
     try:
         from src.review_metrics import ReviewMetricsDB
 
-        with ReviewMetricsDB() as db:
-            results = db.end_ab_test()
-
+        results = web_services.end_active_ab_test(ReviewMetricsDB)
         if results:
             return JSONResponse({"message": "A/B test ended", **results})
-        else:
-            return JSONResponse({"error": "No active A/B test"}, status_code=404)
-    except Exception as e:
-        logger.error(f"Error ending A/B test: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "No active A/B test"}, status_code=404)
+    except Exception as exc:
+        logger.error(f"Error ending A/B test: {exc}")
+        return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 @app.get("/api/metrics/ab-test/assignment")
 async def get_ab_test_assignment():
     """Get the tone to use for the next review based on A/B test."""
-    try:
-        from src.review_metrics import ReviewMetricsDB
+    from src.review_metrics import ReviewMetricsDB
 
-        with ReviewMetricsDB() as db:
-            tone = db.get_ab_test_assignment()
-
-        if tone:
-            return JSONResponse({"tone": tone})
-        else:
-            return JSONResponse({"tone": None, "message": "No active A/B test"})
-    except Exception as e:
-        logger.error(f"Error getting A/B test assignment: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.fetch_ab_test_assignment(ReviewMetricsDB),
+        error_message="Error getting A/B test assignment",
+    )
 
 
-# Growth Dashboard Endpoints
 @app.get("/growth", response_class=HTMLResponse)
 async def growth_page(request: Request):
     """Growth tracking dashboard page."""
-    try:
-        from src.growth import GrowthDashboard
+    from src.growth import GrowthDashboard
 
-        with GrowthDashboard() as dashboard:
-            summary = dashboard.get_growth_summary(30)
-            correlation = dashboard.get_correlation_analysis(60)
-    except Exception as e:
-        logger.error(f"Error loading growth dashboard: {e}")
-        summary = {}
-        correlation = {}
-
-    return templates.TemplateResponse(
+    return _render_template_response(
+        request,
         "growth.html",
-        {
-            "request": request,
-            "summary": summary,
-            "correlation": correlation,
-        },
+        lambda: web_services.load_growth_page_context(GrowthDashboard),
+        error_message="Error loading growth dashboard",
+        fallback_context={"summary": {}, "correlation": {}},
     )
 
 
 @app.get("/api/growth/summary")
 async def api_growth_summary(days: int = 30):
     """Get comprehensive growth summary."""
-    try:
-        from src.growth import GrowthDashboard
+    from src.growth import GrowthDashboard
 
-        with GrowthDashboard() as dashboard:
-            return JSONResponse(dashboard.get_growth_summary(days))
-    except Exception as e:
-        logger.error(f"Error getting growth summary: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.fetch_growth_summary(GrowthDashboard, days),
+        error_message="Error getting growth summary",
+    )
 
 
 @app.get("/api/growth/history")
 async def api_growth_history(days: int = 30):
     """Get follower history data."""
-    try:
-        from src.growth import FollowerTracker
+    from src.growth import FollowerTracker
 
-        with FollowerTracker() as tracker:
-            history = tracker.get_history(days)
-            return JSONResponse({"data": history, "days": days})
-    except Exception as e:
-        logger.error(f"Error getting growth history: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.fetch_growth_history(FollowerTracker, days),
+        error_message="Error getting growth history",
+    )
 
 
 @app.get("/api/growth/milestones")
 async def api_growth_milestones():
     """Get milestone progress."""
-    try:
-        from src.growth import FollowerTracker
+    from src.growth import FollowerTracker
 
-        with FollowerTracker() as tracker:
-            latest = tracker.get_latest_snapshot()
-            if latest:
-                milestones = tracker.get_milestones(latest["followers_count"])
-            else:
-                milestones = {}
-            return JSONResponse(milestones)
-    except Exception as e:
-        logger.error(f"Error getting milestones: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.fetch_growth_milestones(FollowerTracker),
+        error_message="Error getting milestones",
+    )
 
 
-@app.post("/api/growth/snapshot")
+@app.post("/api/growth/snapshot", dependencies=[Depends(verify_api_key)])
 async def api_take_snapshot():
     """Take a new follower snapshot."""
     try:
         from src.growth import FollowerTracker
 
-        with FollowerTracker() as tracker:
-            snapshot = tracker.take_snapshot()
-
+        snapshot = web_services.take_growth_snapshot(FollowerTracker)
         if snapshot:
             return JSONResponse({"message": "Snapshot taken", "data": snapshot})
-        else:
-            return JSONResponse({"error": "Failed to take snapshot"}, status_code=500)
-    except Exception as e:
-        logger.error(f"Error taking snapshot: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Failed to take snapshot"}, status_code=500)
+    except Exception as exc:
+        logger.error(f"Error taking snapshot: {exc}")
+        return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 @app.get("/api/growth/trending")
 async def api_trending_films(limit: int = 20):
     """Get trending films for review opportunities."""
-    try:
-        from src.growth import TrendingDetector
+    from src.growth import TrendingDetector
 
-        with TrendingDetector() as detector:
-            opportunities = detector.get_review_opportunities(limit=limit)
-            return JSONResponse({"films": opportunities, "count": len(opportunities)})
-    except Exception as e:
-        logger.error(f"Error getting trending films: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.fetch_trending_films(TrendingDetector, limit),
+        error_message="Error getting trending films",
+    )
 
 
 @app.get("/api/growth/campaigns")
 async def api_campaigns(limit: int = 10):
     """Get list of growth campaigns."""
-    try:
-        from src.growth import CampaignManager
+    from src.growth import CampaignManager
 
-        with CampaignManager() as manager:
-            campaigns = manager.list_campaigns(limit)
-            active = manager.get_active_campaign()
-            return JSONResponse({"campaigns": campaigns, "active": active})
-    except Exception as e:
-        logger.error(f"Error getting campaigns: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return _json_response_from_loader(
+        lambda: web_services.fetch_campaigns(CampaignManager, limit),
+        error_message="Error getting campaigns",
+    )
 
 
 def main():
