@@ -1,8 +1,30 @@
 """Tests for CLI completions module."""
 
+import argparse
 import sqlite3
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
+
+import src.completions as completions
+
+
+def run_completions_main(monkeypatch, **kwargs):
+    """Run completions.main() with patched parsed args."""
+    parsed = {
+        "generate_bash": False,
+        "generate_zsh": False,
+        "generate_fish": False,
+        "list_films": None,
+        "list_users": None,
+    }
+    parsed.update(kwargs)
+    monkeypatch.setattr(
+        "argparse.ArgumentParser.parse_args",
+        lambda self: argparse.Namespace(**parsed),
+    )
+    completions.main()
 
 
 class TestCompletions:
@@ -66,8 +88,6 @@ class TestCompletions:
 
     def test_get_film_names(self, temp_db, monkeypatch):
         """Test getting film names for completion."""
-        from src import completions
-
         monkeypatch.setattr(completions, "DB_PATH", temp_db)
 
         films = completions.get_film_names()
@@ -77,8 +97,6 @@ class TestCompletions:
 
     def test_get_film_names_with_prefix(self, temp_db, monkeypatch):
         """Test filtering films by prefix."""
-        from src import completions
-
         monkeypatch.setattr(completions, "DB_PATH", temp_db)
 
         films = completions.get_film_names(prefix="The")
@@ -88,8 +106,6 @@ class TestCompletions:
 
     def test_get_film_names_with_limit(self, temp_db, monkeypatch):
         """Test limiting film results."""
-        from src import completions
-
         monkeypatch.setattr(completions, "DB_PATH", temp_db)
 
         films = completions.get_film_names(limit=2)
@@ -97,17 +113,21 @@ class TestCompletions:
 
     def test_get_film_names_nonexistent_db(self, tmp_path, monkeypatch):
         """Test with non-existent database."""
-        from src import completions
-
         monkeypatch.setattr(completions, "DB_PATH", tmp_path / "nonexistent.db")
 
         films = completions.get_film_names()
         assert films == []
 
+    def test_get_film_names_database_error(self, temp_db, monkeypatch):
+        """Test get_film_names returns empty list on sqlite errors."""
+        monkeypatch.setattr(completions, "DB_PATH", temp_db)
+        mock_connect = MagicMock(side_effect=sqlite3.Error("boom"))
+        monkeypatch.setattr(completions.sqlite3, "connect", mock_connect)
+
+        assert completions.get_film_names() == []
+
     def test_get_usernames(self, temp_db, monkeypatch):
         """Test getting usernames for completion."""
-        from src import completions
-
         monkeypatch.setattr(completions, "DB_PATH", temp_db)
 
         users = completions.get_usernames()
@@ -117,8 +137,6 @@ class TestCompletions:
 
     def test_get_usernames_with_prefix(self, temp_db, monkeypatch):
         """Test filtering usernames by prefix."""
-        from src import completions
-
         monkeypatch.setattr(completions, "DB_PATH", temp_db)
 
         users = completions.get_usernames(prefix="a")
@@ -127,43 +145,58 @@ class TestCompletions:
 
     def test_get_usernames_nonexistent_db(self, tmp_path, monkeypatch):
         """Test with non-existent database."""
-        from src import completions
-
         monkeypatch.setattr(completions, "DB_PATH", tmp_path / "nonexistent.db")
 
         users = completions.get_usernames()
         assert users == []
 
+    def test_get_usernames_database_error(self, temp_db, monkeypatch):
+        """Test get_usernames returns empty list on sqlite errors."""
+        monkeypatch.setattr(completions, "DB_PATH", temp_db)
+        mock_connect = MagicMock(side_effect=sqlite3.Error("boom"))
+        monkeypatch.setattr(completions.sqlite3, "connect", mock_connect)
+
+        assert completions.get_usernames() == []
+
     def test_get_protected_users(self, tmp_path, monkeypatch):
         """Test getting protected users."""
-        from src import completions
-
         # Create protected users file
         protected_file = tmp_path / "protected_users.txt"
         protected_file.write_text("user1\nuser2\nuser3\n")
 
         monkeypatch.setattr(completions, "DATA_DIR", tmp_path)
 
-        # Create a patched function that uses the temp path
-        def patched_func():
-            protected = tmp_path / "protected_users.txt"
-            if not protected.exists():
-                return []
-            with open(protected, encoding="utf-8") as f:
-                return [line.strip() for line in f if line.strip()]
-
-        monkeypatch.setattr(completions, "get_protected_users", patched_func)
-
-        users = patched_func()
+        users = completions.get_protected_users()
         assert len(users) == 3
         assert "user1" in users
         assert "user2" in users
 
+    def test_get_protected_users_missing_file(self, tmp_path, monkeypatch):
+        """Test protected users returns empty list when file is missing."""
+        monkeypatch.setattr(completions, "DATA_DIR", tmp_path)
+
+        assert completions.get_protected_users() == []
+
+    def test_get_protected_users_os_error(self, tmp_path, monkeypatch):
+        """Test protected users returns empty list on file read errors."""
+        monkeypatch.setattr(completions, "DATA_DIR", tmp_path)
+        protected_file = tmp_path / "protected_users.txt"
+        protected_file.write_text("user1\n")
+
+        original_open = open
+
+        def fake_open(path, *args, **kwargs):
+            if Path(path) == protected_file:
+                raise OSError("denied")
+            return original_open(path, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", fake_open)
+
+        assert completions.get_protected_users() == []
+
     def test_generate_bash_completions(self):
         """Test bash completion script generation."""
-        from src.completions import generate_bash_completions
-
-        script = generate_bash_completions()
+        script = completions.generate_bash_completions()
         assert "#!/bin/bash" in script
         assert "_letterboxd_films" in script
         assert "_letterboxd_users" in script
@@ -171,57 +204,74 @@ class TestCompletions:
 
     def test_generate_zsh_completions(self):
         """Test zsh completion script generation."""
-        from src.completions import generate_zsh_completions
-
-        script = generate_zsh_completions()
+        script = completions.generate_zsh_completions()
         assert "#compdef" in script
         assert "_letterboxd_films" in script
         assert "_arguments" in script
 
     def test_generate_fish_completions(self):
         """Test fish completion script generation."""
-        from src.completions import generate_fish_completions
-
-        script = generate_fish_completions()
+        script = completions.generate_fish_completions()
         assert "function __letterboxd_films" in script
         assert "complete -c" in script
+
+    def test_generate_completions_missing_files(self, tmp_path, monkeypatch):
+        """Test missing completion files return fallback messages."""
+        monkeypatch.setattr(completions, "COMPLETIONS_DIR", tmp_path)
+
+        assert completions.generate_bash_completions() == "# Bash completion file not found"
+        assert completions.generate_zsh_completions() == "# Zsh completion file not found"
+        assert completions.generate_fish_completions() == "# Fish completion file not found"
 
 
 class TestCompletionsCLI:
     """Test completion CLI commands."""
 
-    def test_list_films_option(self, tmp_path, monkeypatch, capsys):
+    def test_main_generate_bash(self, monkeypatch, capsys):
+        """Test --generate-bash output."""
+        monkeypatch.setattr(completions, "generate_bash_completions", lambda: "bash-script")
+
+        run_completions_main(monkeypatch, generate_bash=True)
+
+        assert capsys.readouterr().out.strip() == "bash-script"
+
+    def test_main_generate_zsh(self, monkeypatch, capsys):
+        """Test --generate-zsh output."""
+        monkeypatch.setattr(completions, "generate_zsh_completions", lambda: "zsh-script")
+
+        run_completions_main(monkeypatch, generate_zsh=True)
+
+        assert capsys.readouterr().out.strip() == "zsh-script"
+
+    def test_main_generate_fish(self, monkeypatch, capsys):
+        """Test --generate-fish output."""
+        monkeypatch.setattr(completions, "generate_fish_completions", lambda: "fish-script")
+
+        run_completions_main(monkeypatch, generate_fish=True)
+
+        assert capsys.readouterr().out.strip() == "fish-script"
+
+    def test_main_list_films_option(self, monkeypatch, capsys):
         """Test --list-films option."""
-        from src import completions
+        monkeypatch.setattr(completions, "get_film_names", lambda prefix: ["Alien", "Aliens"])
 
-        db_path = tmp_path / "test.db"
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute("CREATE TABLE films (letterboxd_uri TEXT, name TEXT, year INTEGER)")
-        cursor.execute("INSERT INTO films VALUES ('uri1', 'Test Film', 2020)")
-        conn.commit()
-        conn.close()
+        run_completions_main(monkeypatch, list_films="Al")
 
-        monkeypatch.setattr(completions, "DB_PATH", db_path)
+        assert capsys.readouterr().out.splitlines() == ["Alien", "Aliens"]
 
-        films = completions.get_film_names()
-        assert "Test Film" in films
+    def test_main_list_users_option(self, monkeypatch, capsys):
+        """Test --list-users option."""
+        monkeypatch.setattr(completions, "get_usernames", lambda prefix: ["alice", "allen"])
 
-    def test_main_no_args(self, capsys):
+        run_completions_main(monkeypatch, list_users="al")
+
+        assert capsys.readouterr().out.splitlines() == ["alice", "allen"]
+
+    def test_main_no_args(self, monkeypatch, capsys):
         """Test main with no arguments shows help."""
-        import sys
+        run_completions_main(monkeypatch)
 
-        from src.completions import main
-
-        # Mock argv
-        original_argv = sys.argv
-        sys.argv = ["completions"]
-
-        try:
-            main()
-            captured = capsys.readouterr()
-            assert "Shell Completion Setup" in captured.out
-            assert "Bash:" in captured.out
-            assert "Zsh:" in captured.out
-        finally:
-            sys.argv = original_argv
+        captured = capsys.readouterr()
+        assert "Shell Completion Setup" in captured.out
+        assert "Bash:" in captured.out
+        assert "Zsh:" in captured.out

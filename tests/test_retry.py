@@ -74,6 +74,13 @@ class TestRetryDecorator:
         assert my_function.__name__ == "my_function"
         assert my_function.__doc__ == "My docstring."
 
+    def test_retry_zero_attempts_raises_runtime_error(self):
+        """Zero max_attempts should fail with the defensive RuntimeError path."""
+        decorated = retry(max_attempts=0)(lambda: "success")
+
+        with pytest.raises(RuntimeError, match="Retry exhausted without capturing exception"):
+            decorated()
+
 
 class TestRetryOnNetworkError:
     """Test the retry_on_network_error convenience decorator."""
@@ -148,6 +155,15 @@ class TestWithRetry:
 class TestRetryContext:
     """Test the RetryContext class."""
 
+    def test_context_manager_methods(self):
+        """RetryContext should support the context-manager protocol."""
+        ctx = RetryContext(max_attempts=2)
+
+        with ctx as returned:
+            assert returned is ctx
+
+        assert ctx.__exit__(None, None, None) is False
+
     def test_iterates_correct_number_of_times(self):
         """Test that RetryContext iterates max_attempts times."""
         ctx = RetryContext(max_attempts=3)
@@ -185,6 +201,31 @@ class TestRetryContext:
 
         assert attempts == 2
 
+    def test_retry_without_exception_after_max_attempts_raises_runtime_error(self):
+        """retry() without an exception should raise RuntimeError once attempts are exhausted."""
+        ctx = RetryContext(max_attempts=1, delay=0.01)
+
+        with pytest.raises(RuntimeError, match="Max attempts"):
+            for _ in ctx:
+                ctx.retry()
+
+    def test_retry_context_without_jitter(self, monkeypatch):
+        """RetryContext should sleep the base delay unchanged when jitter is disabled."""
+        import importlib
+
+        retry_module = importlib.import_module("src.utils.retry")
+
+        sleep = MagicMock()
+        monkeypatch.setattr(retry_module.time, "sleep", sleep)
+
+        ctx = RetryContext(max_attempts=2, delay=0.5, backoff=3.0, jitter=False)
+        iterator = iter(ctx)
+        assert next(iterator) == 1
+        ctx.retry(ConnectionError("boom"))
+        assert next(iterator) == 2
+
+        sleep.assert_called_once_with(0.5)
+
 
 class TestBackoffTiming:
     """Test exponential backoff timing."""
@@ -213,3 +254,12 @@ class TestBackoffTiming:
         assert 0.08 < delays[0] < 0.15  # ~0.1
         assert 0.15 < delays[1] < 0.30  # ~0.2
         assert 0.30 < delays[2] < 0.55  # ~0.4
+
+
+class TestWithRetryEdgeCases:
+    """Test defensive retry edge cases."""
+
+    def test_with_retry_zero_attempts_raises_runtime_error(self):
+        """Zero-attempt with_retry calls should hit the defensive RuntimeError path."""
+        with pytest.raises(RuntimeError, match="Retry exhausted without capturing exception"):
+            with_retry(lambda: "success", max_attempts=0)

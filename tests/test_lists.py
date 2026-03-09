@@ -1,7 +1,10 @@
 """Tests for ListGenerator, ListDefinition, and FilmWithMetadata in src/lists/generate_lists.py."""
 
-from unittest.mock import MagicMock, patch
+import asyncio
+import sys
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import src.lists.generate_lists as generate_lists
 from src.lists.generate_lists import FilmWithMetadata, ListDefinition, ListGenerator
 
 
@@ -260,3 +263,310 @@ def test_generate_all_lists_dedup(mock_db_cls):
     assert len(filtered_lists) < len(all_lists)
 
     generator.close()
+
+
+@patch("src.utils.tmdb.TMDBClient")
+@patch("src.lists.generate_lists.MovieDatabase")
+def test_fetch_all_metadata_handles_success_missing_metadata_and_errors(mock_db_cls, mock_tmdb_cls):
+    """Metadata fetch populates cached films and falls back cleanly on failure."""
+    mock_db = MagicMock()
+    mock_db.get_all_rated_films.return_value = [
+        {
+            "letterboxd_uri": "https://letterboxd.com/film/matrix/",
+            "name": "The Matrix",
+            "year": 1999,
+            "rating": 5.0,
+        },
+        {
+            "letterboxd_uri": "https://letterboxd.com/film/memento/",
+            "name": "Memento",
+            "year": 2000,
+            "rating": 4.5,
+        },
+        {
+            "letterboxd_uri": "https://letterboxd.com/film/primer/",
+            "name": "Primer",
+            "year": 2004,
+            "rating": 4.0,
+        },
+    ]
+    mock_db_cls.return_value = mock_db
+
+    tmdb = MagicMock()
+    tmdb.get_film_metadata.side_effect = [
+        {"genres": ["Sci-Fi", "Action"], "director": "The Wachowskis"},
+        None,
+        RuntimeError("tmdb down"),
+    ]
+    mock_tmdb_cls.return_value = tmdb
+
+    generator = ListGenerator()
+    films = asyncio.run(generator.fetch_all_metadata())
+
+    assert [film.name for film in films] == ["The Matrix", "Memento", "Primer"]
+    assert films[0].genres == ["Sci-Fi", "Action"]
+    assert films[0].directors == ["The Wachowskis"]
+    assert films[1].genres == []
+    assert films[1].directors == []
+    assert films[2].genres == []
+    assert films[2].directors == []
+    assert generator._films_with_metadata == films
+
+    generator.close()
+
+
+@patch("src.utils.tmdb.TMDBClient")
+@patch("src.lists.generate_lists.MovieDatabase")
+def test_fetch_all_metadata_logs_progress_every_hundred(mock_db_cls, mock_tmdb_cls, caplog):
+    """Metadata fetch reports progress for large libraries."""
+    mock_db = MagicMock()
+    mock_db.get_all_rated_films.return_value = [
+        {
+            "letterboxd_uri": f"https://letterboxd.com/film/film-{i}/",
+            "name": f"Film {i}",
+            "year": 2000 + (i % 20),
+            "rating": 4.0,
+        }
+        for i in range(100)
+    ]
+    mock_db_cls.return_value = mock_db
+
+    tmdb = MagicMock()
+    tmdb.get_film_metadata.return_value = {"genres": [], "director": None}
+    mock_tmdb_cls.return_value = tmdb
+
+    generator = ListGenerator()
+
+    with caplog.at_level("INFO"):
+        asyncio.run(generator.fetch_all_metadata())
+
+    assert "Progress: 100/100" in caplog.text
+    generator.close()
+
+
+@patch("src.lists.generate_lists.MovieDatabase")
+def test_categorize_films_uses_cached_films_and_skips_empty_values(mock_db_cls):
+    """Cached films are used when no explicit list is provided."""
+    mock_db = MagicMock()
+    mock_db_cls.return_value = mock_db
+
+    generator = ListGenerator()
+    generator._films_with_metadata = [
+        FilmWithMetadata(
+            letterboxd_uri="https://letterboxd.com/film/valid/",
+            name="Valid Film",
+            year=1995,
+            rating=4.5,
+            genres=["Drama", ""],
+            directors=["Director Name", ""],
+        ),
+        FilmWithMetadata(
+            letterboxd_uri="https://letterboxd.com/film/empty/",
+            name="No Buckets",
+            year=0,
+            rating=0,
+            genres=[""],
+            directors=[""],
+        ),
+    ]
+
+    categories = generator.categorize_films()
+
+    assert list(categories["genres"].keys()) == ["Drama"]
+    assert list(categories["directors"].keys()) == ["Director Name"]
+    assert list(categories["decades"].keys()) == [1990]
+    assert list(categories["ratings"].keys()) == [4.5]
+
+    generator.close()
+
+
+@patch("src.lists.generate_lists.MovieDatabase")
+def test_generate_director_lists_sort_by_rating_and_filter_threshold(mock_db_cls):
+    """Director lists only appear above the threshold and stay rating-ranked."""
+    mock_db = MagicMock()
+    mock_db_cls.return_value = mock_db
+
+    generator = ListGenerator()
+    films = [
+        FilmWithMetadata(
+            letterboxd_uri=f"https://letterboxd.com/film/director-film-{i}/",
+            name=f"Director Film {i}",
+            year=2000 + i,
+            rating=5.0 - (i * 0.5),
+            directors=["Jane Doe"],
+        )
+        for i in range(5)
+    ] + [
+        FilmWithMetadata(
+            letterboxd_uri="https://letterboxd.com/film/other-film/",
+            name="Other Director Film",
+            year=2020,
+            rating=4.0,
+            directors=["Other Director"],
+        )
+    ]
+
+    categories = generator.categorize_films(films)
+    lists = generator.generate_director_lists(categories, min_films=5)
+
+    assert [lst.title for lst in lists] == ["Jane Doe Filmography - Ranked"]
+    assert [film["rating"] for film in lists[0].films] == [5.0, 4.5, 4.0, 3.5, 3.0]
+
+    generator.close()
+
+
+@patch("src.lists.generate_lists.MovieDatabase")
+def test_generate_decade_lists_require_count_and_average(mock_db_cls):
+    """Decade lists require enough films and a strong enough average rating."""
+    mock_db = MagicMock()
+    mock_db_cls.return_value = mock_db
+
+    generator = ListGenerator()
+    films = [
+        FilmWithMetadata(
+            letterboxd_uri=f"https://letterboxd.com/film/90s-{i}/",
+            name=f"90s Film {i}",
+            year=1990 + i,
+            rating=4.5,
+        )
+        for i in range(10)
+    ] + [
+        FilmWithMetadata(
+            letterboxd_uri=f"https://letterboxd.com/film/80s-{i}/",
+            name=f"80s Film {i}",
+            year=1980 + i,
+            rating=2.0,
+        )
+        for i in range(10)
+    ]
+
+    categories = generator.categorize_films(films)
+    lists = generator.generate_decade_lists(categories, min_films=10, min_avg_rating=3.5)
+
+    assert [lst.title for lst in lists] == ["Best of the 1990s"]
+    assert len(lists[0].films) == 10
+
+    generator.close()
+
+
+@patch("src.lists.generate_lists.MovieDatabase")
+def test_generate_rating_lists_default_ratings_sort_by_year_desc(mock_db_cls):
+    """Default rating tiers are used and films are ordered newest first."""
+    mock_db = MagicMock()
+    mock_db_cls.return_value = mock_db
+
+    generator = ListGenerator()
+    films = [
+        FilmWithMetadata(
+            letterboxd_uri="https://letterboxd.com/film/older-perfect/",
+            name="Older Perfect",
+            year=1999,
+            rating=5.0,
+        ),
+        FilmWithMetadata(
+            letterboxd_uri="https://letterboxd.com/film/newer-perfect/",
+            name="Newer Perfect",
+            year=2024,
+            rating=5.0,
+        ),
+        FilmWithMetadata(
+            letterboxd_uri="https://letterboxd.com/film/four-and-half/",
+            name="Four And Half",
+            year=2020,
+            rating=4.5,
+        ),
+        FilmWithMetadata(
+            letterboxd_uri="https://letterboxd.com/film/four-star/",
+            name="Four Star",
+            year=2018,
+            rating=4.0,
+        ),
+    ]
+
+    categories = generator.categorize_films(films)
+    lists = generator.generate_rating_lists(categories)
+
+    assert [lst.title for lst in lists] == [
+        "My ★★★★★ Films",
+        "My ★★★★½ Films",
+        "My ★★★★ Films",
+    ]
+    assert [film["name"] for film in lists[0].films] == ["Newer Perfect", "Older Perfect"]
+
+    generator.close()
+
+
+def run_generate_lists_cli(monkeypatch, args, generator):
+    """Run the list generation CLI against a mocked generator instance."""
+    monkeypatch.setattr(generate_lists, "ListGenerator", MagicMock(return_value=generator))
+    monkeypatch.setattr(sys, "argv", ["generate_lists.py", *args])
+    generate_lists.main()
+
+
+def test_main_dry_run_fetches_metadata_and_previews_lists(monkeypatch, capsys):
+    """Dry-run CLI prints the preview and top films."""
+    generator = MagicMock()
+    generator.fetch_all_metadata = AsyncMock(return_value=[])
+    generator.categorize_films.return_value = {"ratings": {}}
+    generator.generate_genre_lists.return_value = [
+        ListDefinition(
+            title="Best Horror Films",
+            description="My favorite horror films.",
+            films=[
+                {"name": "Alien"},
+                {"name": "The Thing"},
+                {"name": "Candyman"},
+            ],
+            list_type="genre",
+        )
+    ]
+    generator.generate_director_lists.return_value = []
+    generator.generate_decade_lists.return_value = []
+    generator.generate_rating_lists.return_value = []
+
+    run_generate_lists_cli(monkeypatch, ["--all", "--dry-run", "--fetch-metadata"], generator)
+    output = capsys.readouterr().out
+
+    assert "Fetching TMDB metadata for all films..." in output
+    assert "Would create 1 lists" in output
+    assert "[GENRE] Best Horror Films" in output
+    assert "Top 3: Alien, The Thing, Candyman" in output
+    generator.close.assert_called_once()
+
+
+def test_main_without_flags_generates_all_lists(monkeypatch):
+    """No explicit flags should fall back to generate_all_lists."""
+    generator = MagicMock()
+    generator.categorize_films.return_value = {"ratings": {}}
+    generator.generate_all_lists.return_value = []
+
+    run_generate_lists_cli(monkeypatch, [], generator)
+
+    generator.fetch_all_metadata.assert_not_called()
+    generator.generate_all_lists.assert_called_once_with()
+    generator.generate_genre_lists.assert_not_called()
+    generator.close.assert_called_once()
+
+
+def test_main_non_dry_run_prints_create_command(monkeypatch, capsys):
+    """Non-dry-run CLI prints the follow-up creation command."""
+    generator = MagicMock()
+    generator.categorize_films.return_value = {"ratings": {}}
+    generator.generate_rating_lists.return_value = [
+        ListDefinition(
+            title="My ★★★★★ Films",
+            description="Every film I've rated 5.0/5.",
+            films=[{"name": "Alien"}],
+            list_type="rating",
+        )
+    ]
+    generator.generate_genre_lists.return_value = []
+    generator.generate_director_lists.return_value = []
+    generator.generate_decade_lists.return_value = []
+
+    run_generate_lists_cli(monkeypatch, ["--ratings"], generator)
+    output = capsys.readouterr().out
+
+    assert "To create these lists, run:" in output
+    assert "uv run python -m src.lists.create_list" in output
+    generator.close.assert_called_once()

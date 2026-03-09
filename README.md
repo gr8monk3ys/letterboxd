@@ -5,7 +5,7 @@ A Python toolkit for automating Letterboxd interactions: data import, style-matc
 ## Features
 
 - **Data Import** - Import your Letterboxd data from the official export (no scraping needed)
-- **AI Review Generation** - Generate reviews that match YOUR writing style using Claude API
+- **AI Review Generation** - Generate reviews that match YOUR writing style with Anthropic, OpenAI, or Gemini
 - **Review Tone Presets** - Choose from casual, snarky, thoughtful, brief, or analytical tones
 - **Automated Following** - Follow users from any Letterboxd page with human-like delays
 - **Unfollow Non-Followers** - Find and unfollow users who don't follow you back
@@ -34,6 +34,10 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Install dependencies
 uv sync
+
+# Optional: install alternate AI provider SDKs
+uv sync --extra openai   # for AI_PROVIDER=openai
+uv sync --extra gemini   # for AI_PROVIDER=gemini
 
 # Install browser for automation
 uv run playwright install chromium
@@ -108,6 +112,14 @@ uv run python -m src.following.unfollow_users --unprotect davidehrlich
 uv run python -m src.following.unfollow_users --list-protected
 ```
 
+If Letterboxd blocks headless sign-in with reCAPTCHA, create a reusable browser session once:
+
+```bash
+HEADLESS=false uv run python -m src.utils.auth --save-session
+```
+
+After that, the follow/unfollow/review/list commands can reuse `data/letterboxd_storage_state.json`.
+
 ### 5. Statistics Dashboard
 
 ```bash
@@ -145,7 +157,8 @@ The review generator uses **few-shot learning** to match your writing style:
 1. Samples 5 random reviews from your existing reviews
 2. Includes them as examples in the Claude API prompt
 3. Generates new reviews that match your tone and length
-4. Uses your rating to inform sentiment (5 stars = loved it, 2 stars = meh)
+4. Sends the prompt to your configured AI provider
+5. Uses your rating to inform sentiment (5 stars = loved it, 2 stars = meh)
 
 ## Project Structure
 
@@ -170,7 +183,7 @@ letterboxd-followers/
 │   └── utils/
 │       ├── errors.py                    # Error handling & suggestions
 │       └── retry.py                     # Retry logic for network failures
-├── tests/                             # pytest test suite (128 tests)
+├── tests/                             # pytest test suite (800+ tests)
 ├── .env.example                       # Environment variables template
 ├── pyproject.toml                     # Dependencies (PEP 621 format)
 ├── CONTRIBUTING.md                    # Development guide
@@ -184,9 +197,14 @@ All settings are in `.env`:
 
 | Variable | Required For | Description |
 |----------|--------------|-------------|
-| `ANTHROPIC_API_KEY` | Reviews | Claude API key for generating reviews |
+| `ANTHROPIC_API_KEY` | Reviews | Anthropic API key (default provider) |
+| `OPENAI_API_KEY` | Optional | OpenAI API key (when `AI_PROVIDER=openai`) |
+| `GOOGLE_API_KEY` | Optional | Google API key (preferred for `AI_PROVIDER=gemini`) |
+| `GEMINI_API_KEY` | Optional | Gemini SDK alias; used if `GOOGLE_API_KEY` is unset |
 | `LETTERBOXD_USERNAME` | Following | Your Letterboxd username |
 | `LETTERBOXD_PASSWORD` | Following | Your Letterboxd password |
+| `LETTERBOXD_STORAGE_STATE` | Optional | Path to a reusable signed-in browser session file |
+| `AI_PROVIDER` | Optional | AI provider: `anthropic` (default), `openai`, or `gemini` |
 | `HEADLESS` | Optional | Set to `true` for headless browser mode |
 | `REVIEW_TONE` | Optional | Default tone: `casual`, `snarky`, `thoughtful`, `brief`, `analytical` |
 
@@ -231,11 +249,21 @@ After importing, your data is stored in SQLite (`data/movie_database.db`):
 
 ## Testing
 
-The project includes a comprehensive test suite (128 tests):
+The project includes a comprehensive test suite (800+ tests):
 
 ```bash
 # Run all tests
 uv run pytest
+
+# Run the same non-browser suite used in default CI
+uv run pytest --ignore=tests/test_playwright_integration.py
+
+# Run browser integration tests (requires Playwright browser install)
+uv run playwright install chromium
+uv run pytest tests/test_playwright_integration.py
+
+# Run the opt-in live Gemini provider test
+RUN_LIVE_GEMINI_TESTS=1 GEMINI_API_KEY=your-key uv run pytest tests/test_providers.py -q
 
 # Run with verbose output
 uv run pytest -v
@@ -255,7 +283,7 @@ uv run pytest --cov=src
 - **Python 3.12+** with type hints
 - **UV** for fast dependency management
 - **Playwright** for browser automation
-- **Claude API** (Anthropic) for review generation
+- **Anthropic / OpenAI / Gemini APIs** for review generation
 - **SQLite** for local data storage
 - **pytest** for testing
 

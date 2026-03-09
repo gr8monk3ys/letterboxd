@@ -50,8 +50,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
-      - name: Run tests with coverage
-        run: uv run pytest --cov=src --cov-report=term-missing --cov-report=xml -q
+      - name: Run non-browser tests with coverage
+        run: >-
+          uv run pytest
+          --ignore=tests/test_playwright_integration.py
+          --cov=src
+          --cov-report=term-missing
+          --cov-report=xml
+          -q
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
@@ -59,3 +65,47 @@ jobs:
           files: ./coverage.xml
           fail_ci_if_error: false
           verbose: true
+
+  browser-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@eac588ad8def6316056a12d4907a9d4d84ff7a3b
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Install Playwright browser
+        run: uv run playwright install chromium --with-deps
+
+      - name: Run browser integration tests
+        run: uv run pytest tests/test_playwright_integration.py -q
+
+  provider-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@eac588ad8def6316056a12d4907a9d4d84ff7a3b
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies with optional provider SDKs
+        run: uv sync --dev --extra openai --extra gemini
+
+      - name: Verify optional provider SDK imports
+        run: uv run python -c "from google import genai; import openai"
+
+      - name: Run provider smoke tests
+        run: uv run pytest tests/test_providers.py -q

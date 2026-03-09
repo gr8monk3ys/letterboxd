@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Letterboxd automation toolkit for:
 - **Data import** - Import your watched films, reviews, ratings from official Letterboxd export
-- **AI review generation** - Generate reviews matching YOUR writing style using Claude API
+- **AI review generation** - Generate reviews matching YOUR writing style with Anthropic, OpenAI, or Gemini
 - **User management** - Follow users and unfollow non-followers with browser automation
 - **Web dashboard** - Simple FastAPI dashboard for stats and logs
 
@@ -15,6 +15,8 @@ Letterboxd automation toolkit for:
 ```bash
 # Install dependencies (uv creates venv automatically)
 uv sync
+uv sync --extra openai   # Optional: install OpenAI SDK support
+uv sync --extra gemini   # Optional: install Gemini SDK support
 
 # Install browser for automation
 uv run playwright install chromium
@@ -52,6 +54,9 @@ uv run python -m src.following.unfollow_users -n 10      # Unfollow 10 non-follo
 uv run python -m src.following.unfollow_users --protect username
 uv run python -m src.following.unfollow_users --list-protected
 
+# If headless sign-in is blocked, create a reusable browser session once
+HEADLESS=false uv run python -m src.utils.auth --save-session
+
 # Statistics dashboard
 uv run python -m src.stats              # All stats
 uv run python -m src.stats --rate-limits # Rate limit status
@@ -68,8 +73,12 @@ uv run ruff check src/ tests/           # Check for issues
 uv run ruff check --fix src/ tests/     # Auto-fix issues
 uv run ruff format src/ tests/          # Format code
 
-# Testing (~279 tests)
+# Testing (800+ tests, some Playwright tests may skip in sandboxed environments)
 uv run pytest                           # Run all tests
+uv run pytest --ignore=tests/test_playwright_integration.py  # Default CI test suite
+uv run playwright install chromium      # Install browser for Playwright tests
+uv run pytest tests/test_playwright_integration.py  # Browser integration tests
+RUN_LIVE_GEMINI_TESTS=1 GEMINI_API_KEY=your-key uv run pytest tests/test_providers.py -q  # Live Gemini provider test
 uv run pytest -v                        # Verbose output
 uv run pytest tests/test_config.py      # Single test file
 uv run pytest tests/test_config.py::TestConfig::test_default_values  # Single test
@@ -167,11 +176,13 @@ src/
 Environment variables (`.env`):
 | Variable | Required For | Description |
 |----------|--------------|-------------|
-| `ANTHROPIC_API_KEY` | Reviews | Claude API key for generating reviews |
+| `ANTHROPIC_API_KEY` | Reviews | Anthropic API key for generating reviews |
 | `OPENAI_API_KEY` | Optional | OpenAI API key (when `AI_PROVIDER=openai`) |
-| `GOOGLE_API_KEY` | Optional | Google API key (when `AI_PROVIDER=gemini`) |
+| `GOOGLE_API_KEY` | Optional | Google API key (preferred for `AI_PROVIDER=gemini`) |
+| `GEMINI_API_KEY` | Optional | Gemini SDK alias; used if `GOOGLE_API_KEY` is unset |
 | `LETTERBOXD_USERNAME` | Following | Your Letterboxd username |
 | `LETTERBOXD_PASSWORD` | Following | Your Letterboxd password |
+| `LETTERBOXD_STORAGE_STATE` | Optional | Path to a reusable signed-in browser session file |
 | `TMDB_API_KEY` | Optional | TMDB API key for film metadata enrichment |
 | `HEADLESS` | Optional | Set to `true` for headless browser mode |
 | `AI_PROVIDER` | Optional | AI provider: `anthropic` (default), `openai`, or `gemini` |

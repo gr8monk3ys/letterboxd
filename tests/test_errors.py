@@ -1,5 +1,7 @@
 """Tests for src/utils/errors.py - Error handling utilities."""
 
+from unittest.mock import MagicMock
+
 from src.utils.errors import (
     AuthenticationError,
     ConfigurationError,
@@ -11,6 +13,8 @@ from src.utils.errors import (
     format_navigation_error,
     format_rate_limit_message,
     get_suggestions,
+    handle_exception,
+    log_error_with_suggestions,
 )
 
 
@@ -40,6 +44,10 @@ class TestGetSuggestions:
         for category in ErrorCategory:
             suggestions = get_suggestions(category)
             assert len(suggestions) > 0
+
+    def test_unknown_category_returns_empty_string(self):
+        """Unknown categories should return an empty suggestion block."""
+        assert get_suggestions(object()) == ""
 
 
 class TestFormatLoginError:
@@ -90,6 +98,12 @@ class TestFormatNavigationError:
         error = Exception("404 Not Found")
         result = format_navigation_error("https://example.com/page", error)
         assert "not found" in result.lower()
+
+    def test_generic_error(self):
+        """Test formatting of generic navigation errors."""
+        error = Exception("Some other problem")
+        result = format_navigation_error("https://example.com/page", error)
+        assert "Failed to load" in result
 
 
 class TestFormatRateLimitMessage:
@@ -150,3 +164,100 @@ class TestCustomExceptions:
         """Test DatabaseError."""
         error = DatabaseError()
         assert error.category == ErrorCategory.DATABASE
+
+
+class TestLogErrorWithSuggestions:
+    """Test the full error logging helper."""
+
+    def test_logs_error_with_truncated_details_and_suggestions(self, monkeypatch, capsys):
+        """The helper should print a friendly message, details, and suggestions."""
+        error_log = MagicMock()
+        monkeypatch.setattr("src.utils.errors.logger.error", error_log)
+
+        long_error = Exception("x" * 120)
+        log_error_with_suggestions("Failed to log in", ErrorCategory.AUTH, long_error)
+
+        output = capsys.readouterr().out
+        error_log.assert_called_once()
+        assert "Error: Failed to log in" in output
+        assert "Details:" in output
+        assert "..." in output
+        assert "Suggestions:" in output
+
+    def test_logs_traceback_when_requested(self, monkeypatch, capsys):
+        """show_traceback should use logger.exception instead of logger.error."""
+        exception_log = MagicMock()
+        error_log = MagicMock()
+        monkeypatch.setattr("src.utils.errors.logger.exception", exception_log)
+        monkeypatch.setattr("src.utils.errors.logger.error", error_log)
+
+        log_error_with_suggestions(
+            "Request failed",
+            ErrorCategory.NETWORK,
+            Exception("timeout"),
+            show_traceback=True,
+        )
+
+        exception_log.assert_called_once()
+        error_log.assert_not_called()
+        assert "Suggestions:" in capsys.readouterr().out
+
+    def test_handles_no_exception_and_no_suggestions(self, monkeypatch, capsys):
+        """Without an exception or suggestions, only the main message should be printed."""
+        monkeypatch.setattr("src.utils.errors.logger.error", MagicMock())
+
+        log_error_with_suggestions("Plain failure", object())
+
+        output = capsys.readouterr().out
+        assert output.strip() == "Error: Plain failure"
+
+
+class TestHandleException:
+    """Test exception classification and delegation."""
+
+    def test_explicit_category_override(self, monkeypatch):
+        """Explicit categories should bypass auto-detection."""
+        logger = MagicMock()
+        monkeypatch.setattr("src.utils.errors.log_error_with_suggestions", logger)
+
+        handle_exception(Exception("boom"), "While testing", ErrorCategory.CONFIG)
+
+        assert logger.call_args.args[0] == "While testing"
+        assert logger.call_args.args[1] == ErrorCategory.CONFIG
+        assert str(logger.call_args.args[2]) == "boom"
+
+    def test_defaults_message_when_context_missing(self, monkeypatch):
+        """Missing context should fall back to the default message."""
+        logger = MagicMock()
+        monkeypatch.setattr("src.utils.errors.log_error_with_suggestions", logger)
+
+        handle_exception(Exception("network timeout"))
+
+        assert logger.call_args.args[0] == "An error occurred"
+        assert logger.call_args.args[1] == ErrorCategory.NETWORK
+
+    def test_auto_detects_exception_categories(self, monkeypatch):
+        """The helper should map common messages and exception types to categories."""
+        logger = MagicMock()
+        monkeypatch.setattr("src.utils.errors.log_error_with_suggestions", logger)
+
+        class SqliteBroken(Exception):
+            pass
+
+        class PlaywrightCrash(Exception):
+            pass
+
+        cases = [
+            (Exception("Timeout while loading"), ErrorCategory.NETWORK),
+            (Exception("login rejected"), ErrorCategory.AUTH),
+            (Exception("rate limit reached"), ErrorCategory.RATE_LIMIT),
+            (Exception("zip file missing"), ErrorCategory.FILE),
+            (SqliteBroken("db unavailable"), ErrorCategory.DATABASE),
+            (Exception("anthropic api error"), ErrorCategory.API),
+            (PlaywrightCrash("boom"), ErrorCategory.BROWSER),
+            (Exception("something else"), ErrorCategory.NETWORK),
+        ]
+
+        for exc, expected in cases:
+            handle_exception(exc, "context")
+            assert logger.call_args.args[1] == expected

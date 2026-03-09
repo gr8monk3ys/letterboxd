@@ -508,17 +508,20 @@ class TestReviewGenerationIntegration:
             mock_db_cls.return_value = mock_db
 
             generator = ReviewGenerator()
-            film = {"name": "Inception", "year": 2010, "rating": 4.5, "letterboxd_uri": "test"}
-            review = generator.generate_review(film)
+            try:
+                film = {"name": "Inception", "year": 2010, "rating": 4.5, "letterboxd_uri": "test"}
+                review = generator.generate_review(film)
 
-            assert review is not None
-            assert len(review) > 0
+                assert review is not None
+                assert len(review) > 0
 
-            # Verify provider's generate() was called
-            assert mock_anthropic_client.generate.called
-            call_args = mock_anthropic_client.generate.call_args
-            prompt = call_args[0][0]  # first positional arg
-            assert len(prompt) > 0
+                # Verify provider's generate() was called
+                assert mock_anthropic_client.generate.called
+                call_args = mock_anthropic_client.generate.call_args
+                prompt = call_args[0][0]  # first positional arg
+                assert len(prompt) > 0
+            finally:
+                generator.close()
 
     def test_tone_preset_affects_prompt(self, mock_anthropic_client, mock_env_vars):
         """Test that tone presets modify the generation prompt."""
@@ -538,21 +541,23 @@ class TestReviewGenerationIntegration:
 
             # Create generator with snarky tone
             generator = ReviewGenerator(tone="snarky")
+            try:
+                # Verify tone is set
+                assert generator.tone == "snarky"
+                preset = generator.get_tone_preset()
+                assert preset["name"] == "Snarky"
+                assert "witty" in preset["description"].lower()
 
-            # Verify tone is set
-            assert generator.tone == "snarky"
-            preset = generator.get_tone_preset()
-            assert preset["name"] == "Snarky"
-            assert "witty" in preset["description"].lower()
+                # Generate a review
+                film = {"name": "Test Film", "year": 2024, "rating": 2.0}
+                generator.generate_review(film)
 
-            # Generate a review
-            film = {"name": "Test Film", "year": 2024, "rating": 2.0}
-            generator.generate_review(film)
-
-            # Verify provider's generate() was called with snarky system prompt
-            call_args = mock_anthropic_client.generate.call_args
-            system = call_args[0][1]  # second positional arg is system prompt
-            assert "snarky" in system.lower() or "witty" in system.lower()
+                # Verify provider's generate() was called with snarky system prompt
+                call_args = mock_anthropic_client.generate.call_args
+                system = call_args[0][1]  # second positional arg is system prompt
+                assert "snarky" in system.lower() or "witty" in system.lower()
+            finally:
+                generator.close()
 
     def test_export_reviews_to_csv(self, temp_dir, mock_env_vars):
         """Test exporting AI reviews to CSV."""
@@ -584,25 +589,27 @@ class TestReviewGenerationIntegration:
         ):
             mock_cls.return_value = MagicMock()
 
-            # Create generator and swap in the real database
+            # Create the generator with a mocked database, then swap in the
+            # already-connected real database for export-only behavior.
             with patch("src.reviewing.write_review.MovieDatabase") as mock_db_cls:
-                mock_db_cls.return_value = db
+                mock_db_cls.return_value = MagicMock()
 
                 generator = ReviewGenerator()
-                generator.db = db  # Use real database for export
+                try:
+                    generator.db = db  # Use real database for export
 
-                export_path = generator.export_reviews(format="csv")
+                    export_path = generator.export_reviews(format="csv")
 
-                assert export_path is not None
-                assert export_path.exists()
-                assert export_path.suffix == ".csv"
+                    assert export_path is not None
+                    assert export_path.exists()
+                    assert export_path.suffix == ".csv"
 
-                # Verify contents
-                content = export_path.read_text()
-                assert "Inception" in content
-                assert "Dreams within dreams" in content
-
-        db.close()
+                    # Verify contents
+                    content = export_path.read_text()
+                    assert "Inception" in content
+                    assert "Dreams within dreams" in content
+                finally:
+                    generator.close()
 
 
 # ============================================================================
@@ -655,9 +662,11 @@ class TestEndToEndFlow:
             mock_db_cls.return_value = mock_db
 
             generator = ReviewGenerator()
-            review = generator.generate_review(film)
-
-            assert review is not None
+            try:
+                review = generator.generate_review(film)
+                assert review is not None
+            finally:
+                generator.close()
 
         # Step 6: Save the review
         db.save_ai_review(

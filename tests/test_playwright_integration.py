@@ -10,6 +10,7 @@ import pytest
 
 # Only run if playwright is available
 playwright = pytest.importorskip("playwright.sync_api")
+from playwright.sync_api import Error as PlaywrightError  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 MOCK_PAGES_DIR = Path(__file__).parent / "fixtures" / "mock_pages"
@@ -21,11 +22,29 @@ def load_mock_page(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _is_launch_permission_error(exc: Exception) -> bool:
+    """Detect sandboxed Chromium launch failures that should skip the module."""
+    message = str(exc)
+    return any(
+        pattern in message
+        for pattern in (
+            "Permission denied (1100)",
+            "bootstrap_check_in",
+            "Operation not permitted",
+        )
+    )
+
+
 @pytest.fixture(scope="module")
 def browser():
     """Create a shared browser instance for all tests in the module."""
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        try:
+            browser = p.chromium.launch(headless=True)
+        except PlaywrightError as exc:
+            if _is_launch_permission_error(exc):
+                pytest.skip("Playwright browser launch is blocked by sandbox permissions")
+            raise
         yield browser
         browser.close()
 

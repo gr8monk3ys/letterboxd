@@ -200,6 +200,22 @@ class TestNotifier:
             assert "discord" not in results
             assert "slack" not in results
 
+    def test_notify_skips_all_channels_when_disabled(self):
+        """Notifier should return no results when every channel is disabled."""
+        from src.utils.notifications import NotificationConfig, Notifier
+
+        notifier = Notifier(
+            NotificationConfig(
+                desktop_enabled=False,
+                discord_webhook_url="https://discord.com/webhook",
+                slack_webhook_url="https://slack.com/webhook",
+            )
+        )
+
+        results = notifier.notify("Test", "Message", desktop=False, discord=False, slack=False)
+
+        assert results == {}
+
     def test_notify_success_helper(self):
         """Test notify_success helper method."""
         from src.utils.notifications import NotificationConfig, NotificationType, Notifier
@@ -212,9 +228,37 @@ class TestNotifier:
 
             mock.assert_called_once_with("Success!", "It worked", NotificationType.SUCCESS)
 
+    def test_notify_error_and_warning_helpers(self):
+        """Error and warning helpers should forward the correct notification type."""
+        from src.utils.notifications import NotificationConfig, NotificationType, Notifier
+
+        notifier = Notifier(NotificationConfig(desktop_enabled=True))
+
+        with patch("src.utils.notifications.send_desktop_notification", return_value=True) as mock:
+            notifier.notify_error("Error!", "It failed")
+            notifier.notify_warning("Warning!", "Careful")
+
+        assert mock.call_args_list[0].args == ("Error!", "It failed", NotificationType.ERROR)
+        assert mock.call_args_list[1].args == ("Warning!", "Careful", NotificationType.WARNING)
+
 
 class TestConvenienceFunctions:
     """Test convenience notification functions."""
+
+    def test_get_notifier_singleton_and_notify(self):
+        """get_notifier should cache the default notifier and notify() should delegate."""
+        import src.utils.notifications as notifications_module
+
+        notifications_module._default_notifier = None
+
+        notifier1 = notifications_module.get_notifier()
+        notifier2 = notifications_module.get_notifier()
+
+        assert notifier1 is notifier2
+
+        with patch.object(notifier1, "notify", return_value={"desktop": True}) as mock_notify:
+            assert notifications_module.notify("Title", "Body") == {"desktop": True}
+            mock_notify.assert_called_once()
 
     def test_notify_follow_complete(self):
         """Test notify_follow_complete function."""
@@ -240,6 +284,28 @@ class TestConvenienceFunctions:
             args = mock.call_args[0]
             assert "10" in args[1]
 
+    def test_notify_unfollow_complete(self):
+        """Test notify_unfollow_complete function."""
+        from src.utils.notifications import notify_unfollow_complete
+
+        with patch("src.utils.notifications.notify", return_value={"desktop": True}) as mock:
+            result = notify_unfollow_complete(7)
+
+            assert result == {"desktop": True}
+            args = mock.call_args[0]
+            assert "7" in args[1]
+
+    def test_notify_rate_limit_reset(self):
+        """Test notify_rate_limit_reset function."""
+        from src.utils.notifications import notify_rate_limit_reset
+
+        with patch("src.utils.notifications.notify", return_value={"desktop": True}) as mock:
+            result = notify_rate_limit_reset("follow")
+
+            assert result == {"desktop": True}
+            args = mock.call_args[0]
+            assert "Follow rate limit has reset" in args[1]
+
     def test_notify_rate_limit_warning(self):
         """Test notify_rate_limit_warning function."""
         from src.utils.notifications import notify_rate_limit_warning
@@ -251,3 +317,13 @@ class TestConvenienceFunctions:
             args = mock.call_args[0]
             assert "5" in args[1]
             assert "follow" in args[1]
+
+    def test_notify_error_convenience(self):
+        """Test notify_error convenience function."""
+        from src.utils.notifications import NotificationType, notify_error
+
+        with patch("src.utils.notifications.notify", return_value={"desktop": True}) as mock:
+            result = notify_error("Failure", "boom")
+
+            assert result == {"desktop": True}
+            assert mock.call_args.args == ("Failure", "boom", NotificationType.ERROR)

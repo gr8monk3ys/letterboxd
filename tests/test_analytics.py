@@ -226,6 +226,135 @@ class TestConnectionAnalytics:
 
         analytics.close()
 
+    def test_conn_requires_connect(self, temp_db):
+        """Accessing conn before connect should raise a clear error."""
+        from src.analytics import ConnectionAnalytics
+
+        analytics = ConnectionAnalytics(db_path=temp_db)
+
+        with pytest.raises(RuntimeError, match="Database not connected"):
+            _ = analytics.conn
+
+    def test_context_manager_connects_and_closes(self, temp_db):
+        """Context manager should open and close the connection automatically."""
+        from src.analytics import ConnectionAnalytics
+
+        with ConnectionAnalytics(db_path=temp_db) as analytics:
+            assert analytics.conn is not None
+
+        assert analytics._conn is None
+
+    def test_close_is_safe_when_not_connected(self, temp_db):
+        """Closing before connect should be a no-op."""
+        from src.analytics import ConnectionAnalytics
+
+        analytics = ConnectionAnalytics(db_path=temp_db)
+        analytics.close()
+        assert analytics._conn is None
+
+    def test_most_interacted_users_covers_all_statuses(self, tmp_path):
+        """Interaction status should cover following, unfollowed, and neutral users."""
+        from src.analytics import ConnectionAnalytics
+
+        db_path = tmp_path / "statuses.db"
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE rate_limits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action_type TEXT NOT NULL,
+                username TEXT,
+                timestamp TEXT NOT NULL
+            )
+        """
+        )
+        now = datetime.now().isoformat()
+        cursor.executemany(
+            "INSERT INTO rate_limits (action_type, username, timestamp) VALUES (?, ?, ?)",
+            [
+                ("follow", "following-user", now),
+                ("follow", "following-user", now),
+                ("unfollow", "unfollowed-user", now),
+                ("unfollow", "unfollowed-user", now),
+                ("follow", "neutral-user", now),
+                ("unfollow", "neutral-user", now),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        with ConnectionAnalytics(db_path=db_path) as analytics:
+            users = {user["username"]: user for user in analytics.get_most_interacted_users(10)}
+
+        assert users["following-user"]["net_status"] == "following"
+        assert users["unfollowed-user"]["net_status"] == "unfollowed"
+        assert users["neutral-user"]["net_status"] == "neutral"
+
+    def test_recent_activity_uses_unknown_for_missing_username(self, tmp_path):
+        """Recent activity should normalize empty usernames to 'unknown'."""
+        from src.analytics import ConnectionAnalytics
+
+        db_path = tmp_path / "recent.db"
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE rate_limits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action_type TEXT NOT NULL,
+                username TEXT,
+                timestamp TEXT NOT NULL
+            )
+        """
+        )
+        cursor.execute(
+            "INSERT INTO rate_limits (action_type, username, timestamp) VALUES (?, ?, ?)",
+            ("follow", None, datetime.now().isoformat()),
+        )
+        conn.commit()
+        conn.close()
+
+        with ConnectionAnalytics(db_path=db_path) as analytics:
+            recent = analytics.get_recent_activity(limit=5)
+
+        assert recent[0]["username"] == "unknown"
+
+    def test_streaks_zero_current_when_last_activity_is_stale(self, tmp_path):
+        """Current streak should break when the latest activity is older than yesterday."""
+        from src.analytics import ConnectionAnalytics
+
+        db_path = tmp_path / "streaks.db"
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE rate_limits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action_type TEXT NOT NULL,
+                username TEXT,
+                timestamp TEXT NOT NULL
+            )
+        """
+        )
+        now = datetime.now()
+        cursor.executemany(
+            "INSERT INTO rate_limits (action_type, username, timestamp) VALUES (?, ?, ?)",
+            [
+                ("follow", "user1", (now - timedelta(days=5)).isoformat()),
+                ("follow", "user2", (now - timedelta(days=6)).isoformat()),
+                ("follow", "user3", (now - timedelta(days=7)).isoformat()),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        with ConnectionAnalytics(db_path=db_path) as analytics:
+            streaks = analytics.get_streaks()
+
+        assert streaks["current_streak"] == 0
+        assert streaks["longest_streak"] == 3
+
 
 class TestAnalyticsCLI:
     """Test analytics CLI output."""
@@ -275,3 +404,81 @@ class TestAnalyticsCLI:
         captured = capsys.readouterr()
         assert "CONNECTION ANALYTICS" in captured.out
         assert "30-Day Growth Metrics" in captured.out
+
+    def test_show_analytics_prints_top_users_and_peak_hours(self, tmp_path, monkeypatch, capsys):
+        """CLI output should include interacted users and peak hours when data exists."""
+        from src.analytics import ConnectionAnalytics, show_analytics
+
+        db_file = tmp_path / "cli_populated.db"
+        conn = sqlite3.connect(db_file)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE rate_limits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action_type TEXT NOT NULL,
+                username TEXT,
+                timestamp TEXT NOT NULL
+            )
+        """
+        )
+        now = datetime.now()
+        cursor.executemany(
+            "INSERT INTO rate_limits (action_type, username, timestamp) VALUES (?, ?, ?)",
+            [
+                ("follow", "repeat-user", now.isoformat()),
+                ("unfollow", "repeat-user", (now - timedelta(hours=1)).isoformat()),
+                ("follow", "other-user", (now - timedelta(hours=2)).isoformat()),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        original_init = ConnectionAnalytics.__init__
+
+        def patched_init(self, db_path=None):
+            original_init(self, db_path=db_file)
+
+        monkeypatch.setattr(ConnectionAnalytics, "__init__", patched_init)
+
+        show_analytics()
+
+        output = capsys.readouterr().out
+        assert "Most Interacted Users" in output
+        assert "Peak Activity Hours" in output
+
+    def test_show_analytics_skips_optional_sections_when_empty(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """CLI output should skip empty daily/top-user/peak sections cleanly."""
+        from src.analytics import ConnectionAnalytics, show_analytics
+
+        db_path = tmp_path / "empty_cli.db"
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE rate_limits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action_type TEXT NOT NULL,
+                username TEXT,
+                timestamp TEXT NOT NULL
+            )
+        """
+        )
+        conn.commit()
+        conn.close()
+
+        original_init = ConnectionAnalytics.__init__
+
+        def patched_init(self, db_path=None):
+            original_init(self, db_path=db_path)
+
+        monkeypatch.setattr(ConnectionAnalytics, "__init__", patched_init)
+
+        show_analytics()
+
+        output = capsys.readouterr().out
+        assert "Last 7 Days" not in output
+        assert "Most Interacted Users" not in output
+        assert "Peak Activity Hours" not in output

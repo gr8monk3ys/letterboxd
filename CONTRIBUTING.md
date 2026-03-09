@@ -77,6 +77,16 @@ uv run mypy src/
 # Run all tests
 uv run pytest
 
+# Run the same non-browser suite used in CI
+uv run pytest --ignore=tests/test_playwright_integration.py
+
+# Run Playwright browser integration tests
+uv run playwright install chromium
+uv run pytest tests/test_playwright_integration.py
+
+# Run the opt-in live Gemini provider test
+RUN_LIVE_GEMINI_TESTS=1 GEMINI_API_KEY=your-key uv run pytest tests/test_providers.py -q
+
 # Run with verbose output
 uv run pytest -v
 
