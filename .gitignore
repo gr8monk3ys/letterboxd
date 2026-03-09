@@ -43,6 +43,7 @@ data/*.db
 data/*.zip
 data/*.csv
 data/*.json
+data/letterboxd_cdp_profile/
 data/protected_users.txt
 
 # macOS

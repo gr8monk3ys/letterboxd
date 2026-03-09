@@ -37,7 +37,9 @@ class Config:
     # API Keys
     anthropic_api_key: str = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
     openai_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
-    google_api_key: str = field(default_factory=lambda: os.getenv("GOOGLE_API_KEY", ""))
+    google_api_key: str = field(
+        default_factory=lambda: os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
+    )
     tmdb_api_key: str = field(default_factory=lambda: os.getenv("TMDB_API_KEY", ""))
 
     # Following settings
@@ -49,6 +51,13 @@ class Config:
 
     # Browser settings
     headless: bool = field(default_factory=lambda: os.getenv("HEADLESS", "false").lower() == "true")
+    browser_channel: str = field(default_factory=lambda: os.getenv("BROWSER_CHANNEL", "").strip())
+    browser_cdp_url: str = field(default_factory=lambda: os.getenv("BROWSER_CDP_URL", "").strip())
+    storage_state_file: Path = field(
+        default_factory=lambda: Path(
+            os.getenv("LETTERBOXD_STORAGE_STATE", str(DATA_DIR / "letterboxd_storage_state.json"))
+        )
+    )
 
     # Timeout settings (in milliseconds)
     page_load_timeout: int = field(

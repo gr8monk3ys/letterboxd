@@ -40,6 +40,16 @@ class TestConfig:
         config = get_config()
         assert isinstance(config, Config)
 
+    def test_config_supports_gemini_api_key_alias(self, monkeypatch):
+        """Test that Config falls back to GEMINI_API_KEY for Gemini."""
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+        monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+
+        from src.config import Config
+
+        config = Config()
+        assert config.google_api_key == "test-gemini-key"
+
     def test_get_log_path(self):
         """Test get_log_path returns correct path."""
         from src.config import LOGS_DIR, get_log_path
@@ -81,3 +91,13 @@ class TestConfig:
 
         assert config.connections_file == DATA_DIR / "connections.csv"
         assert config.database_file == DATA_DIR / "movie_database.db"
+        assert config.storage_state_file == DATA_DIR / "letterboxd_storage_state.json"
+
+    def test_config_supports_custom_storage_state_path(self, monkeypatch):
+        """Test that Config supports overriding the storage state path."""
+        monkeypatch.setenv("LETTERBOXD_STORAGE_STATE", "/tmp/letterboxd-session.json")
+
+        from src.config import Config
+
+        config = Config()
+        assert config.storage_state_file == Path("/tmp/letterboxd-session.json")

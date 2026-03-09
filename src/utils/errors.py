@@ -26,6 +26,7 @@ ERROR_SUGGESTIONS: dict[ErrorCategory, list[str]] = {
         "Check that LETTERBOXD_PASSWORD is set in your .env file",
         "Verify your credentials are correct by logging in manually at letterboxd.com",
         "Make sure your account is not locked or requiring 2FA",
+        "If headless login is blocked, run 'uv run python -m src.utils.auth --save-session'",
     ],
     ErrorCategory.NETWORK: [
         "Check your internet connection",

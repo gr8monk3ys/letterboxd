@@ -14,7 +14,7 @@ from playwright.sync_api import Page, sync_playwright
 
 from src.config import DATA_DIR, get_config, get_log_path
 from src.rate_limiter import RateLimiter
-from src.utils.auth import login_and_navigate
+from src.utils.auth import browser_page, login_and_navigate
 from src.utils.errors import format_rate_limit_message, handle_exception
 
 # Set up logging
@@ -77,6 +77,61 @@ class LetterboxdFollower:
             self.random_delay()
         return result
 
+    def _get_page_usernames(self, page: Page) -> list[str]:
+        """Extract usernames from a members/fans page."""
+        usernames: list[str] = []
+        seen: set[str] = set()
+
+        try:
+            name_links = page.locator(".person-summary .name a, .person-summary a.name")
+            link_count = name_links.count()
+        except Exception as e:
+            logging.warning(f"Error getting username list: {e}")
+            return usernames
+
+        for i in range(link_count):
+            try:
+                href = name_links.nth(i).get_attribute("href", timeout=5000)
+                username = href.strip("/") if href else ""
+                if username and username not in seen:
+                    seen.add(username)
+                    usernames.append(username)
+            except Exception as e:
+                logging.warning(f"Error extracting username at index {i}: {e}")
+
+        return usernames
+
+    def _follow_from_profile(self, page: Page, username: str) -> bool:
+        """Visit a user's profile and click the follow button there."""
+        page.goto(f"https://letterboxd.com/{username}/", timeout=10000)
+        page.wait_for_timeout(1000)
+
+        follow_button = page.locator("a.follow-button:not(.following)").first
+        if follow_button.count() == 0:
+            logging.info(f"No follow button available for {username}")
+            return False
+
+        follow_button.scroll_into_view_if_needed(timeout=10000)
+        self.random_delay()
+        follow_button.click(timeout=10000)
+        return True
+
+    def _get_next_page_url(self, page: Page, current_page: int) -> str | None:
+        """Get the next page URL from the current listing page."""
+        try:
+            next_link = page.locator("a.next")
+            if next_link.count() == 0 or current_page >= self.config.till_page:
+                return None
+
+            next_url = next_link.get_attribute("href")
+            if next_url:
+                return f"https://letterboxd.com{next_url}"
+        except Exception as e:
+            logging.warning(f"Error reading next page link: {e}")
+            return None
+
+        return f"{self.config.base_url}page/{current_page + 1}/"
+
     def follow_users(self, page: Page) -> None:
         """Follow users from the page."""
         try:
@@ -135,92 +190,124 @@ class LetterboxdFollower:
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                     self.random_delay()
 
+                    next_url = self._get_next_page_url(page, current_page)
+
                     # Find all follow buttons
                     follow_buttons = page.locator("a.follow-button:not(.following)")
                     try:
                         button_count = follow_buttons.count()
-                        logging.info(f"Found {button_count} potential users to follow")
                     except Exception as e:
                         logging.warning(f"Error getting button count: {e}")
                         button_count = 0
 
-                    if button_count == 0:
+                    usernames = self._get_page_usernames(page) if button_count == 0 else []
+                    potential_count = button_count or len(usernames)
+                    logging.info(f"Found {potential_count} potential users to follow")
+
+                    if potential_count == 0:
                         logging.info("No more users to follow on this page")
                         break
 
-                    # Process each follow button
-                    for i in range(button_count):
-                        if self.followed_count >= self.config.max_follows_per_session:
-                            break
-
-                        try:
-                            button = follow_buttons.nth(i)
-
-                            # Get username from the person-summary container
-                            try:
-                                person_container = button.locator(
-                                    "xpath=ancestor::div[contains(@class, 'person-summary')]"
-                                )
-                                name_link = person_container.locator(".name a")
-                                username = name_link.get_attribute("href", timeout=5000)
-                                username = username.strip("/") if username else "Unknown"
-                            except Exception:
-                                username = f"User_{i}"
-
-                            logging.info(f"Attempting to follow: {username}")
+                    if button_count > 0:
+                        # Process inline follow buttons when available.
+                        for i in range(button_count):
+                            if self.followed_count >= self.config.max_follows_per_session:
+                                break
 
                             try:
-                                button.scroll_into_view_if_needed(timeout=10000)
+                                button = follow_buttons.nth(i)
+
+                                # Get username from the person-summary container
+                                try:
+                                    person_container = button.locator(
+                                        "xpath=ancestor::div[contains(@class, 'person-summary')]"
+                                    )
+                                    name_link = person_container.locator(".name a")
+                                    username = name_link.get_attribute("href", timeout=5000)
+                                    username = username.strip("/") if username else "Unknown"
+                                except Exception:
+                                    username = f"User_{i}"
+
+                                logging.info(f"Attempting to follow: {username}")
+
+                                try:
+                                    button.scroll_into_view_if_needed(timeout=10000)
+                                    self.random_delay()
+                                    button.click(timeout=10000)
+
+                                    # Log successful follow
+                                    self.followed_count += 1
+                                    self.log_follow(username)
+                                    self.rate_limiter.log_action("follow", username)
+                                    logging.info(
+                                        f"Followed: {username} "
+                                        f"({self.followed_count}/{self.config.max_follows_per_session})"
+                                    )
+                                    consecutive_timeouts = 0
+
+                                    # Check for rate limit warning
+                                    warning = self.rate_limiter.check_and_warn("follow")
+                                    if warning:
+                                        logging.warning(warning)
+                                except Exception as e:
+                                    if "Timeout" in str(e):
+                                        consecutive_timeouts += 1
+                                        logging.warning(
+                                            f"Timeout clicking button "
+                                            f"({consecutive_timeouts} consecutive)"
+                                        )
+                                        if consecutive_timeouts >= 2:
+                                            break
+                                    else:
+                                        logging.error(f"Error clicking button: {e}")
+                                    continue
+
                                 self.random_delay()
-                                button.click(timeout=10000)
 
-                                # Log successful follow
-                                self.followed_count += 1
-                                self.log_follow(username)
-                                self.rate_limiter.log_action("follow", username)
-                                logging.info(
-                                    f"Followed: {username} "
-                                    f"({self.followed_count}/{self.config.max_follows_per_session})"
-                                )
-                                consecutive_timeouts = 0
+                            except Exception as e:
+                                if "Timeout" in str(e):
+                                    consecutive_timeouts += 1
+                                    if consecutive_timeouts >= 2:
+                                        logging.info("Multiple timeouts, moving to next page")
+                                        break
+                                else:
+                                    logging.error(f"Error following user: {e}")
+                    else:
+                        # Modern fans/member pages no longer expose inline follow buttons.
+                        for i, username in enumerate(usernames):
+                            if self.followed_count >= self.config.max_follows_per_session:
+                                break
 
-                                # Check for rate limit warning
-                                warning = self.rate_limiter.check_and_warn("follow")
-                                if warning:
-                                    logging.warning(warning)
+                            try:
+                                logging.info(f"Attempting to follow from profile: {username}")
+                                if self._follow_from_profile(page, username):
+                                    self.followed_count += 1
+                                    self.log_follow(username)
+                                    self.rate_limiter.log_action("follow", username)
+                                    logging.info(
+                                        f"Followed: {username} "
+                                        f"({self.followed_count}/{self.config.max_follows_per_session})"
+                                    )
+                                    consecutive_timeouts = 0
+
+                                    warning = self.rate_limiter.check_and_warn("follow")
+                                    if warning:
+                                        logging.warning(warning)
+                                self.random_delay()
                             except Exception as e:
                                 if "Timeout" in str(e):
                                     consecutive_timeouts += 1
                                     logging.warning(
-                                        f"Timeout clicking button "
+                                        "Timeout following profile "
                                         f"({consecutive_timeouts} consecutive)"
                                     )
                                     if consecutive_timeouts >= 2:
                                         break
                                 else:
-                                    logging.error(f"Error clicking button: {e}")
+                                    logging.error(f"Error following {username}: {e}")
                                 continue
 
-                            self.random_delay()
-
-                        except Exception as e:
-                            if "Timeout" in str(e):
-                                consecutive_timeouts += 1
-                                if consecutive_timeouts >= 2:
-                                    logging.info("Multiple timeouts, moving to next page")
-                                    break
-                            else:
-                                logging.error(f"Error following user: {e}")
-
-                    # Navigate to next page
-                    next_link = page.locator("a.next")
-                    if next_link.count() > 0 and current_page < self.config.till_page:
-                        next_url = next_link.get_attribute("href")
-                        if next_url:
-                            next_url = f"https://letterboxd.com{next_url}"
-                        else:
-                            next_url = f"{self.config.base_url}page/{current_page + 1}/"
-                    else:
+                    if not next_url:
                         logging.info("No more pages to process")
                         break
 
@@ -440,10 +527,10 @@ Examples:
         follower.config.base_url = custom_url
         logging.info(f"Using custom URL: {custom_url}")
 
-    if args.limit:
+    if args.limit is not None:
         follower.config.max_follows_per_session = args.limit
 
-    if args.pages:
+    if args.pages is not None:
         follower.config.till_page = args.pages
 
     if args.dry_run:
@@ -467,15 +554,11 @@ Examples:
 
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=follower.config.headless)
-            page = browser.new_page()
-
-            if follower.login(page):
-                follower.follow_users(page)
-            else:
-                logging.error("Failed to start following process due to login failure")
-
-            browser.close()
+            with browser_page(playwright, follower.config) as page:
+                if follower.login(page):
+                    follower.follow_users(page)
+                else:
+                    logging.error("Failed to start following process due to login failure")
 
     except KeyboardInterrupt:
         logging.info("Process interrupted by user")

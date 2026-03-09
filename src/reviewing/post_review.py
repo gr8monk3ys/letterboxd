@@ -10,7 +10,7 @@ from playwright.sync_api import Page, sync_playwright
 from src.config import get_config, get_log_path
 from src.data_processing.create_database import MovieDatabase
 from src.review_metrics import ReviewMetricsDB
-from src.utils.auth import goto_with_retry, login
+from src.utils.auth import browser_page, goto_with_retry, login
 from src.utils.errors import handle_exception
 
 
@@ -104,6 +104,7 @@ class ReviewPoster:
         self.config = get_config()
         self.db = MovieDatabase(db_path=self.config.database_file)
         self.db.connect()
+        self.db.create_tables()
         self.metrics_db = ReviewMetricsDB()
         self.metrics_db.connect()
         self.posted_count = 0
@@ -288,55 +289,51 @@ class ReviewPoster:
             return 0
 
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=self.config.headless)
-            page = browser.new_page()
+            with browser_page(playwright, self.config) as page:
+                try:
+                    if not self.do_login(page):
+                        logging.error("Login failed, aborting")
+                        return 0
 
-            try:
-                if not self.do_login(page):
-                    logging.error("Login failed, aborting")
-                    return 0
+                    for film in reviews:
+                        print(f"\n=== {film['name']} ({film['year']}) ===")
+                        print(f"Review: {film['review'][:100]}...")
+                        response = input("\nPost this review? (y/n/q to quit): ").strip().lower()
 
-                for film in reviews:
-                    print(f"\n=== {film['name']} ({film['year']}) ===")
-                    print(f"Review: {film['review'][:100]}...")
-                    response = input("\nPost this review? (y/n/q to quit): ").strip().lower()
+                        if response == "q":
+                            break
+                        elif response == "y":
+                            success, review_url = self.post_review(page, film)
+                            if success:
+                                self.posted_count += 1
+                                # Track the posted review for metrics
+                                self.metrics_db.save_posted_review(
+                                    letterboxd_uri=film["letterboxd_uri"],
+                                    film_name=film["name"],
+                                    film_year=film["year"],
+                                    review_text=film["review"],
+                                    tone_preset=self.tone,
+                                    letterboxd_review_url=review_url,
+                                )
+                                # Mark the ai_review as posted
+                                self.db.cursor.execute(
+                                    "UPDATE ai_reviews SET posted_at = ?, posted_url = ?"
+                                    " WHERE letterboxd_uri = ?",
+                                    (
+                                        datetime.now().isoformat(),
+                                        review_url,
+                                        film["letterboxd_uri"],
+                                    ),
+                                )
+                                self.db.conn.commit()
+                            # Delay between posts
+                            time.sleep(2)
 
-                    if response == "q":
-                        break
-                    elif response == "y":
-                        success, review_url = self.post_review(page, film)
-                        if success:
-                            self.posted_count += 1
-                            # Track the posted review for metrics
-                            self.metrics_db.save_posted_review(
-                                letterboxd_uri=film["letterboxd_uri"],
-                                film_name=film["name"],
-                                film_year=film["year"],
-                                review_text=film["review"],
-                                tone_preset=self.tone,
-                                letterboxd_review_url=review_url,
-                            )
-                            # Mark the ai_review as posted
-                            self.db.cursor.execute(
-                                "UPDATE ai_reviews SET posted_at = ?, posted_url = ?"
-                                " WHERE letterboxd_uri = ?",
-                                (
-                                    datetime.now().isoformat(),
-                                    review_url,
-                                    film["letterboxd_uri"],
-                                ),
-                            )
-                            self.db.conn.commit()
-                        # Delay between posts
-                        time.sleep(2)
-
-            except KeyboardInterrupt:
-                logging.info("Process interrupted by user")
-                print("\nProcess interrupted. Progress has been saved.")
-            except Exception as e:
-                handle_exception(e, "Unexpected error during review posting")
-            finally:
-                browser.close()
+                except KeyboardInterrupt:
+                    logging.info("Process interrupted by user")
+                    print("\nProcess interrupted. Progress has been saved.")
+                except Exception as e:
+                    handle_exception(e, "Unexpected error during review posting")
 
         return self.posted_count
 

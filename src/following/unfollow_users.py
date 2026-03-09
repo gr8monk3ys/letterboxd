@@ -11,7 +11,7 @@ from playwright.sync_api import Page, sync_playwright
 
 from src.config import DATA_DIR, get_config, get_log_path
 from src.rate_limiter import RateLimiter
-from src.utils.auth import login
+from src.utils.auth import browser_page, login
 from src.utils.errors import handle_exception
 
 # Set up logging
@@ -271,41 +271,42 @@ class LetterboxdUnfollower:
     def run(self, limit: int | None = None, dry_run: bool = False) -> None:
         """Run the full unfollow process."""
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=self.config.headless)
-            page = browser.new_page()
-
             try:
-                if not self.do_login(page):
-                    logging.error("Login failed, aborting")
-                    return
+                with browser_page(playwright, self.config) as page:
+                    if not self.do_login(page):
+                        logging.error("Login failed, aborting")
+                        return
 
-                # Scrape both lists
-                self.following = self.scrape_user_list(page, "following")
-                self.followers = self.scrape_user_list(page, "followers")
+                    # Scrape both lists
+                    self.following = self.scrape_user_list(page, "following")
+                    self.followers = self.scrape_user_list(page, "followers")
 
-                # Find non-followers
-                non_followers = self.find_non_followers()
+                    # Find non-followers
+                    non_followers = self.find_non_followers()
 
-                print(f"\n=== Follow Stats for @{self.config.username} ===")
-                print(f"Following: {len(self.following)}")
-                print(f"Followers: {len(self.followers)}")
-                print(f"Non-followers (can unfollow): {len(non_followers)}")
-                if self.protected_users:
-                    all_non_followers = self.following - self.followers
-                    protected_skipped = len(all_non_followers) - len(non_followers)
-                    if protected_skipped > 0:
-                        print(f"Protected (skipped): {protected_skipped}")
-                print(
-                    f"Fans (followed by but not following): {len(self.followers - self.following)}"
-                )
+                    print(f"\n=== Follow Stats for @{self.config.username} ===")
+                    print(f"Following: {len(self.following)}")
+                    print(f"Followers: {len(self.followers)}")
+                    print(f"Non-followers (can unfollow): {len(non_followers)}")
+                    if self.protected_users:
+                        all_non_followers = self.following - self.followers
+                        protected_skipped = len(all_non_followers) - len(non_followers)
+                        if protected_skipped > 0:
+                            print(f"Protected (skipped): {protected_skipped}")
+                    fan_count = len(self.followers - self.following)
+                    print(f"Fans (followed by but not following): {fan_count}")
 
-                if non_followers:
-                    # Unfollow non-followers
-                    unfollowed = self.unfollow_non_followers(page, limit=limit, dry_run=dry_run)
+                    if non_followers:
+                        # Unfollow non-followers
+                        unfollowed = self.unfollow_non_followers(
+                            page,
+                            limit=limit,
+                            dry_run=dry_run,
+                        )
 
-                    if not dry_run:
-                        print(f"\nUnfollowed {unfollowed} users")
-                        print(f"Log saved to: {self.unfollow_log}")
+                        if not dry_run:
+                            print(f"\nUnfollowed {unfollowed} users")
+                            print(f"Log saved to: {self.unfollow_log}")
 
             except KeyboardInterrupt:
                 logging.info("Process interrupted by user")
@@ -313,7 +314,6 @@ class LetterboxdUnfollower:
             except Exception as e:
                 handle_exception(e, "Unexpected error during unfollow process")
             finally:
-                browser.close()
                 self.rate_limiter.close()
 
 

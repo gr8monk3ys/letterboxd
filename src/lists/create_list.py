@@ -7,7 +7,7 @@ from playwright.sync_api import Page, sync_playwright
 
 from src.config import get_config, get_log_path
 from src.lists.generate_lists import ListDefinition, ListGenerator
-from src.utils.auth import goto_with_retry, login
+from src.utils.auth import browser_page, goto_with_retry, login
 
 # Set up logging
 logging.basicConfig(
@@ -199,33 +199,29 @@ class ListCreator:
             return 0
 
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=self.config.headless)
-            page = browser.new_page()
+            with browser_page(playwright, self.config) as page:
+                try:
+                    # Login first
+                    if not login(page, self.config):
+                        logger.error("Login failed, aborting")
+                        return 0
 
-            try:
-                # Login first
-                if not login(page, self.config):
-                    logger.error("Login failed, aborting")
-                    return 0
+                    for lst in lists:
+                        print(f"\n=== Creating: {lst.title} ===")
+                        print(f"Films: {len(lst.films)}")
 
-                for lst in lists:
-                    print(f"\n=== Creating: {lst.title} ===")
-                    print(f"Films: {len(lst.films)}")
+                        response = input("Create this list? (y/n/q to quit): ").strip().lower()
 
-                    response = input("Create this list? (y/n/q to quit): ").strip().lower()
+                        if response == "q":
+                            break
+                        elif response == "y":
+                            if self.create_list(page, lst):
+                                self.created_count += 1
+                            # Delay between lists
+                            time.sleep(3)
 
-                    if response == "q":
-                        break
-                    elif response == "y":
-                        if self.create_list(page, lst):
-                            self.created_count += 1
-                        # Delay between lists
-                        time.sleep(3)
-
-            except KeyboardInterrupt:
-                logger.info("Process interrupted by user")
-            finally:
-                browser.close()
+                except KeyboardInterrupt:
+                    logger.info("Process interrupted by user")
 
         return self.created_count
 

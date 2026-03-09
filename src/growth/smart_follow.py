@@ -19,7 +19,7 @@ from playwright.sync_api import sync_playwright
 from src.config import DATA_DIR, get_config, get_log_path
 from src.rate_limiter import RateLimiter
 from src.scraper import LetterboxdScraper
-from src.utils.auth import login
+from src.utils.auth import browser_page, login
 
 # Set up logging
 logging.basicConfig(
@@ -137,7 +137,7 @@ class SmartFollower:
             results.append(
                 {
                     "username": username,
-                    "source": f"fans:{film_slug}",
+                    "source": f"{source}:{film_slug}",
                     "similarity_score": round(similarity, 3),
                 }
             )
@@ -299,65 +299,67 @@ class SmartFollower:
         skipped = 0
 
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=self.config.headless)
-            page = browser.new_page()
+            with browser_page(playwright, self.config) as page:
+                try:
+                    if not login(page, self.config):
+                        return {"followed": 0, "skipped": 0, "error": "Login failed"}
 
-            try:
-                if not login(page, self.config):
-                    return {"followed": 0, "skipped": 0, "error": "Login failed"}
+                    for row in pending:
+                        username = row["username"]
 
-                for row in pending:
-                    username = row["username"]
+                        # Check rate limit for each follow
+                        allowed, _ = self.rate_limiter.can_perform_action("follow")
+                        if not allowed:
+                            logger.info("Rate limit reached, stopping")
+                            break
 
-                    # Check rate limit for each follow
-                    if not self.rate_limiter.can_perform_action("follow"):
-                        logger.info("Rate limit reached, stopping")
-                        break
+                        try:
+                            # Navigate to user profile
+                            page.goto(f"https://letterboxd.com/{username}/")
+                            page.wait_for_timeout(1000)
 
-                    try:
-                        # Navigate to user profile
-                        page.goto(f"https://letterboxd.com/{username}/")
-                        page.wait_for_timeout(1000)
+                            # Find and click follow button
+                            follow_btn = page.locator("a.follow-button:not(.following)").first
 
-                        # Find and click follow button
-                        follow_btn = page.locator("a.follow-button:not(.following)").first
+                            if follow_btn.count() > 0:
+                                follow_btn.click()
+                                page.wait_for_timeout(500)
 
-                        if follow_btn.count() > 0:
-                            follow_btn.click()
-                            page.wait_for_timeout(500)
+                                # Log the action
+                                self.rate_limiter.log_action("follow", username)
 
-                            # Log the action
-                            self.rate_limiter.log_action("follow", username)
+                                # Update queue
+                                cursor.execute(
+                                    """
+                                    UPDATE smart_follow_queue
+                                    SET status = 'followed', followed_at = ?
+                                    WHERE id = ?
+                                    """,
+                                    (datetime.now().isoformat(), row["id"]),
+                                )
+                                followed += 1
+                                logger.info(f"Followed: {username}")
 
-                            # Update queue
-                            cursor.execute(
-                                """
-                                UPDATE smart_follow_queue
-                                SET status = 'followed', followed_at = ?
-                                WHERE id = ?
-                                """,
-                                (datetime.now().isoformat(), row["id"]),
-                            )
-                            followed += 1
-                            logger.info(f"Followed: {username}")
+                                # Human-like delay
+                                page.wait_for_timeout(2000)
+                            else:
+                                # Already following or can't follow
+                                cursor.execute(
+                                    "UPDATE smart_follow_queue SET status = 'skipped' WHERE id = ?",
+                                    (row["id"],),
+                                )
+                                skipped += 1
 
-                            # Human-like delay
-                            page.wait_for_timeout(2000)
-                        else:
-                            # Already following or can't follow
+                        except Exception as e:
+                            logger.error(f"Error following {username}: {e}")
                             cursor.execute(
                                 "UPDATE smart_follow_queue SET status = 'skipped' WHERE id = ?",
                                 (row["id"],),
                             )
                             skipped += 1
 
-                    except Exception as e:
-                        logger.error(f"Error following {username}: {e}")
-                        skipped += 1
-
-            finally:
-                self.conn.commit()
-                browser.close()
+                finally:
+                    self.conn.commit()
 
         return {"followed": followed, "skipped": skipped, "error": None}
 
