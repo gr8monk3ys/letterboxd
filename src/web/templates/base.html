@@ -362,6 +362,8 @@
             }, duration);
         }
 
+        const dashboardApiKey = {{ dashboard_api_key | tojson }};
+
         // Generic action handler for triggering backend tasks
         async function triggerAction(endpoint, method = 'POST', body = null) {
             try {
@@ -369,6 +371,9 @@
                     method: method,
                     headers: { 'Content-Type': 'application/json' }
                 };
+                if (dashboardApiKey) {
+                    options.headers['X-API-Key'] = dashboardApiKey;
+                }
                 if (body) {
                     options.body = JSON.stringify(body);
                 }

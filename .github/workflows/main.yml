@@ -34,7 +34,7 @@ jobs:
         LETTERBOXD_PASSWORD: ${{ secrets.LETTERBOXD_PASSWORD }}
         HEADLESS: "true"
       run: |
-        uv run python -m src.growth.tracker --snapshot
+        uv run python -m src.growth.tracker
 
     - name: Update trending films cache
       env:
@@ -42,4 +42,4 @@ jobs:
         LETTERBOXD_PASSWORD: ${{ secrets.LETTERBOXD_PASSWORD }}
         HEADLESS: "true"
       run: |
-        uv run python -m src.growth.trending --refresh
+        uv run python -m src.growth.trending --update

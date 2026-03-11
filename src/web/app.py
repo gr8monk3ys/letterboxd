@@ -41,6 +41,7 @@ app = FastAPI(
 # Templates
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+templates.env.globals["dashboard_api_key"] = get_config().dashboard_api_key
 
 VALID_LOG_NAMES = ["follower", "unfollower", "review_generation", "review_posting"]
 VALID_FOLLOW_PERIODS = ["week", "month", "year", "all-time"]
