@@ -1,11 +1,9 @@
 name: org-gitleaks
 
 on:
-  push:
-    branches:
-      - "**"
-  pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "23 11 18 * *"  # monthly (minute-safe policy)
 
 permissions: read-all
 
