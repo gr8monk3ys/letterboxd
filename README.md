@@ -1,5 +1,9 @@
 # Letterboxd Automation Toolkit
 
+<p align="center">
+  <img src="docs/assets/hero.png" alt="letterboxd preview" width="640">
+</p>
+
 A Python toolkit for automating Letterboxd interactions: data import, style-matched AI reviews with customizable tones, and user management with rate limiting.
 
 ## Features
