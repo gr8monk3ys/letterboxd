@@ -150,33 +150,71 @@ The review generator uses **few-shot learning** to match your writing style:
 ## Project Structure
 
 ```
-letterboxd-followers/
+letterboxd/
 ├── data/                              # Letterboxd export ZIP, database, logs
 │   └── protected_users.txt            # Users to never unfollow
 ├── logs/                              # Per-module log files
 ├── src/
+│   ├── action_board.py                # Manual action board (read-only)
+│   ├── analytics.py                   # Usage analytics
+│   ├── completions.py                 # Shell completion support
 │   ├── config.py                      # Centralized configuration
 │   ├── rate_limiter.py                # Rate limit tracking
+│   ├── review_metrics.py              # Review quality & A/B metrics
+│   ├── scraper.py                     # Web scraping utilities
 │   ├── stats.py                       # Statistics dashboard
 │   ├── data_processing/
 │   │   ├── import_letterboxd_export.py  # Parse Letterboxd ZIP
-│   │   └── create_database.py           # SQLite database
+│   │   ├── create_database.py           # SQLite database
+│   │   ├── migrations.py                # Schema migrations
+│   │   └── backup.py                    # Backup & restore
 │   ├── following/
 │   │   ├── follow_users.py              # Automated following
 │   │   └── unfollow_users.py            # Unfollow non-followers
+│   ├── growth/                          # Growth tracking & targeting
+│   │   ├── tracker.py                   # Follower snapshots over time
+│   │   ├── trending.py                  # Trending-film review targeting
+│   │   ├── smart_follow.py              # Similar-taste follow queue
+│   │   ├── campaigns.py                 # Grouped growth campaigns
+│   │   ├── attribution.py               # Review → follower attribution
+│   │   ├── optimizer.py                 # Posting-time optimization
+│   │   └── dashboard.py                 # Growth summary
+│   ├── lists/
+│   │   ├── generate_lists.py            # Build list definitions
+│   │   └── create_list.py               # Post lists to Letterboxd
 │   ├── reviewing/
 │   │   ├── write_review.py              # Style-matched AI reviews
 │   │   └── post_review.py               # Post reviews to Letterboxd
-│   └── utils/
-│       ├── errors.py                    # Error handling & suggestions
-│       └── retry.py                     # Retry logic for network failures
-├── tests/                             # pytest test suite (128 tests)
+│   ├── utils/
+│   │   ├── auth.py                      # Shared login & navigation
+│   │   ├── errors.py                    # Error handling & suggestions
+│   │   ├── follow_actions.py            # Shared follow-button click
+│   │   ├── notifications.py             # Desktop notifications
+│   │   ├── retry.py                     # Retry logic for network failures
+│   │   └── tmdb.py                      # TMDB metadata client
+│   └── web/
+│       ├── app.py                       # FastAPI dashboard (localhost only)
+│       └── templates/                   # Jinja2 templates
+├── tests/                             # pytest test suite (397 tests)
 ├── .env.example                       # Environment variables template
 ├── pyproject.toml                     # Dependencies (PEP 621 format)
 ├── CONTRIBUTING.md                    # Development guide
 ├── TROUBLESHOOTING.md                 # Common issues & solutions
 └── CLAUDE.md                          # AI assistant guidance
 ```
+
+## Web Dashboard
+
+```bash
+uv run python -m src.web.app     # http://localhost:8000
+```
+
+Pages: **Dashboard** (stats), **Actions** (manual action board — what to do
+by hand, with progress saved in your browser), **Growth**, **Films**,
+**Analytics**, **Metrics**, **Logs**.
+
+The dashboard binds to `127.0.0.1` only and has no authentication, so do not
+expose it to a network — its endpoints can drive your real account.
 
 ## Configuration
 

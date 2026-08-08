@@ -1,5 +1,5 @@
 [project]
-name = "letterboxd-followers"
+name = "letterboxd"
 version = "0.1.0"
 description = "Letterboxd automation toolkit for user following, data scraping, and AI-powered review generation"
 authors = [{name = "Lorenzo Scaturchio"}]
@@ -21,13 +21,8 @@ dependencies = [
     "letterboxdpy>=6.3.0",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0.0",
-    "ruff>=0.1.0",
-    "mypy>=1.8.0",
-    "pre-commit>=3.6.0",
-]
+# Dev dependencies live in [dependency-groups] below, which is what
+# `uv sync --dev` and CI actually install.
 
 [tool.ruff]
 line-length = 100
@@ -68,7 +63,7 @@ source = ["src"]
 branch = true
 omit = [
     "src/web/templates/*",
-    "src/completions/*",
+    "src/completions.py",
 ]
 
 [tool.coverage.report]

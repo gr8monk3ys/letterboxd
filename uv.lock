@@ -531,7 +531,7 @@ wheels = [
 ]
 
 [[package]]
-name = "letterboxd-followers"
+name = "letterboxd"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -547,14 +547,6 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "tqdm" },
     { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "ruff" },
 ]
 
 [package.dev-dependencies]
@@ -576,17 +568,12 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "letterboxdpy", specifier = ">=6.3.0" },
     { name = "lxml", specifier = ">=6.0.2" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
     { name = "playwright", specifier = ">=1.40.0" },
     { name = "plyer", specifier = ">=2.1.0" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.6.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "tqdm", specifier = ">=4.66.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.40.0" },
 ]
-provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [

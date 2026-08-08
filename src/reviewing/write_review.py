@@ -98,7 +98,7 @@ class ReviewGenerator:
     def __init__(self, tone: str | None = None, use_tmdb: bool = True):
         self.config = get_config()
         self.client = anthropic.Anthropic(api_key=self.config.anthropic_api_key)
-        self.db = MovieDatabase()
+        self.db = MovieDatabase(db_path=self.config.database_file)
         self.db.connect()
         self._style_examples: list[dict] | None = None
 

@@ -19,11 +19,11 @@ Remaining improvements and features for the Letterboxd Automation Toolkit.
   - Resume interrupted batch posts
   - `--schedule "09:00"` to post at specific time
 
-- [ ] **User discovery engine**
-  - Find users with similar taste (based on overlapping ratings)
-  - Taste compatibility score calculation
-  - Recommend users to follow based on film preferences
-  - `uv run python -m src.following.discover --similar-to me`
+- [x] **User discovery engine** — built as `src/growth/smart_follow.py`
+  (not `src.following.discover`). Finds similar-taste users, scores them,
+  and queues them in `smart_follow_queue`.
+  - [ ] Remaining gap: `get_film_fans()` is a stub returning `[]`, so
+        `--source film-fans` silently finds nobody.
 
 - [ ] **Track unfollowers**
   - Detect who unfollowed you since last check
@@ -320,7 +320,9 @@ Remaining improvements and features for the Letterboxd Automation Toolkit.
 - [x] **TMDB caching** - Local cache with TTL expiration
 - [x] **Async TMDB support** - Parallel metadata fetching
 - [x] **Web UI improvements** - Action buttons, WebSocket logs, themes
-- [x] **CLI autocomplete** - bash/zsh/fish completions
+- [~] **CLI autocomplete** - `src/completions.py` exists but nothing wires it
+      up: there is no `[project.scripts]` entry, so the documented
+      `letterboxd-complete` console script does not exist
 - [x] Add dependencies to pyproject.toml (PEP 621 format)
 - [x] Fix module imports (now uses `from src.config import ...`)
 - [x] Add missing `__init__.py` files

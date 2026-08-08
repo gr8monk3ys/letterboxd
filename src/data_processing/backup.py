@@ -171,8 +171,19 @@ def restore_database(
             if not rows:
                 continue
 
-            # Get column names from first row
-            columns = list(rows[0].keys())
+            # Validate column names against the live schema before they
+            # reach the SQL string. Stacked statements cannot execute, but
+            # an unrecognized name otherwise fails every row insert while
+            # the restore still reports the table as restored.
+            valid_columns = {col["name"] for col in get_table_schema(cursor, table_name)}
+            columns = [col for col in rows[0].keys() if col in valid_columns]
+            rejected = [col for col in rows[0].keys() if col not in valid_columns]
+            if rejected:
+                logger.warning(f"{table_name}: ignoring unknown columns {rejected}")
+            if not columns:
+                logger.error(f"{table_name}: no recognized columns, skipping table")
+                stats["tables_skipped"] = stats.get("tables_skipped", 0) + 1
+                continue
             placeholders = ", ".join(["?" for _ in columns])
             column_names = ", ".join(columns)
 

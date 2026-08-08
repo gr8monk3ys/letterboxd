@@ -1,13 +1,15 @@
 repos:
+  # Keep these revs in step with the pins in pyproject.toml's dev group —
+  # an older ruff here lets pre-commit pass while CI fails.
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.4.4
+    rev: v0.14.11
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.10.0
+    rev: v1.19.1
     hooks:
       - id: mypy
         additional_dependencies:

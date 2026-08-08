@@ -25,7 +25,7 @@ class TestGetFollowHistory:
         # Create test CSV
         connections_file = tmp_path / "connections.csv"
         connections_file.write_text(
-            "timestamp,username\n" "2024-01-15 10:30:00,user1\n" "2024-01-16 14:20:00,user2\n"
+            "timestamp,username\n2024-01-15 10:30:00,user1\n2024-01-16 14:20:00,user2\n"
         )
 
         from src.stats import get_follow_history
@@ -43,7 +43,7 @@ class TestGetFollowHistory:
         # Create CSV with invalid timestamp
         connections_file = tmp_path / "connections.csv"
         connections_file.write_text(
-            "timestamp,username\n" "invalid-timestamp,user1\n" "2024-01-16 14:20:00,user2\n"
+            "timestamp,username\ninvalid-timestamp,user1\n2024-01-16 14:20:00,user2\n"
         )
 
         from src.stats import get_follow_history
@@ -73,7 +73,7 @@ class TestGetUnfollowHistory:
         # Create test CSV
         unfollow_file = tmp_path / "unfollowed.csv"
         unfollow_file.write_text(
-            "timestamp,username\n" "2024-01-17 09:00:00,olduser1\n" "2024-01-18 11:30:00,olduser2\n"
+            "timestamp,username\n2024-01-17 09:00:00,olduser1\n2024-01-18 11:30:00,olduser2\n"
         )
 
         from src.stats import get_unfollow_history
@@ -104,7 +104,7 @@ class TestShowFollowStats:
         # Create test data
         connections_file = tmp_path / "connections.csv"
         connections_file.write_text(
-            "timestamp,username\n" "2024-01-15 10:30:00,user1\n" "2024-01-15 11:00:00,user2\n"
+            "timestamp,username\n2024-01-15 10:30:00,user1\n2024-01-15 11:00:00,user2\n"
         )
 
         from src.stats import show_follow_stats
@@ -120,11 +120,11 @@ class TestShowFollowStats:
 
         # Create follow data
         connections_file = tmp_path / "connections.csv"
-        connections_file.write_text("timestamp,username\n" "2024-01-15 10:30:00,user1\n")
+        connections_file.write_text("timestamp,username\n2024-01-15 10:30:00,user1\n")
 
         # Create unfollow data
         unfollow_file = tmp_path / "unfollowed.csv"
-        unfollow_file.write_text("timestamp,username\n" "2024-01-16 10:30:00,olduser1\n")
+        unfollow_file.write_text("timestamp,username\n2024-01-16 10:30:00,olduser1\n")
 
         from src.stats import show_follow_stats
 

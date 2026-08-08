@@ -1,13 +1,14 @@
 """Create lists on Letterboxd via browser automation."""
 
 import logging
-import time
 
 from playwright.sync_api import Page, sync_playwright
 
 from src.config import get_config, get_log_path
 from src.lists.generate_lists import ListDefinition, ListGenerator
+from src.rate_limiter import RateLimiter
 from src.utils.auth import goto_with_retry, login
+from src.utils.follow_actions import human_delay
 
 # Set up logging
 logging.basicConfig(
@@ -27,6 +28,9 @@ class ListCreator:
     def __init__(self) -> None:
         self.config = get_config()
         self.created_count: int = 0
+        # Publishing a list is a write action against a real account, so
+        # it shares the same limiter as following and unfollowing.
+        self.rate_limiter = RateLimiter()
 
     def create_list(self, page: Page, list_def: ListDefinition) -> bool:
         """Create a single list on Letterboxd.
@@ -74,8 +78,9 @@ class ListCreator:
             for film in list_def.films:
                 if self._add_film_to_list(page, film):
                     films_added += 1
-                    # Small delay between films
-                    page.wait_for_timeout(500)
+                    # Randomized, so a 100-film list is not 100 writes on
+                    # an identical cadence
+                    human_delay(self.config)
                 else:
                     logger.warning(f"Could not add film: {film['name']}")
 
@@ -198,6 +203,14 @@ class ListCreator:
                 print(f"- {lst.title} ({len(lst.films)} films)")
             return 0
 
+        # Check before opening a browser at all
+        self.rate_limiter.connect()
+        allowed, reason = self.rate_limiter.can_perform_action("create_list")
+        if not allowed:
+            logger.warning(f"Rate limited, not creating lists: {reason}")
+            print(f"\nRate limited: {reason}")
+            return 0
+
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=self.config.headless)
             page = browser.new_page()
@@ -217,10 +230,18 @@ class ListCreator:
                     if response == "q":
                         break
                     elif response == "y":
+                        # Re-check between lists, since each one is a
+                        # large batch of writes
+                        allowed, reason = self.rate_limiter.can_perform_action("create_list")
+                        if not allowed:
+                            logger.warning(f"Rate limit reached, stopping: {reason}")
+                            print(f"\nRate limited: {reason}")
+                            break
+
                         if self.create_list(page, lst):
                             self.created_count += 1
-                        # Delay between lists
-                        time.sleep(3)
+                            self.rate_limiter.log_action("create_list", lst.title)
+                        human_delay(self.config)
 
             except KeyboardInterrupt:
                 logger.info("Process interrupted by user")

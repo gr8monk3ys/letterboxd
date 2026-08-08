@@ -29,7 +29,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def film_key(title: str | None, year: int | None) -> tuple[str, int | None]:
+    """Build the identity used to compare films across data sources.
+
+    The export identifies films by opaque boxd.it URLs while scraped
+    pages use readable slugs, so title+year is the only shared identity.
+    Titles are normalized so casing and stray whitespace do not split a
+    film into two.
+    """
+    normalized = (title or "").strip().lower()
+    return (normalized, int(year) if year is not None else None)
+
+
+# How long to wait before retrying after a failed outbound fetch. Shared
+# across instances because each web request builds a new detector.
+_FAILED_FETCH_COOLDOWN = timedelta(minutes=15)
+
+
 class TrendingDetector:
+    # Set when a fetch fails; suppresses retries for the cooldown period.
+    _last_failed_fetch: datetime | None = None
+
     """Detect trending films for review opportunities."""
 
     def __init__(self, db_path: Path | None = None):
@@ -151,60 +171,52 @@ class TrendingDetector:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def get_reviewed_slugs(self) -> set[str]:
-        """Get slugs of films the user has reviewed.
+    def get_reviewed_keys(self) -> set[tuple[str, int | None]]:
+        """Get title+year keys for films the user has already reviewed.
+
+        Films are keyed on title+year rather than slug: the Letterboxd
+        export stores opaque boxd.it short URLs, while scraped trending
+        films carry readable slugs, so the two can never be compared
+        directly. Title+year is the only identity both sides share.
 
         Returns:
-            Set of film slugs.
+            Set of (normalized title, year) keys.
         """
         cursor = self.conn.cursor()
-        slugs = set()
+        keys: set[tuple[str, int | None]] = set()
 
-        # Check reviews table
         try:
-            cursor.execute("SELECT letterboxd_uri FROM reviews")
-            for row in cursor.fetchall():
-                uri = row[0]
-                if uri:
-                    # Extract slug from URI
-                    slug = uri.rstrip("/").split("/")[-1]
-                    slugs.add(slug)
-        except sqlite3.OperationalError:
-            pass
+            cursor.execute("SELECT name, year FROM reviews")
+            keys.update(film_key(name, year) for name, year in cursor.fetchall())
+        except sqlite3.OperationalError as e:
+            # An empty set here would make the detector recommend films
+            # that were already reviewed, so fail loudly.
+            logger.warning(f"Could not read reviews table: {e}")
 
-        # Check ai_reviews table
         try:
-            cursor.execute("SELECT letterboxd_uri FROM ai_reviews")
-            for row in cursor.fetchall():
-                uri = row[0]
-                if uri:
-                    slug = uri.rstrip("/").split("/")[-1]
-                    slugs.add(slug)
-        except sqlite3.OperationalError:
-            pass
+            cursor.execute("SELECT name, year FROM ai_reviews")
+            keys.update(film_key(name, year) for name, year in cursor.fetchall())
+        except sqlite3.OperationalError as e:
+            logger.warning(f"Could not read ai_reviews table: {e}")
 
-        return slugs
+        return keys
 
-    def get_watched_slugs(self) -> set[str]:
-        """Get slugs of films the user has watched.
+    def get_watched_keys(self) -> set[tuple[str, int | None]]:
+        """Get title+year keys for films the user has watched.
 
         Returns:
-            Set of film slugs.
+            Set of (normalized title, year) keys.
         """
         cursor = self.conn.cursor()
-        slugs = set()
+        keys: set[tuple[str, int | None]] = set()
 
         try:
-            cursor.execute("SELECT letterboxd_uri FROM films")
-            for row in cursor.fetchall():
-                uri = row[0]
-                if uri:
-                    slug = uri.rstrip("/").split("/")[-1]
-                    slugs.add(slug)
-        except sqlite3.OperationalError:
-            pass
+            cursor.execute("SELECT name, year FROM films")
+            keys.update(film_key(name, year) for name, year in cursor.fetchall())
+        except sqlite3.OperationalError as e:
+            logger.warning(f"Could not read films table: {e}")
 
-        return slugs
+        return keys
 
     def get_review_opportunities(
         self,
@@ -223,28 +235,26 @@ class TrendingDetector:
             List of film opportunities with scores.
         """
         # Update cache if stale (> 24 hours)
+        # _refresh_cache_if_stale already fetches when the cache is empty
+        # or stale; fetching again here doubled every outbound request.
         self._refresh_cache_if_stale()
-
         trending = self.get_cached_trending(limit=100)
-        if not trending:
-            logger.info("No cached trending films. Fetching fresh data...")
-            self.update_cache()
-            trending = self.get_cached_trending(limit=100)
 
-        # Get exclusion sets
-        reviewed = self.get_reviewed_slugs() if exclude_reviewed else set()
-        watched = self.get_watched_slugs() if exclude_unwatched else None
+        # Get exclusion sets, keyed on title+year (see get_reviewed_keys)
+        reviewed = self.get_reviewed_keys() if exclude_reviewed else set()
+        watched = self.get_watched_keys() if exclude_unwatched else None
 
         opportunities = []
         for film in trending:
             slug = film["slug"]
+            key = film_key(film["title"], film["year"])
 
             # Skip reviewed
-            if slug in reviewed:
+            if key in reviewed:
                 continue
 
             # Skip unwatched if filtering
-            if watched is not None and slug not in watched:
+            if watched is not None and key not in watched:
                 continue
 
             opportunities.append(
@@ -286,7 +296,13 @@ class TrendingDetector:
         return min(100, base_score)
 
     def _refresh_cache_if_stale(self) -> None:
-        """Refresh cache if it's older than 24 hours."""
+        """Refresh the cache if it is older than 24 hours.
+
+        A failed fetch leaves the cache empty, which would make the next
+        call fetch again — so on an unauthenticated web endpoint every
+        page refresh became an outbound scrape. Failures are therefore
+        rate-limited by _FAILED_FETCH_COOLDOWN.
+        """
         cursor = self.conn.cursor()
 
         try:
@@ -297,13 +313,30 @@ class TrendingDetector:
                 last_updated = datetime.fromisoformat(row[0])
                 if datetime.now() - last_updated < timedelta(hours=24):
                     return  # Cache is fresh
-
-            # Cache is stale, refresh
-            self.update_cache()
-
         except sqlite3.OperationalError:
-            # Table might not exist yet
-            self.update_cache()
+            pass  # Table missing; fall through and try to populate it
+
+        self._update_cache_with_backoff()
+
+    def _update_cache_with_backoff(self) -> None:
+        """Fetch fresh data unless a recent attempt already failed."""
+        last_failure = TrendingDetector._last_failed_fetch
+        if last_failure and datetime.now() - last_failure < _FAILED_FETCH_COOLDOWN:
+            logger.debug("Skipping trending fetch; a recent attempt failed")
+            return
+
+        try:
+            count = self.update_cache()
+        except Exception as e:
+            TrendingDetector._last_failed_fetch = datetime.now()
+            logger.warning(f"Trending fetch failed, backing off: {e}")
+            return
+
+        if not count:
+            TrendingDetector._last_failed_fetch = datetime.now()
+            logger.warning("Trending fetch returned nothing, backing off")
+        else:
+            TrendingDetector._last_failed_fetch = None
 
     def show_trending(self, limit: int = 20) -> None:
         """Display trending films."""

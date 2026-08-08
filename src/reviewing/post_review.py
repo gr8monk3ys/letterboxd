@@ -102,7 +102,9 @@ logging.basicConfig(
 class ReviewPoster:
     def __init__(self, tone: str = "casual"):
         self.config = get_config()
-        self.db = MovieDatabase()
+        # Honor the configured database path rather than MovieDatabase's
+        # own default, so DATABASE_FILE actually takes effect.
+        self.db = MovieDatabase(db_path=self.config.database_file)
         self.db.connect()
         self.metrics_db = ReviewMetricsDB()
         self.metrics_db.connect()

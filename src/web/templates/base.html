@@ -304,6 +304,7 @@
             <a href="/" class="logo">Letterboxd <span>Toolkit</span></a>
             <nav>
                 <a href="/" {% if request.url.path == "/" %}class="active"{% endif %}>Dashboard</a>
+                <a href="/actions" {% if request.url.path == "/actions" %}class="active"{% endif %}>Actions</a>
                 <a href="/growth" {% if request.url.path == "/growth" %}class="active"{% endif %}>Growth</a>
                 <a href="/films" {% if request.url.path == "/films" %}class="active"{% endif %}>Films</a>
                 <a href="/analytics" {% if request.url.path == "/analytics" %}class="active"{% endif %}>Analytics</a>
