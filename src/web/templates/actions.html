@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+
+{% block title %}Action Board - Letterboxd Toolkit{% endblock %}
+
+{% block extra_styles %}
+<style>
+    .board-intro { margin-bottom: 28px; }
+    .board-intro h1 { color: var(--text-bright); margin-bottom: 8px; }
+    .board-intro p { max-width: 62ch; }
+
+    .tally {
+        display: inline-block;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 999px;
+        padding: 4px 14px;
+        font-size: 0.85rem;
+        color: var(--accent);
+    }
+
+    .scards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        gap: 14px;
+        margin: 24px 0 36px;
+    }
+    .scard {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 10px;
+        padding: 16px 18px;
+    }
+    .scard .slabel {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-color);
+    }
+    .scard .snum {
+        font-size: 1.6rem;
+        font-weight: 600;
+        color: var(--text-bright);
+        margin: 6px 0 12px;
+    }
+    .scard .snum .arrow { color: var(--accent); }
+    .meter {
+        display: block;
+        height: 6px;
+        background: var(--border-color);
+        border-radius: 999px;
+        overflow: hidden;
+    }
+    .meter > span {
+        display: block;
+        height: 100%;
+        background: var(--accent);
+        border-radius: 999px;
+    }
+
+    .section {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 20px 24px;
+        margin-bottom: 20px;
+    }
+    .section h2 {
+        color: var(--text-bright);
+        font-size: 1.25rem;
+        margin-bottom: 6px;
+    }
+    .section .blurb { margin-bottom: 4px; }
+    .section .note {
+        font-size: 0.85rem;
+        color: var(--accent-orange, var(--accent));
+        margin-bottom: 12px;
+    }
+
+    .task {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        padding: 10px 0;
+        border-top: 1px solid var(--border-color);
+    }
+    .task:first-of-type { border-top: none; }
+    .task input {
+        margin-top: 4px;
+        width: 17px;
+        height: 17px;
+        accent-color: var(--accent);
+        flex: none;
+        cursor: pointer;
+    }
+    .task label { cursor: pointer; color: var(--text-bright); }
+    .task .detail {
+        display: block;
+        font-size: 0.85rem;
+        color: var(--text-color);
+    }
+    .task.done label { text-decoration: line-through; color: var(--text-color); }
+    .task a.filmlink { color: var(--accent); text-decoration: none; font-size: 0.85rem; }
+    .task a.filmlink:hover { text-decoration: underline; }
+
+    .empty-state {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 40px;
+        text-align: center;
+    }
+    .empty-state code {
+        display: inline-block;
+        background: var(--log-bg);
+        padding: 6px 12px;
+        border-radius: 6px;
+        margin-top: 10px;
+        color: var(--accent);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="board-intro">
+    <h1>Action Board</h1>
+    <p>
+        Everything here you do by hand on letterboxd.com — nothing on this page posts
+        for you. Tick items off as you go; progress is saved in this browser.
+    </p>
+    {% if not board.is_empty %}
+    <p style="margin-top: 12px;"><span class="tally" id="tally"></span></p>
+    {% endif %}
+</div>
+
+{% if board.is_empty %}
+<div class="empty-state">
+    <h2 style="color: var(--text-bright);">No film data yet</h2>
+    <p style="margin-top: 10px;">
+        Export your data from Letterboxd, drop the ZIP into <code>data/</code>,
+        then import it:
+    </p>
+    <code>uv run python -m src.data_processing.create_database</code>
+</div>
+{% else %}
+
+<div class="scards">
+    {% for card in board.scorecards %}
+    <div class="scard">
+        <div class="slabel">{{ card.label }}</div>
+        <div class="snum">{{ card.current }} <span class="arrow">&rarr;</span> {{ card.target }}</div>
+        <span class="meter"><span style="width: {{ card.percent }}%"></span></span>
+    </div>
+    {% endfor %}
+</div>
+
+{% for section in board.sections %}
+<div class="section">
+    <h2>{{ section.title }}</h2>
+    <p class="blurb">{{ section.blurb }}</p>
+    {% if section.note %}<p class="note">{{ section.note }}</p>{% endif %}
+
+    {% for item in section.items %}
+    <div class="task">
+        <input type="checkbox" id="{{ item.id }}">
+        <label for="{{ item.id }}">
+            {{ item.title }}
+            {% if item.detail %}<span class="detail">{{ item.detail }}</span>{% endif %}
+        </label>
+        {% if item.url %}
+        <a class="filmlink" href="{{ item.url }}" target="_blank" rel="noopener noreferrer">open &rarr;</a>
+        {% endif %}
+    </div>
+    {% endfor %}
+
+    {% if not section.items %}
+    <p style="padding: 10px 0;">Nothing to do here — this one is done.</p>
+    {% endif %}
+</div>
+{% endfor %}
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    const boxes = Array.from(document.querySelectorAll('.task input[type=checkbox]'));
+    const tally = document.getElementById('tally');
+
+    function refresh() {
+        if (!tally) return;
+        const done = boxes.filter(b => b.checked).length;
+        tally.textContent = done + ' of ' + boxes.length + ' done';
+    }
+
+    boxes.forEach(function (box) {
+        // Keyed by the item's stable content id, so ticks survive reordering
+        const key = 'lb-action-' + box.id;
+        box.checked = localStorage.getItem(key) === '1';
+        box.closest('.task').classList.toggle('done', box.checked);
+
+        box.addEventListener('change', function () {
+            localStorage.setItem(key, box.checked ? '1' : '0');
+            box.closest('.task').classList.toggle('done', box.checked);
+            refresh();
+        });
+    });
+
+    refresh();
+})();
+</script>
+{% endblock %}

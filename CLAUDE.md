@@ -60,15 +60,20 @@ uv run python -m src.stats --rate-limits # Rate limit status
 uv run python -m src.data_processing.migrations           # Run pending migrations
 uv run python -m src.data_processing.migrations --status  # Check migration status
 
-# Web UI dashboard (FastAPI)
+# Web UI dashboard (FastAPI) - binds 127.0.0.1 only, no auth
 uv run python -m src.web.app  # Opens at http://localhost:8000
+# Pages: / (stats), /actions (manual action board), /growth, /films,
+#        /analytics, /metrics, /logs
 
 # Linting and formatting
 uv run ruff check src/ tests/           # Check for issues
 uv run ruff check --fix src/ tests/     # Auto-fix issues
 uv run ruff format src/ tests/          # Format code
 
-# Testing (~279 tests)
+# Database backup / restore
+uv run python -m src.data_processing.backup --help
+
+# Testing (397 tests)
 uv run pytest                           # Run all tests
 uv run pytest -v                        # Verbose output
 uv run pytest tests/test_config.py      # Single test file
@@ -91,13 +96,14 @@ uv run pytest --cov=src --cov-report=html  # Generate HTML coverage report
 ### Module Structure
 ```
 src/
+├── action_board.py                    # Manual action board (pure, read-only)
 ├── config.py                          # Centralized config (paths, env vars, settings)
 ├── stats.py                           # Statistics dashboard
 ├── rate_limiter.py                    # Rate limiting with WAL mode for concurrency
-├── analytics.py                       # Usage analytics and metrics
-├── completions.py                     # Shell completion support
-├── review_metrics.py                  # Review quality metrics
-├── scraper.py                         # Web scraping utilities
+├── analytics.py                       # Usage analytics (web-only consumer)
+├── completions.py                     # Shell completion support (not yet wired up)
+├── review_metrics.py                  # Review quality metrics + tone A/B tests
+├── scraper.py                         # Web scraping (letterboxdpy + httpx/bs4)
 ├── data_processing/
 │   ├── import_letterboxd_export.py    # Parse Letterboxd ZIP export
 │   ├── create_database.py             # SQLite database with batch inserts
@@ -106,22 +112,52 @@ src/
 ├── following/
 │   ├── follow_users.py                # Browser automation for following
 │   └── unfollow_users.py              # Unfollow non-followers (with protected users)
+├── growth/                            # Growth tooling (all web-dashboard backed)
+│   ├── tracker.py                     # Daily follower snapshots
+│   ├── trending.py                    # Trending films → review targeting
+│   ├── smart_follow.py                # Similar-taste follow queue
+│   ├── campaigns.py                   # Grouped growth campaigns
+│   ├── attribution.py                 # Review → follower attribution
+│   ├── optimizer.py                   # Posting-time optimization
+│   └── dashboard.py                   # Growth summary aggregation
+├── lists/
+│   ├── generate_lists.py              # Build list definitions from ratings + TMDB
+│   └── create_list.py                 # Post lists to Letterboxd (no rate limiting yet)
 ├── reviewing/
 │   ├── write_review.py                # Style-matched AI review generation (tone presets)
 │   └── post_review.py                 # Post reviews to Letterboxd
 ├── utils/
 │   ├── auth.py                        # Shared login/navigation logic
+│   ├── follow_actions.py              # Shared follow-button click + human delay
 │   ├── retry.py                       # Retry decorators for network failures
 │   ├── errors.py                      # User-friendly error handling
 │   ├── tmdb.py                        # TMDB API client for film metadata
-│   └── notifications.py               # Desktop notifications (plyer)
+│   └── notifications.py               # Desktop notifications (built, not yet wired up)
 └── web/
-    ├── app.py                         # FastAPI dashboard
+    ├── app.py                         # FastAPI dashboard (binds 127.0.0.1 only)
     └── templates/                     # Jinja2 templates
 ```
 
+### Film identity: the trap that has cost real time
+
+The export identifies films by **opaque `boxd.it` short URLs**
+(`https://boxd.it/103U`), not readable slugs. Scraped pages carry readable
+slugs (`parasite`). **These can never be compared directly.** Match films
+across the two sources on normalized title+year — see `growth/trending.py`
+`film_key()`. A slug-based comparison silently matches nothing, which reads
+as "no opportunities found" rather than as a bug.
+
+Likewise `films.rating` is **NULL for every row** in a real export; ratings
+live in the `ratings` table. Reading `films.rating` alone yields zero rated
+films. And `reviews` has **no film URI at all** — it keys on `review_uri`
+and matches films by name+year.
+
 ### Key Design Decisions
-- **Official export over scraping** - Uses Letterboxd's data export for user's own data
+- **Official export for your own data** - the export is the source of truth for
+  your films/ratings/reviews. Scraping (`scraper.py`, all of `growth/`) is used
+  for *other people's* public data, which the export cannot provide.
+- **Manual action board** - `/actions` is read-only and tells you what to do by
+  hand. It is the zero-risk counterpart to the automation paths.
 - **Pure Playwright** - No AgentQL dependency, uses standard CSS selectors
 - **Style matching** - Reviews use few-shot examples from user's existing reviews
 - **Tone presets** - 5 review tones: casual (default), snarky, thoughtful, brief, analytical

@@ -28,114 +28,213 @@ logging.basicConfig(
     ],
 )
 
-# Migration definitions: (version, description, sql)
-# Each migration should be idempotent where possible
-MIGRATIONS: list[tuple[int, str, str]] = [
+# Migration definitions: (version, description, statements)
+# Each migration is a list of individual SQL statements so they can run
+# inside a single explicit transaction (executescript() would implicitly
+# commit, breaking atomicity). Each migration should be idempotent where
+# possible.
+MIGRATIONS: list[tuple[int, str, list[str]]] = [
     (
         1,
         "Initial schema version tracking",
-        """
-        CREATE TABLE IF NOT EXISTS schema_version (
-            version INTEGER PRIMARY KEY,
-            description TEXT NOT NULL,
-            applied_at TEXT NOT NULL
-        );
-        """,
+        [
+            """
+            CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER PRIMARY KEY,
+                description TEXT NOT NULL,
+                applied_at TEXT NOT NULL
+            )
+            """,
+        ],
     ),
     (
         2,
         "Add index on ai_reviews name and year",
-        """
-        CREATE INDEX IF NOT EXISTS idx_ai_reviews_name_year
-        ON ai_reviews(name, year);
-        """,
+        [
+            """
+            CREATE INDEX IF NOT EXISTS idx_ai_reviews_name_year
+            ON ai_reviews(name, year)
+            """,
+        ],
     ),
     (
         3,
         "Add index on diary for date lookups",
-        """
-        CREATE INDEX IF NOT EXISTS idx_diary_date
-        ON diary(date_watched);
-        """,
+        [
+            """
+            CREATE INDEX IF NOT EXISTS idx_diary_date
+            ON diary(date_watched)
+            """,
+        ],
     ),
     (
         4,
         "Add growth tracking tables",
-        """
-        -- Daily follower snapshots for tracking growth over time
-        CREATE TABLE IF NOT EXISTS follower_snapshots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            snapshot_date TEXT NOT NULL,
-            followers_count INTEGER NOT NULL,
-            following_count INTEGER NOT NULL,
-            films_watched INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL,
-            UNIQUE(snapshot_date)
-        );
-        CREATE INDEX IF NOT EXISTS idx_follower_snapshots_date
-        ON follower_snapshots(snapshot_date);
-
-        -- Review-to-follower attribution for tracking which reviews drive growth
-        CREATE TABLE IF NOT EXISTS review_attribution (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            posted_review_id INTEGER NOT NULL,
-            followers_before INTEGER NOT NULL,
-            followers_after INTEGER,
-            follower_delta INTEGER,
-            checked_at TEXT,
-            FOREIGN KEY (posted_review_id) REFERENCES posted_reviews(id)
-        );
-
-        -- Trending films cache for review targeting
-        CREATE TABLE IF NOT EXISTS trending_films (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            slug TEXT NOT NULL,
-            title TEXT NOT NULL,
-            year INTEGER,
-            popularity_score REAL,
-            review_count INTEGER DEFAULT 0,
-            avg_likes REAL DEFAULT 0,
-            last_updated TEXT NOT NULL,
-            UNIQUE(slug)
-        );
-        CREATE INDEX IF NOT EXISTS idx_trending_films_score
-        ON trending_films(popularity_score DESC);
-
-        -- Growth campaigns for tracking grouped activities
-        CREATE TABLE IF NOT EXISTS growth_campaigns (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            description TEXT,
-            started_at TEXT NOT NULL,
-            ended_at TEXT,
-            is_active INTEGER DEFAULT 1,
-            followers_start INTEGER,
-            followers_end INTEGER
-        );
-
-        -- Actions within campaigns
-        CREATE TABLE IF NOT EXISTS campaign_actions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            campaign_id INTEGER NOT NULL,
-            action_type TEXT NOT NULL,
-            target TEXT,
-            performed_at TEXT NOT NULL,
-            FOREIGN KEY (campaign_id) REFERENCES growth_campaigns(id)
-        );
-
-        -- Smart follow queue for similar taste users
-        CREATE TABLE IF NOT EXISTS smart_follow_queue (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL UNIQUE,
-            source TEXT NOT NULL,
-            similarity_score REAL,
-            added_at TEXT NOT NULL,
-            followed_at TEXT,
-            status TEXT DEFAULT 'pending'
-        );
-        CREATE INDEX IF NOT EXISTS idx_smart_follow_status
-        ON smart_follow_queue(status);
-        """,
+        [
+            # Daily follower snapshots for tracking growth over time
+            """
+            CREATE TABLE IF NOT EXISTS follower_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_date TEXT NOT NULL,
+                followers_count INTEGER NOT NULL,
+                following_count INTEGER NOT NULL,
+                films_watched INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                UNIQUE(snapshot_date)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_follower_snapshots_date
+            ON follower_snapshots(snapshot_date)
+            """,
+            # Review-to-follower attribution (posted_reviews itself is
+            # created in migration 5 so the FK target always exists)
+            """
+            CREATE TABLE IF NOT EXISTS review_attribution (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                posted_review_id INTEGER NOT NULL,
+                followers_before INTEGER NOT NULL,
+                followers_after INTEGER,
+                follower_delta INTEGER,
+                checked_at TEXT,
+                FOREIGN KEY (posted_review_id) REFERENCES posted_reviews(id)
+            )
+            """,
+            # Trending films cache for review targeting
+            """
+            CREATE TABLE IF NOT EXISTS trending_films (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug TEXT NOT NULL,
+                title TEXT NOT NULL,
+                year INTEGER,
+                popularity_score REAL,
+                review_count INTEGER DEFAULT 0,
+                avg_likes REAL DEFAULT 0,
+                last_updated TEXT NOT NULL,
+                UNIQUE(slug)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_trending_films_score
+            ON trending_films(popularity_score DESC)
+            """,
+            # Growth campaigns for tracking grouped activities
+            """
+            CREATE TABLE IF NOT EXISTS growth_campaigns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                is_active INTEGER DEFAULT 1,
+                followers_start INTEGER,
+                followers_end INTEGER
+            )
+            """,
+            # Actions within campaigns
+            """
+            CREATE TABLE IF NOT EXISTS campaign_actions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_id INTEGER NOT NULL,
+                action_type TEXT NOT NULL,
+                target TEXT,
+                performed_at TEXT NOT NULL,
+                FOREIGN KEY (campaign_id) REFERENCES growth_campaigns(id)
+            )
+            """,
+            # Smart follow queue for similar taste users
+            """
+            CREATE TABLE IF NOT EXISTS smart_follow_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                source TEXT NOT NULL,
+                similarity_score REAL,
+                added_at TEXT NOT NULL,
+                followed_at TEXT,
+                status TEXT DEFAULT 'pending'
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_smart_follow_status
+            ON smart_follow_queue(status)
+            """,
+        ],
+    ),
+    # Migrations 5 and 6 were applied to existing databases by an earlier
+    # version of this file and then lost from source. They are restored
+    # here so fresh installs reach the same schema. Do not renumber.
+    (
+        5,
+        "Add performance indexes for common queries",
+        [
+            # rate_limits is normally created lazily by RateLimiter; create
+            # it here so the index below works on a fresh database.
+            """
+            CREATE TABLE IF NOT EXISTS rate_limits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action_type TEXT NOT NULL,
+                username TEXT,
+                timestamp TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_rate_limits_timestamp
+            ON rate_limits(timestamp)
+            """,
+            # posted_reviews & friends are normally created lazily by
+            # ReviewMetricsDB; create them here so review_attribution's
+            # foreign key target exists on a fresh database.
+            """
+            CREATE TABLE IF NOT EXISTS posted_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                letterboxd_uri TEXT NOT NULL,
+                film_name TEXT NOT NULL,
+                film_year INTEGER,
+                review_text TEXT NOT NULL,
+                tone_preset TEXT NOT NULL DEFAULT 'casual',
+                posted_at TEXT NOT NULL,
+                letterboxd_review_url TEXT,
+                UNIQUE(letterboxd_uri, posted_at)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_posted_reviews_tone
+            ON posted_reviews(tone_preset)
+            """,
+        ],
+    ),
+    (
+        6,
+        "Add posted tracking columns to ai_reviews",
+        [
+            "ALTER TABLE ai_reviews ADD COLUMN posted_at TEXT",
+            "ALTER TABLE ai_reviews ADD COLUMN posted_url TEXT",
+        ],
+    ),
+    (
+        7,
+        "Repair indexes missing from drifted databases",
+        [
+            # Databases that recorded migrations 2/3/5 without retaining
+            # their artifacts (schema drift) get the indexes recreated.
+            # All statements are idempotent.
+            """
+            CREATE INDEX IF NOT EXISTS idx_ai_reviews_name_year
+            ON ai_reviews(name, year)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_diary_date
+            ON diary(date_watched)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_films_name_year
+            ON films(name, year)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_reviews_name_year
+            ON reviews(name, year)
+            """,
+        ],
     ),
 ]
 
@@ -171,7 +270,9 @@ class MigrationManager:
             logging.info("Run create_database.py first to create the database.")
             return
 
-        self._conn = sqlite3.connect(self.db_path)
+        # autocommit mode: transactions are managed explicitly with
+        # BEGIN/COMMIT so a failed migration rolls back completely
+        self._conn = sqlite3.connect(self.db_path, isolation_level=None)
         self._ensure_version_table()
 
     def _ensure_version_table(self) -> None:
@@ -200,39 +301,44 @@ class MigrationManager:
         result = cursor.fetchone()
         return int(result[0]) if result and result[0] else 0
 
-    def get_pending_migrations(self) -> list[tuple[int, str, str]]:
+    def get_pending_migrations(self) -> list[tuple[int, str, list[str]]]:
         """Get migrations that haven't been applied yet.
 
         Returns:
-            List of (version, description, sql) tuples for pending migrations.
+            List of (version, description, statements) tuples for pending migrations.
         """
         current = self.get_current_version()
         return [(v, d, s) for v, d, s in MIGRATIONS if v > current]
 
-    def apply_migration(self, version: int, description: str, sql: str) -> bool:
-        """Apply a single migration.
+    def apply_migration(self, version: int, description: str, statements: list[str]) -> bool:
+        """Apply a single migration atomically.
+
+        The migration's statements and its schema_version record are
+        committed together: either everything lands or nothing does.
+        (executescript() is deliberately avoided — it implicitly commits
+        any open transaction before running.)
 
         Args:
             version: Migration version number.
             description: Human-readable description.
-            sql: SQL statements to execute.
+            statements: Individual SQL statements to execute.
 
         Returns:
             True if migration succeeded, False otherwise.
         """
         cursor = self.conn.cursor()
         try:
-            cursor.execute("BEGIN TRANSACTION")
+            cursor.execute("BEGIN IMMEDIATE")
 
-            # Execute the migration SQL
-            cursor.executescript(sql)
+            for statement in statements:
+                cursor.execute(statement)
 
-            # Record the migration
-            from datetime import datetime
+            # Record the migration in the same transaction
+            from datetime import UTC, datetime
 
             cursor.execute(
                 "INSERT INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)",
-                (version, description, datetime.now().isoformat()),
+                (version, description, datetime.now(UTC).isoformat()),
             )
 
             cursor.execute("COMMIT")
@@ -240,7 +346,8 @@ class MigrationManager:
             return True
 
         except sqlite3.Error as e:
-            cursor.execute("ROLLBACK")
+            if self.conn.in_transaction:
+                cursor.execute("ROLLBACK")
             logging.error(f"Migration {version} failed: {e}")
             return False
 
@@ -250,7 +357,7 @@ class MigrationManager:
         Returns:
             Number of migrations applied.
         """
-        if not self.conn:
+        if not self.is_connected():
             logging.error("Not connected to database")
             return 0
 
@@ -273,7 +380,7 @@ class MigrationManager:
 
     def show_status(self) -> None:
         """Display migration status."""
-        if not self.conn:
+        if not self.is_connected():
             print("Database not found or not connected")
             return
 
@@ -337,7 +444,7 @@ Examples:
     manager = MigrationManager()
     manager.connect()
 
-    if not manager.conn:
+    if not manager.is_connected():
         print("\nDatabase not found. Create it first with:")
         print("  uv run python -m src.data_processing.create_database")
         return

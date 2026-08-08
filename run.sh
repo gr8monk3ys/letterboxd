@@ -52,12 +52,18 @@ echo ""
 echo "=== Step 1: Import Letterboxd data & create database ==="
 uv run python -m src.data_processing.create_database
 
+# Must run before anything touches ai_reviews.posted_at or the growth
+# tables — create_database only builds the base schema.
 echo ""
-echo "=== Step 2: Generate AI reviews (first 10 films) ==="
+echo "=== Step 2: Apply database migrations ==="
+uv run python -m src.data_processing.migrations
+
+echo ""
+echo "=== Step 3: Generate AI reviews (first 10 films) ==="
 uv run python -m src.reviewing.write_review -n 10
 
 echo ""
-echo "=== Step 3: Follow users (optional - requires Playwright) ==="
+echo "=== Step 4: Follow users (optional - requires Playwright) ==="
 read -p "Run automated following? This requires browser automation. (y/N) " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
@@ -67,3 +73,6 @@ fi
 
 echo ""
 echo "=== All tasks completed ==="
+echo ""
+echo "Next: open the dashboard to see your action board"
+echo "  uv run python -m src.web.app   # then visit http://localhost:8000/actions"

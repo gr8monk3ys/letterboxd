@@ -4,12 +4,15 @@ import asyncio
 import logging
 import subprocess
 import sys
+import threading
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import BackgroundTasks, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
+from src.action_board import build_action_board
 from src.config import LOGS_DIR, get_config
 from src.data_processing.create_database import MovieDatabase
 from src.rate_limiter import RateLimiter
@@ -28,6 +31,50 @@ app = FastAPI(
 # Templates
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+
+# Log files the dashboard is allowed to read. Single source of truth for
+# both the REST and WebSocket endpoints; also guards against path traversal.
+VALID_LOGS: tuple[str, ...] = (
+    "attribution",
+    "campaigns",
+    "database",
+    "follower",
+    "growth_dashboard",
+    "growth_tracker",
+    "import",
+    "list_creation",
+    "list_generation",
+    "migrations",
+    "optimizer",
+    "review_generation",
+    "review_metrics",
+    "review_posting",
+    "scraper",
+    "smart_follow",
+    "trending",
+    "unfollower",
+)
+
+
+@app.middleware("http")
+async def block_cross_origin_writes(request: Request, call_next):
+    """Reject state-changing requests that originate from another site.
+
+    The dashboard has no authentication and its POST endpoints drive a real
+    Letterboxd account, so a page open in the same browser could otherwise
+    trigger them cross-origin. Requests with no Origin header (curl, scripts)
+    are allowed through — only browsers set it.
+    """
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        origin = request.headers.get("origin")
+        if origin:
+            origin_host = urlparse(origin).hostname
+            if origin_host not in (request.url.hostname, "localhost", "127.0.0.1"):
+                return JSONResponse(
+                    {"error": "Cross-origin requests are not allowed"},
+                    status_code=403,
+                )
+    return await call_next(request)
 
 
 def get_database_stats() -> dict:
@@ -84,9 +131,9 @@ async def dashboard(request: Request):
     config = get_config()
 
     return templates.TemplateResponse(
+        request,
         "dashboard.html",
         {
-            "request": request,
             "db_stats": db_stats,
             "rate_stats": rate_stats,
             "config": {
@@ -113,8 +160,7 @@ async def api_rate_limits():
 @app.get("/api/logs/{log_name}")
 async def api_logs(log_name: str, lines: int = 50):
     """API endpoint for log entries."""
-    valid_logs = ["follower", "unfollower", "review_generation", "review_posting"]
-    if log_name not in valid_logs:
+    if log_name not in VALID_LOGS:
         return JSONResponse({"error": "Invalid log name"}, status_code=400)
 
     logs = get_recent_logs(log_name, lines)
@@ -163,11 +209,22 @@ async def api_ai_reviews(limit: int = 20):
 async def logs_page(request: Request):
     """Logs viewer page."""
     return templates.TemplateResponse(
+        request,
         "logs.html",
         {
-            "request": request,
-            "available_logs": ["follower", "unfollower", "review_generation", "review_posting"],
+            "available_logs": list(VALID_LOGS),
         },
+    )
+
+
+@app.get("/actions", response_class=HTMLResponse)
+async def actions_page(request: Request):
+    """Manual action board — what to do by hand on Letterboxd."""
+    board = build_action_board()
+    return templates.TemplateResponse(
+        request,
+        "actions.html",
+        {"board": board},
     )
 
 
@@ -176,9 +233,9 @@ async def films_page(request: Request):
     """Films management page."""
     db_stats = get_database_stats()
     return templates.TemplateResponse(
+        request,
         "films.html",
         {
-            "request": request,
             "db_stats": db_stats,
         },
     )
@@ -216,14 +273,15 @@ manager = ConnectionManager()
 @app.websocket("/ws/logs/{log_name}")
 async def websocket_logs(websocket: WebSocket, log_name: str):
     """WebSocket endpoint for real-time log streaming."""
-    valid_logs = ["follower", "unfollower", "review_generation", "review_posting"]
-    if log_name not in valid_logs:
+    if log_name not in VALID_LOGS:
         await websocket.close(code=4000)
         return
 
     await manager.connect(websocket)
     log_path = LOGS_DIR / f"{log_name}.log"
-    last_position = 0
+    # Start at the end of the file: stream new lines rather than replaying
+    # the whole log on every connect.
+    last_position = log_path.stat().st_size if log_path.exists() else 0
 
     try:
         while True:
@@ -238,6 +296,11 @@ async def websocket_logs(websocket: WebSocket, log_name: str):
 
             await asyncio.sleep(1)
     except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"Log stream for {log_name} failed: {e}")
+    finally:
+        # Always drop the connection, whatever ended the loop
         manager.disconnect(websocket)
 
 
@@ -248,16 +311,41 @@ running_tasks: dict[str, bool] = {
     "generate_reviews": False,
 }
 
+# Guards running_tasks. The slot must be claimed in the request handler,
+# not in the background task — otherwise two requests arriving together
+# both pass the check and spawn duplicate browser automation.
+_task_lock = threading.Lock()
+
+
+def try_claim_task(task_id: str) -> bool:
+    """Atomically claim a task slot.
+
+    Returns:
+        True if the slot was free and is now claimed, False if already running.
+    """
+    with _task_lock:
+        if running_tasks.get(task_id):
+            return False
+        running_tasks[task_id] = True
+        return True
+
+
+def release_task(task_id: str) -> None:
+    """Release a previously claimed task slot."""
+    with _task_lock:
+        running_tasks[task_id] = False
+
 
 def run_command_in_background(task_id: str, command: list[str]):
-    """Run a command in background and update task status."""
+    """Run an already-claimed task, releasing its slot when finished."""
     try:
-        running_tasks[task_id] = True
         subprocess.run(command, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
         logger.error(f"Task {task_id} failed: {e.stderr}")
+    except Exception as e:
+        logger.error(f"Task {task_id} errored: {e}")
     finally:
-        running_tasks[task_id] = False
+        release_task(task_id)
 
 
 @app.get("/api/tasks/status")
@@ -271,14 +359,14 @@ async def action_follow_popular(
     background_tasks: BackgroundTasks, period: str = "week", limit: int = 20
 ):
     """Trigger following popular members."""
-    if running_tasks.get("follow"):
-        err = {"error": "A follow task is already running"}
-        return JSONResponse(err, status_code=409)
-
     valid_periods = ["week", "month", "year", "all-time"]
     if period not in valid_periods:
         err = {"error": f"Invalid period. Use: {', '.join(valid_periods)}"}
         return JSONResponse(err, status_code=400)
+
+    if not try_claim_task("follow"):
+        err = {"error": "A follow task is already running"}
+        return JSONResponse(err, status_code=409)
 
     command = [
         sys.executable,
@@ -302,7 +390,7 @@ async def action_follow_popular(
 @app.post("/api/actions/unfollow")
 async def action_unfollow(background_tasks: BackgroundTasks, limit: int = 20):
     """Trigger unfollowing non-followers."""
-    if running_tasks.get("unfollow"):
+    if not try_claim_task("unfollow"):
         return JSONResponse({"error": "An unfollow task is already running"}, status_code=409)
 
     command = [
@@ -327,14 +415,14 @@ async def action_generate_reviews(
     background_tasks: BackgroundTasks, limit: int = 10, tone: str = "casual"
 ):
     """Trigger AI review generation."""
-    if running_tasks.get("generate_reviews"):
-        err = {"error": "A review generation task is already running"}
-        return JSONResponse(err, status_code=409)
-
     valid_tones = ["casual", "snarky", "thoughtful", "brief", "analytical"]
     if tone not in valid_tones:
         err = {"error": f"Invalid tone. Use: {', '.join(valid_tones)}"}
         return JSONResponse(err, status_code=400)
+
+    if not try_claim_task("generate_reviews"):
+        err = {"error": "A review generation task is already running"}
+        return JSONResponse(err, status_code=409)
 
     command = [
         sys.executable,
@@ -449,9 +537,9 @@ async def analytics_page(request: Request):
         summary = {}
 
     return templates.TemplateResponse(
+        request,
         "analytics.html",
         {
-            "request": request,
             "analytics": summary,
         },
     )
@@ -498,9 +586,9 @@ async def metrics_page(request: Request):
         suggestions = []
 
     return templates.TemplateResponse(
+        request,
         "metrics.html",
         {
-            "request": request,
             "stats": stats,
             "performance": performance_dicts,
             "recent_reviews": recent_reviews,
@@ -662,9 +750,9 @@ async def growth_page(request: Request):
         correlation = {}
 
     return templates.TemplateResponse(
+        request,
         "growth.html",
         {
-            "request": request,
             "summary": summary,
             "correlation": correlation,
         },
@@ -782,7 +870,9 @@ def main():
 
     print("\nStarting Letterboxd Automation Dashboard...")
     print("Open http://localhost:8000 in your browser\n")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Loopback only: the dashboard is unauthenticated and can drive a real
+    # Letterboxd account, so it must not be reachable from the network.
+    uvicorn.run(app, host="127.0.0.1", port=8000)
 
 
 if __name__ == "__main__":
