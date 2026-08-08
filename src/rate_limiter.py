@@ -21,6 +21,9 @@ class RateLimiter:
         self.limits = {
             "follow": {"hourly": config.hourly_rate_limit, "daily": config.daily_rate_limit},
             "unfollow": {"hourly": config.hourly_rate_limit, "daily": config.daily_rate_limit},
+            # Publishing one list can add up to 100 films, so it is capped
+            # far below the per-action limits above.
+            "create_list": {"hourly": 3, "daily": 10},
         }
 
     @property
@@ -115,7 +118,7 @@ class RateLimiter:
             # Check hourly limit
             if hourly_count >= limits["hourly"]:
                 cursor.execute("ROLLBACK")
-                minutes_left = 60 - datetime.now().minute
+                minutes_left = self._minutes_until_window_clears(action_type)
                 return False, f"Hourly limit ({limits['hourly']}). Retry in ~{minutes_left}m."
 
             # Check daily limit
@@ -134,6 +137,28 @@ class RateLimiter:
         except sqlite3.Error as e:
             cursor.execute("ROLLBACK")
             return False, f"Database error: {e}"
+
+    def _minutes_until_window_clears(self, action_type: str) -> int:
+        """Minutes until the oldest action leaves the rolling hourly window.
+
+        The limit is enforced over a rolling hour, so the wait is measured
+        from the oldest logged action — not from the current clock minute.
+        Reporting the clock remainder under-reports by up to 59 minutes and
+        makes callers resume while still over the limit.
+        """
+        cursor = self.conn.cursor()
+        since = (datetime.now() - timedelta(hours=1)).isoformat()
+        cursor.execute(
+            "SELECT MIN(timestamp) FROM rate_limits WHERE action_type = ? AND timestamp > ?",
+            (action_type, since),
+        )
+        row = cursor.fetchone()
+        if not row or not row[0]:
+            return 0
+
+        clears_at = datetime.fromisoformat(row[0]) + timedelta(hours=1)
+        remaining = (clears_at - datetime.now()).total_seconds() / 60
+        return max(1, int(remaining + 0.5))
 
     def get_action_count(self, action_type: str, hours: int = 24) -> int:
         """Get count of actions in the last N hours.
@@ -180,7 +205,7 @@ class RateLimiter:
 
         # Check hourly limit
         if hourly_count >= limits["hourly"]:
-            minutes_left = 60 - (datetime.now().minute)
+            minutes_left = self._minutes_until_window_clears(action_type)
             return False, f"Hourly limit ({limits['hourly']}). Retry in ~{minutes_left}m."
 
         # Check daily limit

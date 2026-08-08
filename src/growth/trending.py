@@ -41,7 +41,15 @@ def film_key(title: str | None, year: int | None) -> tuple[str, int | None]:
     return (normalized, int(year) if year is not None else None)
 
 
+# How long to wait before retrying after a failed outbound fetch. Shared
+# across instances because each web request builds a new detector.
+_FAILED_FETCH_COOLDOWN = timedelta(minutes=15)
+
+
 class TrendingDetector:
+    # Set when a fetch fails; suppresses retries for the cooldown period.
+    _last_failed_fetch: datetime | None = None
+
     """Detect trending films for review opportunities."""
 
     def __init__(self, db_path: Path | None = None):
@@ -227,13 +235,10 @@ class TrendingDetector:
             List of film opportunities with scores.
         """
         # Update cache if stale (> 24 hours)
+        # _refresh_cache_if_stale already fetches when the cache is empty
+        # or stale; fetching again here doubled every outbound request.
         self._refresh_cache_if_stale()
-
         trending = self.get_cached_trending(limit=100)
-        if not trending:
-            logger.info("No cached trending films. Fetching fresh data...")
-            self.update_cache()
-            trending = self.get_cached_trending(limit=100)
 
         # Get exclusion sets, keyed on title+year (see get_reviewed_keys)
         reviewed = self.get_reviewed_keys() if exclude_reviewed else set()
@@ -291,7 +296,13 @@ class TrendingDetector:
         return min(100, base_score)
 
     def _refresh_cache_if_stale(self) -> None:
-        """Refresh cache if it's older than 24 hours."""
+        """Refresh the cache if it is older than 24 hours.
+
+        A failed fetch leaves the cache empty, which would make the next
+        call fetch again — so on an unauthenticated web endpoint every
+        page refresh became an outbound scrape. Failures are therefore
+        rate-limited by _FAILED_FETCH_COOLDOWN.
+        """
         cursor = self.conn.cursor()
 
         try:
@@ -302,13 +313,30 @@ class TrendingDetector:
                 last_updated = datetime.fromisoformat(row[0])
                 if datetime.now() - last_updated < timedelta(hours=24):
                     return  # Cache is fresh
-
-            # Cache is stale, refresh
-            self.update_cache()
-
         except sqlite3.OperationalError:
-            # Table might not exist yet
-            self.update_cache()
+            pass  # Table missing; fall through and try to populate it
+
+        self._update_cache_with_backoff()
+
+    def _update_cache_with_backoff(self) -> None:
+        """Fetch fresh data unless a recent attempt already failed."""
+        last_failure = TrendingDetector._last_failed_fetch
+        if last_failure and datetime.now() - last_failure < _FAILED_FETCH_COOLDOWN:
+            logger.debug("Skipping trending fetch; a recent attempt failed")
+            return
+
+        try:
+            count = self.update_cache()
+        except Exception as e:
+            TrendingDetector._last_failed_fetch = datetime.now()
+            logger.warning(f"Trending fetch failed, backing off: {e}")
+            return
+
+        if not count:
+            TrendingDetector._last_failed_fetch = datetime.now()
+            logger.warning("Trending fetch returned nothing, backing off")
+        else:
+            TrendingDetector._last_failed_fetch = None
 
     def show_trending(self, limit: int = 20) -> None:
         """Display trending films."""
