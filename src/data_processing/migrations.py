@@ -236,6 +236,46 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
             """,
         ],
     ),
+    (
+        8,
+        "Repair tables missing from drifted databases",
+        [
+            # Migration 5 will not re-run on a database that already
+            # recorded it, so databases whose version rows outran their
+            # actual schema still lack these tables. Both are otherwise
+            # created lazily at runtime, which leaves review_attribution's
+            # foreign key pointing at a table that may not exist yet.
+            """
+            CREATE TABLE IF NOT EXISTS rate_limits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action_type TEXT NOT NULL,
+                username TEXT,
+                timestamp TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS posted_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                letterboxd_uri TEXT NOT NULL,
+                film_name TEXT NOT NULL,
+                film_year INTEGER,
+                review_text TEXT NOT NULL,
+                tone_preset TEXT NOT NULL DEFAULT 'casual',
+                posted_at TEXT NOT NULL,
+                letterboxd_review_url TEXT,
+                UNIQUE(letterboxd_uri, posted_at)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_posted_reviews_tone
+            ON posted_reviews(tone_preset)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_rate_limits_timestamp
+            ON rate_limits(timestamp)
+            """,
+        ],
+    ),
 ]
 
 

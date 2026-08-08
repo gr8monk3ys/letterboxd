@@ -182,6 +182,48 @@ class TestAtomicity:
 class TestRepairMigration:
     """Migration 7 restores indexes that drifted out of older databases."""
 
+    def test_repairs_a_database_that_recorded_5_without_its_tables(self, tmp_path):
+        """The real drift case: versions recorded, artifacts never created.
+
+        Migration 5 will not re-run on such a database, so migration 7 has
+        to restore what it was supposed to have made.
+        """
+        db = tmp_path / "drifted.db"
+        _make_base_db(db)
+
+        # Simulate the drifted state: 1-6 recorded, artifacts absent
+        conn = sqlite3.connect(db)
+        conn.execute("""
+            CREATE TABLE schema_version (
+                version INTEGER PRIMARY KEY, description TEXT NOT NULL, applied_at TEXT NOT NULL
+            )
+        """)
+        conn.executemany(
+            "INSERT INTO schema_version VALUES (?,?,?)",
+            [(v, f"migration {v}", "2026-03-02T00:00:00") for v in range(1, 7)],
+        )
+        conn.execute("ALTER TABLE ai_reviews ADD COLUMN posted_at TEXT")
+        conn.execute("ALTER TABLE ai_reviews ADD COLUMN posted_url TEXT")
+        conn.commit()
+        conn.close()
+
+        manager = MigrationManager(db_path=db)
+        manager.connect()
+        try:
+            manager.run_pending_migrations()
+        finally:
+            manager.close()
+
+        conn = sqlite3.connect(db)
+        tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        conn.close()
+
+        # review_attribution's foreign key target must exist
+        assert "posted_reviews" in tables
+        assert "rate_limits" in tables
+
     def test_missing_documented_indexes_are_recreated(self, tmp_path):
         db = tmp_path / "test.db"
         _make_base_db(db)
