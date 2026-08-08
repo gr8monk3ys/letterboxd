@@ -311,9 +311,16 @@ class MovieDatabase:
         Returns:
             List of film dicts with letterboxd_uri, name, year, rating
         """
+        # A real export leaves films.rating NULL and carries the score in
+        # the ratings table, so ratings is authoritative and films.rating
+        # is only a fallback. Reading films.rating alone makes every film
+        # look unrated: min_rating then matches nothing and the ORDER BY
+        # below silently degrades to alphabetical.
         query = """
-            SELECT f.letterboxd_uri, f.name, f.year, f.rating
+            SELECT f.letterboxd_uri, f.name, f.year,
+                   COALESCE(rt.rating, f.rating) AS rating
             FROM films f
+            LEFT JOIN ratings rt ON f.letterboxd_uri = rt.letterboxd_uri
             LEFT JOIN reviews r ON f.name = r.name AND f.year = r.year
             LEFT JOIN ai_reviews ar ON f.letterboxd_uri = ar.letterboxd_uri
             WHERE r.review_uri IS NULL AND ar.letterboxd_uri IS NULL
@@ -337,10 +344,10 @@ class MovieDatabase:
 
         # Add rating filter
         if min_rating is not None:
-            query += " AND f.rating >= ?"
+            query += " AND COALESCE(rt.rating, f.rating) >= ?"
             params.append(min_rating)
 
-        query += " ORDER BY f.rating DESC NULLS LAST, f.name ASC"
+        query += " ORDER BY rating DESC NULLS LAST, f.name ASC"
 
         self.cursor.execute(query, params)
         columns = ["letterboxd_uri", "name", "year", "rating"]
