@@ -269,9 +269,11 @@ class SmartFollower:
         if not pending:
             return {"followed": 0, "skipped": 0, "error": None}
 
-        # Check rate limits
-        if not self.rate_limiter.can_perform_action("follow"):
-            return {"followed": 0, "skipped": 0, "error": "Rate limit reached"}
+        # can_perform_action returns (allowed, reason) — it must be
+        # unpacked, since any non-empty tuple is truthy.
+        allowed, reason = self.rate_limiter.can_perform_action("follow")
+        if not allowed:
+            return {"followed": 0, "skipped": 0, "error": reason or "Rate limit reached"}
 
         followed = 0
         skipped = 0
@@ -287,9 +289,10 @@ class SmartFollower:
                 for row in pending:
                     username = row["username"]
 
-                    # Check rate limit for each follow
-                    if not self.rate_limiter.can_perform_action("follow"):
-                        logger.info("Rate limit reached, stopping")
+                    # Check rate limit before each follow
+                    allowed, reason = self.rate_limiter.can_perform_action("follow")
+                    if not allowed:
+                        logger.info(f"Rate limit reached, stopping: {reason}")
                         break
 
                     try:
