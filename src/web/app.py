@@ -16,6 +16,7 @@ from src.action_board import build_action_board
 from src.config import LOGS_DIR, get_config
 from src.data_processing.create_database import MovieDatabase
 from src.rate_limiter import RateLimiter
+from src.setup_status import describe_setup
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -130,6 +131,7 @@ async def dashboard(request: Request):
     rate_stats = get_rate_limit_stats()
     config = get_config()
     board = build_action_board()
+    setup = describe_setup()
 
     # The first few things actually worth doing, so the landing page opens
     # with work rather than idle automation counters. Preference order
@@ -145,7 +147,7 @@ async def dashboard(request: Request):
         None,
     )
     next_up = [
-        {"title": item.title, "detail": item.detail, "url": item.url}
+        {"title": item.title, "detail": item.detail, "url": item.url, "stars": item.stars}
         for item in (lead.items[:3] if lead else [])
     ]
 
@@ -156,6 +158,12 @@ async def dashboard(request: Request):
             "db_stats": db_stats,
             "rate_stats": rate_stats,
             "freshness": board.freshness,
+            # Missing keys previously surfaced only as stack traces in
+            # logs/ after a command had already failed.
+            "setup": setup,
+            # Lets the template disable controls that cannot possibly work
+            # rather than offering a button that fails on click.
+            "setup_ok": {r.key: r.ok for r in setup},
             "next_up": next_up,
             "next_up_title": lead.title if lead else "",
             "total_actions": board.total_items,
@@ -231,11 +239,26 @@ async def api_ai_reviews(limit: int = 20):
 @app.get("/logs", response_class=HTMLResponse)
 async def logs_page(request: Request):
     """Logs viewer page."""
+
+    # Most log files are zero bytes on a fresh install. Marking them lets
+    # the page say so instead of making the user click each one to find out.
+    def _has_content(name: str) -> bool:
+        path = LOGS_DIR / f"{name}.log"
+        try:
+            return path.stat().st_size > 0
+        except OSError:
+            return False
+
+    logs = sorted(VALID_LOGS, key=lambda n: (not _has_content(n), n))
     return templates.TemplateResponse(
         request,
         "logs.html",
         {
-            "available_logs": list(VALID_LOGS),
+            "available_logs": logs,
+            "log_has_content": {name: _has_content(name) for name in logs},
+            # One source of truth for which tab opens; the script previously
+            # hardcoded its own answer and the two drifted apart.
+            "default_log": next((n for n in logs if _has_content(n)), logs[0] if logs else ""),
         },
     )
 

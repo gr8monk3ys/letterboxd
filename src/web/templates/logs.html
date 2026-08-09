@@ -22,12 +22,18 @@
 
     .log-tab:hover, .log-tab.active {
         background: var(--accent);
-        color: var(--bg-color);
+        color: var(--accent-ink);
         border-color: var(--accent);
     }
 
+    /* An empty log is still worth listing — it just should not look like
+       it has something in it. */
+    .log-tab-empty { opacity: .45; }
+    .log-tab-empty.active { opacity: 1; }
+
     .log-viewer {
-        background: #0d1117;
+        /* Was hardcoded #0d1117, which stayed black in light mode. */
+        background: var(--bg-sunken);
         border-radius: 8px;
         padding: 15px;
         font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
@@ -62,7 +68,9 @@
 
 <div class="log-tabs">
     {% for log in available_logs %}
-    <button class="log-tab {% if loop.first %}active{% endif %}" data-log="{{ log }}">
+    <button class="log-tab{% if log == default_log %} active{% endif %}{% if not log_has_content[log] %} log-tab-empty{% endif %}"
+            data-log="{{ log }}"
+            {% if not log_has_content[log] %}title="This log file is empty"{% endif %}>
         {{ log.replace('_', ' ').title() }}
     </button>
     {% endfor %}
@@ -78,7 +86,7 @@
 </div>
 
 <div class="card">
-    <h3 id="log-title">Follower Log</h3>
+    <h3 id="log-title">{{ default_log.replace('_', ' ').title() }} Log</h3>
     <div class="log-viewer" id="log-content">
         <p>Loading...</p>
     </div>
@@ -87,7 +95,10 @@
 
 {% block scripts %}
 <script>
-let currentLog = 'follower';
+// Read from the DOM so the highlighted tab and the loaded log cannot drift
+// apart. Hardcoding a name here is what made the page open with
+// "Attribution" highlighted and the Follower log showing.
+let currentLog = document.querySelector('.log-tab.active')?.dataset.log || '';
 let websocket = null;
 let isStreaming = false;
 

@@ -130,8 +130,10 @@ class TestNextUpPicksTheMeaningfulSection:
 class TestAutomationIsDemoted:
     def test_library_stats_come_before_rate_limits(self, client, monkeypatch):
         monkeypatch.setattr("src.web.app.build_action_board", lambda: _board())
-        body = client.get("/").text
-        assert body.index("Total Films") < body.index("Rate Limits")
+        # Case-insensitive: the assertion is about running order, not about
+        # how the headings happen to be capitalised.
+        body = client.get("/").text.lower()
+        assert body.index("total films") < body.index("rate limits")
 
 
 class TestSyncFromTheDashboard:

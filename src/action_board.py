@@ -53,6 +53,9 @@ class ActionItem:
     title: str
     detail: str = ""
     url: str = ""
+    # Kept out of `detail` so a template can style a rating as a rating
+    # instead of parsing star glyphs back out of display text.
+    stars: str = ""
 
 
 @dataclass(frozen=True)
@@ -244,11 +247,7 @@ def _build(conn: sqlite3.Connection, freshness: ExportFreshness | None = None) -
 
     def _review_item(film: dict, prefix: str) -> ActionItem:
         uri = film["letterboxd_uri"]
-        bits = [
-            b
-            for b in (_stars(_rating_of(film)), str(film["year"]) if film.get("year") else "")
-            if b
-        ]
+        bits = [str(film["year"])] if film.get("year") else []
         if uri in drafts and not drafts[uri]["posted_at"]:
             bits.append("AI draft ready to post")
         return ActionItem(
@@ -256,6 +255,7 @@ def _build(conn: sqlite3.Connection, freshness: ExportFreshness | None = None) -
             title=film["name"],
             detail=" · ".join(bits),
             url=_film_url(uri),
+            stars=_stars(_rating_of(film)),
         )
 
     unreviewed = [f for f in films if (f["name"], f.get("year")) not in reviewed_keys]

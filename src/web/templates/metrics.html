@@ -387,7 +387,8 @@ async function updateEngagement() {
     }
 }
 
-// Auto-refresh every 5 minutes
-setInterval(() => location.reload(), 300000);
+// No auto-reload. Engagement numbers only change when "Update Engagement"
+// is pressed, and a background reload discarded scroll position and any
+// half-filled A/B test form.
 </script>
 {% endblock %}

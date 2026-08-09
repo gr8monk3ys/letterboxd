@@ -238,7 +238,10 @@
         <input type="checkbox" id="{{ item.id }}">
         <label for="{{ item.id }}">
             {{ item.title }}
-            {% if item.detail %}<span class="detail">{{ item.detail }}</span>{% endif %}
+            <span class="detail">
+                {% if item.stars %}<span class="stars">{{ item.stars }}</span>{% endif %}
+                {{ item.detail }}
+            </span>
         </label>
         {% if item.url %}
         <a class="filmlink" href="{{ item.url }}" target="_blank" rel="noopener noreferrer">open &rarr;</a>

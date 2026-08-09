@@ -68,7 +68,8 @@ async function loadUnreviewedFilms() {
         const container = document.getElementById('unreviewed-films');
 
         if (data.films && data.films.length > 0) {
-            let html = '<table><thead><tr><th>Film</th><th>Year</th><th>Rating</th></tr></thead><tbody>';
+            // Wrapped so a long film title scrolls the table, not the page.
+            let html = '<div class="table-wrap"><table><thead><tr><th>Film</th><th>Year</th><th>Rating</th></tr></thead><tbody>';
             data.films.forEach(film => {
                 const rating = film.rating ? '⭐'.repeat(Math.round(film.rating)) : '-';
                 html += `<tr>
@@ -77,7 +78,7 @@ async function loadUnreviewedFilms() {
                     <td>${rating}</td>
                 </tr>`;
             });
-            html += '</tbody></table>';
+            html += '</tbody></table></div>';
             container.innerHTML = html;
         } else {
             container.innerHTML = '<p>All films have reviews!</p>';

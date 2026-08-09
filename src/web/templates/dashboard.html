@@ -4,296 +4,367 @@
 
 {% block extra_styles %}
 <style>
-    .freshness-bar {
+    /* ---- Hero -------------------------------------------------------
+       One dominant figure, stated the way a film almanac would state it,
+       rather than four equal-weight cards none of which is the point. */
+    .hero { margin-bottom: var(--s7); }
+
+    .hero-figure {
+        display: flex;
+        align-items: baseline;
+        gap: var(--s4);
+        flex-wrap: wrap;
+        margin: var(--s2) 0 var(--s3);
+    }
+    .hero-count {
+        font-family: var(--serif);
+        font-variant-numeric: tabular-nums;
+        font-size: clamp(3rem, 2rem + 6vw, 5rem);
+        line-height: .95;
+        letter-spacing: -0.035em;
+        color: var(--ink);
+        font-weight: 600;
+    }
+    .hero-unit { font-size: 1.1rem; color: var(--ink-dim); }
+
+    .hero-rail {
+        position: relative;
+        height: 3px;
+        background: var(--line-soft);
+        border-radius: 999px;
+        overflow: hidden;
+        max-width: 640px;
+    }
+    .hero-rail > span {
+        display: block;
+        height: 100%;
+        background: var(--accent);
+        border-radius: 999px;
+        transition: width .8s var(--ease);
+    }
+    .hero-caption {
+        margin-top: var(--s3);
+        max-width: 62ch;
+        color: var(--ink-dim);
+    }
+    .hero-caption b { color: var(--ink); font-weight: 600; }
+
+    /* ---- Freshness --------------------------------------------------- */
+    .freshness {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 16px;
+        gap: var(--s3);
         flex-wrap: wrap;
-        background: var(--card-bg);
-        border: 1px solid var(--border-color);
-        border-left: 4px solid var(--accent);
-        border-radius: 10px;
-        padding: 14px 18px;
-        margin: 0 0 24px;
+        margin-top: var(--s5);
+        font-size: .9rem;
     }
-    .freshness-bar.warn { border-left-color: var(--accent-orange, #ff8000); }
-    .freshness-bar strong { color: var(--text-bright); }
-    .sync-btn {
-        background: var(--accent);
-        color: #04220f;
-        border: none;
-        border-radius: 6px;
-        padding: 8px 16px;
-        font-weight: 600;
-        cursor: pointer;
-        white-space: nowrap;
+    .dot {
+        width: 7px; height: 7px; border-radius: 50%;
+        background: var(--accent); flex: none;
     }
-    .sync-btn[disabled] { opacity: 0.55; cursor: default; }
+    .dot.warn { background: var(--orange); }
 
-    .nextup { margin-bottom: 24px; }
-    .nextup-sub { margin-bottom: 12px; }
+    /* ---- Next up ----------------------------------------------------- */
     .nextup-row {
         display: flex;
         align-items: baseline;
-        gap: 12px;
-        padding: 8px 0;
-        border-top: 1px solid var(--border-color);
+        gap: var(--s3);
+        padding: var(--s3) 0;
+        border-top: 1px solid var(--line-soft);
     }
     .nextup-row:first-of-type { border-top: none; }
-    .nextup-row a { color: var(--text-bright); text-decoration: none; }
+    .nextup-row a {
+        color: var(--ink);
+        text-decoration: none;
+        font-weight: 500;
+    }
     .nextup-row a:hover { color: var(--accent); }
-    .nextup-detail { font-size: 0.85rem; color: var(--text-color); }
-    .nextup-link { color: var(--accent); text-decoration: none; font-weight: 600; }
+    .nextup-detail { font-size: .85rem; color: var(--ink-faint); margin-left: auto; }
+
+    /* ---- Setup ------------------------------------------------------- */
+    .setup-row {
+        display: flex;
+        gap: var(--s3);
+        padding: var(--s3) 0;
+        border-top: 1px solid var(--line-soft);
+    }
+    .setup-row:first-of-type { border-top: none; }
+    .setup-mark { flex: none; width: 1.2em; font-weight: 700; }
+    .setup-mark.no { color: var(--orange); }
+    .setup-mark.yes { color: var(--accent); }
+    .setup-body { min-width: 0; }
+    .setup-body b { color: var(--ink); }
+    .setup-how {
+        display: block;
+        margin-top: var(--s1);
+        font-family: var(--mono);
+        font-size: .78rem;
+        color: var(--ink-faint);
+        overflow-wrap: anywhere;
+    }
+
+    /* ---- Collapsed detail -------------------------------------------- */
+    details.fold { margin-top: var(--s5); }
+    details.fold > summary {
+        cursor: pointer;
+        color: var(--ink-dim);
+        font-size: .9rem;
+        padding: var(--s2) 0;
+        list-style: none;
+    }
+    details.fold > summary::-webkit-details-marker { display: none; }
+    details.fold > summary::before { content: "▸ "; color: var(--ink-faint); }
+    details.fold[open] > summary::before { content: "▾ "; }
+    details.fold > summary:hover { color: var(--ink); }
+
+    .qa-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: var(--s4);
+    }
+    .qa {
+        padding: var(--s4);
+        background: var(--bg-sunken);
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--line-soft);
+    }
+    .qa-controls { display: flex; gap: var(--s2); margin: var(--s3) 0; flex-wrap: wrap; }
+    .qa-blocked {
+        margin-top: var(--s2);
+        font-size: .8rem;
+        color: var(--orange);
+    }
 </style>
 {% endblock %}
 
 {% block content %}
-<h1 style="color: var(--text-bright); margin-bottom: 8px;">Dashboard</h1>
 
-<!-- Data freshness leads: everything below is computed from it -->
-{% if freshness %}
-<div class="freshness-bar {% if freshness.is_stale or freshness.is_unknown %}warn{% endif %}">
-    <div>
-        {% if freshness.is_unknown %}
-        <strong>No export found.</strong> Import your Letterboxd export to get started.
-        {% elif freshness.is_stale %}
-        <strong>Data is {{ freshness.days_old }} days old.</strong>
-        Everything below is computed from it, so it may be out of date.
-        {% elif freshness.days_old == 0 %}
-        <strong>Data is up to date.</strong> Synced through today.
-        {% else %}
-        <strong>Data is {{ freshness.days_old }} day{{ '' if freshness.days_old == 1 else 's' }} old.</strong>
-        {% endif %}
+{% set reviewed = db_stats.user_reviewed + db_stats.ai_reviewed %}
+{% set pct = (reviewed / db_stats.total_films * 100) if db_stats.total_films else 0 %}
+
+<section class="hero">
+    <p class="eyebrow">Your film diary</p>
+    <!-- The figure is the page's heading: it is what this page is about. -->
+    <h1 class="hero-figure">
+        <span class="hero-count">{{ "{:,}".format(db_stats.total_films) }}</span>
+        <span class="hero-unit">films watched</span>
+    </h1>
+
+    <div class="hero-rail" role="progressbar"
+         aria-valuenow="{{ pct|round(1) }}" aria-valuemin="0" aria-valuemax="100"
+         aria-label="Share of watched films that have a review">
+        <span style="width: {{ pct }}%"></span>
     </div>
-    <button class="sync-btn" onclick="syncNow(this)">Sync now</button>
-</div>
+
+    <p class="hero-caption">
+        You have written about <b>{{ "{:,}".format(reviewed) }}</b> of them —
+        <b>{{ pct|round(1) }}%</b>. The other {{ "{:,}".format(db_stats.total_films - reviewed) }}
+        are the raw material this toolkit is for.
+    </p>
+
+    {% if freshness %}
+    <p class="freshness">
+        <span class="dot {% if freshness.is_stale or freshness.is_unknown %}warn{% endif %}"></span>
+        {% if freshness.is_unknown %}
+            No export found — import one to get started.
+        {% elif freshness.is_stale %}
+            Data is {{ freshness.days_old }} days old, so everything above may lag.
+        {% elif freshness.days_old == 0 %}
+            Up to date, synced through today.
+        {% else %}
+            Data is {{ freshness.days_old }} day{{ '' if freshness.days_old == 1 else 's' }} old.
+        {% endif %}
+        <button class="btn btn-secondary" onclick="syncNow(this)">Sync now</button>
+    </p>
+    {% endif %}
+</section>
+
+{% set gaps = setup | selectattr('ok', 'equalto', false) | list %}
+{% if gaps %}
+<section class="card" style="margin-bottom: var(--s5);">
+    <p class="eyebrow">Before everything works</p>
+    {% for r in gaps %}
+    <div class="setup-row">
+        <span class="setup-mark {{ 'no' if r.required else 'yes' }}">{{ '!' if r.required else '·' }}</span>
+        <div class="setup-body">
+            <b>{{ r.label }}</b>{% if not r.required %} <span style="color: var(--ink-faint);">(optional)</span>{% endif %}
+            — {{ r.enables }}.
+            <span class="setup-how">{{ r.how }}</span>
+        </div>
+    </div>
+    {% endfor %}
+</section>
 {% endif %}
 
-<!-- What to actually do, before any automation counters -->
 {% if next_up %}
-<div class="card nextup">
-    <h3>Next up</h3>
-    <p class="nextup-sub">{{ next_up_title }} — {{ total_actions }} items on the action board.</p>
+<section class="card">
+    <p class="eyebrow">Next up</p>
+    <h2 style="margin-bottom: var(--s2);">{{ next_up_title }}</h2>
+    <p style="margin-bottom: var(--s4); color: var(--ink-dim);">
+        {{ total_actions }} items on the action board.
+    </p>
     {% for item in next_up %}
     <div class="nextup-row">
         {% if item.url %}
         <a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{{ item.title }}</a>
         {% else %}<span>{{ item.title }}</span>{% endif %}
-        {% if item.detail %}<span class="nextup-detail">{{ item.detail }}</span>{% endif %}
+        <span class="nextup-detail">
+            {% if item.stars %}<span class="stars">{{ item.stars }}</span>{% endif %}
+            {{ item.detail }}
+        </span>
     </div>
     {% endfor %}
-    <p style="margin-top: 14px;"><a href="/actions" class="nextup-link">Open the action board &rarr;</a></p>
-</div>
+    <p style="margin-top: var(--s4);">
+        <a href="/actions" class="btn">Open the action board</a>
+    </p>
+</section>
 {% endif %}
 
-<div class="grid">
-    <!-- Film Stats -->
+<div class="grid" style="margin-top: var(--s5);">
     <div class="card">
-        <h3>Film Statistics</h3>
+        <p class="eyebrow">Library</p>
         <div class="stat">
             <span>Total Films</span>
-            <span class="stat-value">{{ db_stats.total_films }}</span>
+            <span class="stat-value">{{ "{:,}".format(db_stats.total_films) }}</span>
         </div>
         <div class="stat">
-            <span>Your Reviews</span>
-            <span class="stat-value success">{{ db_stats.user_reviewed }}</span>
+            <span>Your reviews</span>
+            <span class="stat-value success">{{ "{:,}".format(db_stats.user_reviewed) }}</span>
         </div>
         <div class="stat">
-            <span>AI Reviews</span>
-            <span class="stat-value">{{ db_stats.ai_reviewed }}</span>
+            <span>AI drafts</span>
+            <span class="stat-value">{{ "{:,}".format(db_stats.ai_reviewed) }}</span>
         </div>
         <div class="stat">
             <span>Unreviewed</span>
-            <span class="stat-value warning">{{ db_stats.unreviewed }}</span>
+            <span class="stat-value warning">{{ "{:,}".format(db_stats.unreviewed) }}</span>
         </div>
-        <p style="font-size: 0.8rem; margin-top: 6px; color: var(--text-color);">
-            Every film without a review, including ones you rated low.
-            The <a href="/actions" style="color: var(--accent);">action board</a>
-            ranks the ones actually worth writing.
+        <p style="font-size: .82rem; margin-top: var(--s3); color: var(--ink-faint);">
+            Unreviewed counts every film without a review, including ones you rated low.
+            The <a href="/actions">action board</a> ranks the ones worth writing.
         </p>
-        {% if db_stats.total_films > 0 %}
-        <div class="progress-bar">
-            <div class="progress-fill" style="width: {{ ((db_stats.user_reviewed + db_stats.ai_reviewed) / db_stats.total_films * 100)|int }}%;"></div>
-        </div>
-        <p style="font-size: 0.875rem; margin-top: 8px; text-align: right;">
-            {{ ((db_stats.user_reviewed + db_stats.ai_reviewed) / db_stats.total_films * 100)|round(1) }}% reviewed
-        </p>
-        {% endif %}
     </div>
 
-    <!-- Automation counters last: they read 0/0 until automation is used -->
-    <!-- Follow Rate Limits -->
-    {% if rate_stats.follow %}
     <div class="card">
-        <h3>Follow Rate Limits</h3>
+        <p class="eyebrow">Rate limits</p>
+        <p style="font-size: .88rem; margin-bottom: var(--s4); color: var(--ink-dim);">
+            Ceilings for automated follow and unfollow actions. They read zero
+            because no automated action has ever completed on this install.
+        </p>
+        {% if rate_stats.follow %}
         <div class="stat">
-            <span>Hourly Used</span>
+            <span>Follows this hour</span>
             <span class="stat-value">{{ rate_stats.follow.hourly_used }} / {{ rate_stats.follow.hourly_limit }}</span>
         </div>
-        <div class="progress-bar">
-            {% set hourly_pct = (rate_stats.follow.hourly_used / rate_stats.follow.hourly_limit * 100)|int if rate_stats.follow.hourly_limit > 0 else 0 %}
-            <div class="progress-fill {% if hourly_pct >= 80 %}warning{% endif %} {% if hourly_pct >= 100 %}danger{% endif %}" style="width: {{ hourly_pct }}%;"></div>
-        </div>
-        <div class="stat" style="margin-top: 15px;">
-            <span>Daily Used</span>
+        <div class="stat">
+            <span>Follows today</span>
             <span class="stat-value">{{ rate_stats.follow.daily_used }} / {{ rate_stats.follow.daily_limit }}</span>
         </div>
-        <div class="progress-bar">
-            {% set daily_pct = (rate_stats.follow.daily_used / rate_stats.follow.daily_limit * 100)|int if rate_stats.follow.daily_limit > 0 else 0 %}
-            <div class="progress-fill {% if daily_pct >= 80 %}warning{% endif %} {% if daily_pct >= 100 %}danger{% endif %}" style="width: {{ daily_pct }}%;"></div>
-        </div>
-        <div class="stat" style="margin-top: 15px;">
-            <span>Status</span>
-            <span class="stat-value {% if rate_stats.follow.allowed %}success{% else %}warning{% endif %}">
-                {% if rate_stats.follow.allowed %}OK{% else %}Limited{% endif %}
-            </span>
-        </div>
-    </div>
-    {% endif %}
-
-    <!-- Unfollow Rate Limits -->
-    {% if rate_stats.unfollow %}
-    <div class="card">
-        <h3>Unfollow Rate Limits</h3>
+        {% endif %}
+        {% if rate_stats.unfollow %}
         <div class="stat">
-            <span>Hourly Used</span>
-            <span class="stat-value">{{ rate_stats.unfollow.hourly_used }} / {{ rate_stats.unfollow.hourly_limit }}</span>
-        </div>
-        <div class="progress-bar">
-            {% set hourly_pct = (rate_stats.unfollow.hourly_used / rate_stats.unfollow.hourly_limit * 100)|int if rate_stats.unfollow.hourly_limit > 0 else 0 %}
-            <div class="progress-fill {% if hourly_pct >= 80 %}warning{% endif %}" style="width: {{ hourly_pct }}%;"></div>
-        </div>
-        <div class="stat" style="margin-top: 15px;">
-            <span>Daily Used</span>
+            <span>Unfollows today</span>
             <span class="stat-value">{{ rate_stats.unfollow.daily_used }} / {{ rate_stats.unfollow.daily_limit }}</span>
         </div>
-        <div class="progress-bar">
-            {% set daily_pct = (rate_stats.unfollow.daily_used / rate_stats.unfollow.daily_limit * 100)|int if rate_stats.unfollow.daily_limit > 0 else 0 %}
-            <div class="progress-fill {% if daily_pct >= 80 %}warning{% endif %}" style="width: {{ daily_pct }}%;"></div>
-        </div>
-        <div class="stat" style="margin-top: 15px;">
-            <span>Status</span>
-            <span class="stat-value {% if rate_stats.unfollow.allowed %}success{% else %}warning{% endif %}">
-                {% if rate_stats.unfollow.allowed %}OK{% else %}Limited{% endif %}
-            </span>
-        </div>
-    </div>
-    {% endif %}
-
-    <!-- Configuration -->
-    <div class="card">
-        <h3>Configuration</h3>
+        {% endif %}
         <div class="stat">
-            <span>Hourly Limit</span>
-            <span class="stat-value">{{ config.hourly_limit }}</span>
-        </div>
-        <div class="stat">
-            <span>Daily Limit</span>
-            <span class="stat-value">{{ config.daily_limit }}</span>
-        </div>
-        <div class="stat">
-            <span>Headless Mode</span>
-            <span class="stat-value {% if config.headless %}success{% endif %}">
-                {% if config.headless %}Enabled{% else %}Disabled{% endif %}
-            </span>
+            <span>Headless browser</span>
+            <span class="stat-value">{{ 'On' if config.headless else 'Off' }}</span>
         </div>
     </div>
 </div>
 
-<!-- Quick Actions -->
-<div class="card" style="margin-top: 20px;">
-    <h3>Quick Actions</h3>
-    <p style="margin-bottom: 15px;">Trigger actions directly from the dashboard:</p>
-
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 20px;">
-        <!-- Follow Popular -->
-        <div style="padding: 15px; background: rgba(255,255,255,0.03); border-radius: 8px;">
-            <h4 style="color: var(--text-bright); margin-bottom: 10px;">Follow Popular Members</h4>
-            <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-                <select id="follow-period" style="padding: 8px; background: var(--card-bg); border: 1px solid var(--border-color); color: var(--text-color); border-radius: 4px;">
-                    <option value="week">This Week</option>
-                    <option value="month">This Month</option>
-                    <option value="year">This Year</option>
-                    <option value="all-time">All Time</option>
-                </select>
-                <input type="number" id="follow-limit" value="20" min="1" max="100" style="width: 70px; padding: 8px; background: var(--card-bg); border: 1px solid var(--border-color); color: var(--text-color); border-radius: 4px;">
+<details class="fold">
+    <summary>Run something from here</summary>
+    <div class="card" style="margin-top: var(--s3);">
+        <div class="qa-grid">
+            <div class="qa">
+                <h4>Generate AI reviews</h4>
+                <div class="qa-controls">
+                    <input type="number" id="review-limit" value="10" min="1" max="50"
+                           style="width: 78px;" aria-label="Number of reviews to generate">
+                    <select id="review-tone" aria-label="Review tone">
+                        <option value="casual">Casual</option>
+                        <option value="snarky">Snarky</option>
+                        <option value="thoughtful">Thoughtful</option>
+                        <option value="brief">Brief</option>
+                        <option value="analytical">Analytical</option>
+                    </select>
+                </div>
+                <button class="btn" id="btn-generate" onclick="startGenerateReviews()"
+                        {% if not setup_ok.ANTHROPIC_API_KEY %}disabled{% endif %}>
+                    <span class="status-indicator" id="generate_reviews-status"></span>
+                    Generate
+                </button>
+                {% if not setup_ok.ANTHROPIC_API_KEY %}
+                <p class="qa-blocked">Needs ANTHROPIC_API_KEY in .env.</p>
+                {% endif %}
             </div>
-            <button class="btn" id="btn-follow" onclick="startFollowPopular()">
-                <span class="status-indicator disconnected" id="follow-status"></span>
-                Follow
-            </button>
-        </div>
 
-        <!-- Unfollow -->
-        <div style="padding: 15px; background: rgba(255,255,255,0.03); border-radius: 8px;">
-            <h4 style="color: var(--text-bright); margin-bottom: 10px;">Unfollow Non-Followers</h4>
-            <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-                <input type="number" id="unfollow-limit" value="20" min="1" max="100" style="width: 70px; padding: 8px; background: var(--card-bg); border: 1px solid var(--border-color); color: var(--text-color); border-radius: 4px;">
-                <span style="line-height: 36px;">users max</span>
+            <div class="qa">
+                <h4>Follow popular members</h4>
+                <div class="qa-controls">
+                    <select id="follow-period" aria-label="Popularity period">
+                        <option value="week">This week</option>
+                        <option value="month">This month</option>
+                        <option value="year">This year</option>
+                        <option value="all-time">All time</option>
+                    </select>
+                    <input type="number" id="follow-limit" value="20" min="1" max="100"
+                           style="width: 78px;" aria-label="Maximum follows">
+                </div>
+                <button class="btn btn-secondary" id="btn-follow" onclick="startFollowPopular()"
+                        {% if not setup_ok.LETTERBOXD_SESSION %}disabled{% endif %}>
+                    <span class="status-indicator" id="follow-status"></span>
+                    Follow
+                </button>
+                {% if not setup_ok.LETTERBOXD_SESSION %}
+                <p class="qa-blocked">
+                    Cannot sign in — Letterboxd's login is reCAPTCHA-protected.
+                    Automated following also breaks their terms of service.
+                </p>
+                {% endif %}
             </div>
-            <button class="btn btn-danger" id="btn-unfollow" onclick="startUnfollow()">
-                <span class="status-indicator disconnected" id="unfollow-status"></span>
-                Unfollow
-            </button>
-        </div>
 
-        <!-- Generate Reviews -->
-        <div style="padding: 15px; background: rgba(255,255,255,0.03); border-radius: 8px;">
-            <h4 style="color: var(--text-bright); margin-bottom: 10px;">Generate AI Reviews</h4>
-            <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-                <input type="number" id="review-limit" value="10" min="1" max="50" style="width: 70px; padding: 8px; background: var(--card-bg); border: 1px solid var(--border-color); color: var(--text-color); border-radius: 4px;">
-                <select id="review-tone" style="padding: 8px; background: var(--card-bg); border: 1px solid var(--border-color); color: var(--text-color); border-radius: 4px;">
-                    <option value="casual">Casual</option>
-                    <option value="snarky">Snarky</option>
-                    <option value="thoughtful">Thoughtful</option>
-                    <option value="brief">Brief</option>
-                    <option value="analytical">Analytical</option>
-                </select>
+            <div class="qa">
+                <h4>Unfollow non-followers</h4>
+                <div class="qa-controls">
+                    <input type="number" id="unfollow-limit" value="20" min="1" max="100"
+                           style="width: 78px;" aria-label="Maximum unfollows">
+                    <span style="align-self: center; font-size: .85rem;">users max</span>
+                </div>
+                <button class="btn btn-secondary" id="btn-unfollow" onclick="startUnfollow()"
+                        {% if not setup_ok.LETTERBOXD_SESSION %}disabled{% endif %}>
+                    <span class="status-indicator" id="unfollow-status"></span>
+                    Unfollow
+                </button>
+                {% if not setup_ok.LETTERBOXD_SESSION %}
+                <p class="qa-blocked">Same sign-in limitation as following.</p>
+                {% endif %}
             </div>
-            <button class="btn" id="btn-generate" onclick="startGenerateReviews()">
-                <span class="status-indicator disconnected" id="generate_reviews-status"></span>
-                Generate
-            </button>
         </div>
     </div>
-</div>
+</details>
 
-<!-- CLI Commands Reference -->
-<div class="card" style="margin-top: 20px;">
-    <h3>CLI Commands</h3>
-    <p style="margin-bottom: 15px;">Or run these commands in your terminal:</p>
-    <table>
-        <thead>
-            <tr>
-                <th>Action</th>
-                <th>Command</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td>Follow popular members</td>
-                <td><code>uv run python -m src.following.follow_users --popular week -n 20</code></td>
-            </tr>
-            <tr>
-                <td>Follow fans of a film</td>
-                <td><code>uv run python -m src.following.follow_users --fans-of "Film Name"</code></td>
-            </tr>
-            <tr>
-                <td>Unfollow non-followers</td>
-                <td><code>uv run python -m src.following.unfollow_users -n 20</code></td>
-            </tr>
-            <tr>
-                <td>Generate reviews</td>
-                <td><code>uv run python -m src.reviewing.write_review -n 10</code></td>
-            </tr>
-            <tr>
-                <td>Check rate limits</td>
-                <td><code>uv run python -m src.rate_limiter</code></td>
-            </tr>
-        </tbody>
-    </table>
-</div>
+<details class="fold">
+    <summary>The same things from a terminal</summary>
+    <div class="card" style="margin-top: var(--s3);">
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr><th>Action</th><th>Command</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Sync recent watches</td><td><code>uv run python -m src.sync</code></td></tr>
+                    <tr><td>Generate reviews</td><td><code>uv run python -m src.reviewing.write_review -n 10</code></td></tr>
+                    <tr><td>Preview one review</td><td><code>uv run python -m src.reviewing.write_review --preview "Film Name"</code></td></tr>
+                    <tr><td>Export drafts to CSV</td><td><code>uv run python -m src.reviewing.write_review --export csv</code></td></tr>
+                    <tr><td>All statistics</td><td><code>uv run python -m src.stats</code></td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</details>
 {% endblock %}
 
 {% block scripts %}
@@ -306,98 +377,83 @@ async function syncNow(btn) {
         const res = await fetch('/api/actions/sync', { method: 'POST' });
         const data = await res.json();
         if (!res.ok) {
-            btn.textContent = data.error || 'Sync failed';
-            setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2500);
+            showToast(data.error || 'Sync failed', 'error');
+            btn.textContent = original;
+            btn.disabled = false;
             return;
         }
-        // The sync runs in the background; reload once it has had time to finish
-        btn.textContent = 'Syncing…';
         setTimeout(() => window.location.reload(), 6000);
     } catch (e) {
-        btn.textContent = 'Sync failed';
-        setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2500);
+        showToast('Sync failed: ' + e.message, 'error');
+        btn.textContent = original;
+        btn.disabled = false;
     }
 }
-</script>
-<script>
-// Action functions
+
 async function startFollowPopular() {
     const period = document.getElementById('follow-period').value;
     const limit = document.getElementById('follow-limit').value;
-
     const btn = document.getElementById('btn-follow');
     btn.disabled = true;
-
-    const result = await triggerAction(`/api/actions/follow-popular?period=${period}&limit=${limit}`);
-    if (result) {
-        updateTaskStatus();
+    if (await triggerAction(`/api/actions/follow-popular?period=${period}&limit=${limit}`)) {
+        pollTasksWhileRunning();
     }
-
     setTimeout(() => btn.disabled = false, 2000);
 }
 
 async function startUnfollow() {
     const limit = document.getElementById('unfollow-limit').value;
-
     const btn = document.getElementById('btn-unfollow');
     btn.disabled = true;
-
-    const result = await triggerAction(`/api/actions/unfollow?limit=${limit}`);
-    if (result) {
-        updateTaskStatus();
+    if (await triggerAction(`/api/actions/unfollow?limit=${limit}`)) {
+        pollTasksWhileRunning();
     }
-
     setTimeout(() => btn.disabled = false, 2000);
 }
 
 async function startGenerateReviews() {
     const limit = document.getElementById('review-limit').value;
     const tone = document.getElementById('review-tone').value;
-
     const btn = document.getElementById('btn-generate');
     btn.disabled = true;
-
-    const result = await triggerAction(`/api/actions/generate-reviews?limit=${limit}&tone=${tone}`);
-    if (result) {
-        updateTaskStatus();
+    if (await triggerAction(`/api/actions/generate-reviews?limit=${limit}&tone=${tone}`)) {
+        pollTasksWhileRunning();
     }
-
     setTimeout(() => btn.disabled = false, 2000);
 }
 
-// Task status polling
 async function updateTaskStatus() {
     try {
         const res = await fetch('/api/tasks/status');
         const status = await res.json();
-
+        let anyRunning = false;
         for (const [task, running] of Object.entries(status)) {
+            if (running) anyRunning = true;
             const indicator = document.getElementById(`${task}-status`);
             if (indicator) {
-                indicator.className = running ? 'status-indicator connected' : 'status-indicator disconnected';
+                indicator.className = 'status-indicator ' + (running ? 'connected' : 'disconnected');
             }
         }
+        return anyRunning;
     } catch (e) {
-        console.error('Failed to update task status:', e);
+        return false;
     }
 }
 
-// Auto-refresh stats and task status every 5 seconds
-setInterval(async () => {
-    try {
-        await updateTaskStatus();
+// Poll only while something is actually running. The old loop hit
+// /api/stats and /api/rate-limits every 5s forever and discarded both
+// responses, opening SQLite connections for nothing.
+let taskPoll = null;
+function pollTasksWhileRunning() {
+    if (taskPoll) return;
+    taskPoll = setInterval(async () => {
+        if (!await updateTaskStatus()) {
+            clearInterval(taskPoll);
+            taskPoll = null;
+        }
+    }, 3000);
+}
 
-        const [statsRes, ratesRes] = await Promise.all([
-            fetch('/api/stats'),
-            fetch('/api/rate-limits')
-        ]);
-        // Could update DOM here for live updates
-    } catch (e) {
-        console.error('Failed to refresh stats:', e);
-    }
-}, 5000);
-
-// Initial load
-updateTaskStatus();
+updateTaskStatus().then(running => { if (running) pollTasksWhileRunning(); });
 </script>
 {% endblock %}
