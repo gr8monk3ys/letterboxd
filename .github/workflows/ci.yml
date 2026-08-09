@@ -54,7 +54,7 @@ jobs:
         run: uv run pytest --cov=src --cov-report=term-missing --cov-report=xml -q
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
