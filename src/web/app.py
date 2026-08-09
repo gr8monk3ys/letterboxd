@@ -129,6 +129,25 @@ async def dashboard(request: Request):
     db_stats = get_database_stats()
     rate_stats = get_rate_limit_stats()
     config = get_config()
+    board = build_action_board()
+
+    # The first few things actually worth doing, so the landing page opens
+    # with work rather than idle automation counters. Preference order
+    # matches the board's own: the films you loved lead, because a
+    # one-item chore should not outrank the list worth finishing.
+    by_key = {s.key: s for s in board.sections}
+    lead = next(
+        (
+            by_key[key]
+            for key in ("review_loved", "review_recent", "rate", "review", "watchlist")
+            if key in by_key and by_key[key].items
+        ),
+        None,
+    )
+    next_up = [
+        {"title": item.title, "detail": item.detail, "url": item.url}
+        for item in (lead.items[:3] if lead else [])
+    ]
 
     return templates.TemplateResponse(
         request,
@@ -136,6 +155,10 @@ async def dashboard(request: Request):
         {
             "db_stats": db_stats,
             "rate_stats": rate_stats,
+            "freshness": board.freshness,
+            "next_up": next_up,
+            "next_up_title": lead.title if lead else "",
+            "total_actions": board.total_items,
             "config": {
                 "hourly_limit": config.hourly_rate_limit,
                 "daily_limit": config.daily_rate_limit,
@@ -309,6 +332,7 @@ running_tasks: dict[str, bool] = {
     "follow": False,
     "unfollow": False,
     "generate_reviews": False,
+    "sync": False,
 }
 
 # Guards running_tasks. The slot must be claimed in the request handler,
@@ -441,6 +465,21 @@ async def action_generate_reviews(
             "task_id": "generate_reviews",
         }
     )
+
+
+@app.post("/api/actions/sync")
+async def action_sync(background_tasks: BackgroundTasks):
+    """Top the database up from the public RSS feed.
+
+    Unlike the follow/unfollow actions this only reads a public feed and
+    writes locally — it does not touch the account.
+    """
+    if not try_claim_task("sync"):
+        return JSONResponse({"error": "A sync is already running"}, status_code=409)
+
+    command = [sys.executable, "-m", "src.sync"]
+    background_tasks.add_task(run_command_in_background, "sync", command)
+    return JSONResponse({"message": "Syncing from your Letterboxd feed", "task_id": "sync"})
 
 
 @app.post("/api/actions/clear-tmdb-cache")

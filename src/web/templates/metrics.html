@@ -161,7 +161,17 @@
 {% endblock %}
 
 {% block content %}
-<h1 style="color: var(--text-bright); margin-bottom: 30px;">Review Quality Metrics</h1>
+<h1 style="color: var(--text-bright); margin-bottom: 8px;">Review Quality Metrics</h1>
+
+{% if not stats or not stats.total_posted %}
+<div class="notice-empty">
+    <strong>No reviews posted through this toolkit yet.</strong>
+    Engagement and tone comparisons are measured on reviews it posted, so nothing
+    here fills in until one has been. Reviews you wrote on letterboxd.com directly
+    are not tracked here.
+    <div class="notice-cmd">uv run python -m src.reviewing.post_review --dry-run</div>
+</div>
+{% endif %}
 
 <!-- Overview Stats -->
 <div class="grid">

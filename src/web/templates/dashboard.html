@@ -2,8 +2,90 @@
 
 {% block title %}Dashboard - Letterboxd Toolkit{% endblock %}
 
+{% block extra_styles %}
+<style>
+    .freshness-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-left: 4px solid var(--accent);
+        border-radius: 10px;
+        padding: 14px 18px;
+        margin: 0 0 24px;
+    }
+    .freshness-bar.warn { border-left-color: var(--accent-orange, #ff8000); }
+    .freshness-bar strong { color: var(--text-bright); }
+    .sync-btn {
+        background: var(--accent);
+        color: #04220f;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-weight: 600;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+    .sync-btn[disabled] { opacity: 0.55; cursor: default; }
+
+    .nextup { margin-bottom: 24px; }
+    .nextup-sub { margin-bottom: 12px; }
+    .nextup-row {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        padding: 8px 0;
+        border-top: 1px solid var(--border-color);
+    }
+    .nextup-row:first-of-type { border-top: none; }
+    .nextup-row a { color: var(--text-bright); text-decoration: none; }
+    .nextup-row a:hover { color: var(--accent); }
+    .nextup-detail { font-size: 0.85rem; color: var(--text-color); }
+    .nextup-link { color: var(--accent); text-decoration: none; font-weight: 600; }
+</style>
+{% endblock %}
+
 {% block content %}
-<h1 style="color: var(--text-bright); margin-bottom: 30px;">Dashboard</h1>
+<h1 style="color: var(--text-bright); margin-bottom: 8px;">Dashboard</h1>
+
+<!-- Data freshness leads: everything below is computed from it -->
+{% if freshness %}
+<div class="freshness-bar {% if freshness.is_stale or freshness.is_unknown %}warn{% endif %}">
+    <div>
+        {% if freshness.is_unknown %}
+        <strong>No export found.</strong> Import your Letterboxd export to get started.
+        {% elif freshness.is_stale %}
+        <strong>Data is {{ freshness.days_old }} days old.</strong>
+        Everything below is computed from it, so it may be out of date.
+        {% elif freshness.days_old == 0 %}
+        <strong>Data is up to date.</strong> Synced through today.
+        {% else %}
+        <strong>Data is {{ freshness.days_old }} day{{ '' if freshness.days_old == 1 else 's' }} old.</strong>
+        {% endif %}
+    </div>
+    <button class="sync-btn" onclick="syncNow(this)">Sync now</button>
+</div>
+{% endif %}
+
+<!-- What to actually do, before any automation counters -->
+{% if next_up %}
+<div class="card nextup">
+    <h3>Next up</h3>
+    <p class="nextup-sub">{{ next_up_title }} — {{ total_actions }} items on the action board.</p>
+    {% for item in next_up %}
+    <div class="nextup-row">
+        {% if item.url %}
+        <a href="{{ item.url }}" target="_blank" rel="noopener noreferrer">{{ item.title }}</a>
+        {% else %}<span>{{ item.title }}</span>{% endif %}
+        {% if item.detail %}<span class="nextup-detail">{{ item.detail }}</span>{% endif %}
+    </div>
+    {% endfor %}
+    <p style="margin-top: 14px;"><a href="/actions" class="nextup-link">Open the action board &rarr;</a></p>
+</div>
+{% endif %}
 
 <div class="grid">
     <!-- Film Stats -->
@@ -25,6 +107,11 @@
             <span>Unreviewed</span>
             <span class="stat-value warning">{{ db_stats.unreviewed }}</span>
         </div>
+        <p style="font-size: 0.8rem; margin-top: 6px; color: var(--text-color);">
+            Every film without a review, including ones you rated low.
+            The <a href="/actions" style="color: var(--accent);">action board</a>
+            ranks the ones actually worth writing.
+        </p>
         {% if db_stats.total_films > 0 %}
         <div class="progress-bar">
             <div class="progress-fill" style="width: {{ ((db_stats.user_reviewed + db_stats.ai_reviewed) / db_stats.total_films * 100)|int }}%;"></div>
@@ -35,6 +122,7 @@
         {% endif %}
     </div>
 
+    <!-- Automation counters last: they read 0/0 until automation is used -->
     <!-- Follow Rate Limits -->
     {% if rate_stats.follow %}
     <div class="card">
@@ -209,6 +297,28 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+async function syncNow(btn) {
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Syncing…';
+    try {
+        const res = await fetch('/api/actions/sync', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) {
+            btn.textContent = data.error || 'Sync failed';
+            setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2500);
+            return;
+        }
+        // The sync runs in the background; reload once it has had time to finish
+        btn.textContent = 'Syncing…';
+        setTimeout(() => window.location.reload(), 6000);
+    } catch (e) {
+        btn.textContent = 'Sync failed';
+        setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2500);
+    }
+}
+</script>
 <script>
 // Action functions
 async function startFollowPopular() {

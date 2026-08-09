@@ -288,6 +288,31 @@
             background: rgba(255,255,255,0.05);
         }
 
+        /* Empty-state notice: says why a page has no data, rather than
+           letting a wall of zeros imply the account is inactive. */
+        .notice-empty {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-left: 4px solid var(--accent-orange, #ff8000);
+            border-radius: 10px;
+            padding: 16px 20px;
+            margin: 0 0 26px;
+            line-height: 1.6;
+        }
+        .notice-empty strong { color: var(--text-bright); }
+        .notice-cmd {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 6px 12px;
+            background: var(--log-bg);
+            border-radius: 6px;
+            color: var(--accent);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.85rem;
+        }
+        .notice-warn { margin-top: 12px; font-size: 0.9rem; }
+        .notice-warn a { color: var(--accent); }
+
         footer {
             text-align: center;
             padding: 20px;
