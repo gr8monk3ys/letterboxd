@@ -3,7 +3,16 @@
 {% block title %}Growth Dashboard - Letterboxd Toolkit{% endblock %}
 
 {% block content %}
-<h1 style="color: var(--text-bright); margin-bottom: 20px;">Growth Dashboard</h1>
+<h1 style="color: var(--text-bright); margin-bottom: 8px;">Growth Dashboard</h1>
+
+{% if not summary or not summary.current or not summary.current.followers %}
+<div class="notice-empty">
+    <strong>No growth snapshots recorded.</strong>
+    This page reads follower snapshots taken over time; none have been taken on
+    this install, so the zeros mean "not measured", not "no followers".
+    <div class="notice-cmd">uv run python -m src.growth.tracker --snapshot</div>
+</div>
+{% endif %}
 
 {% if summary %}
 <div class="grid">
