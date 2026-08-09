@@ -7,13 +7,13 @@ from unittest.mock import MagicMock, patch
 class TestTonePresets:
     """Test the tone presets feature."""
 
-    def test_default_tone_is_casual(self, temp_dir, mock_anthropic_client, mock_env_vars):
+    def test_default_tone_is_casual(self, temp_dir, mock_provider, mock_env_vars):
         """Test that default tone is 'casual'."""
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
             MockDB.return_value = mock_db_instance
@@ -24,13 +24,13 @@ class TestTonePresets:
             assert generator.tone == "casual"
             generator.close()
 
-    def test_tone_can_be_set_via_parameter(self, temp_dir, mock_anthropic_client, mock_env_vars):
+    def test_tone_can_be_set_via_parameter(self, temp_dir, mock_provider, mock_env_vars):
         """Test that tone can be set via constructor parameter."""
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
             MockDB.return_value = mock_db_instance
@@ -41,15 +41,13 @@ class TestTonePresets:
             assert generator.tone == "snarky"
             generator.close()
 
-    def test_invalid_tone_falls_back_to_casual(
-        self, temp_dir, mock_anthropic_client, mock_env_vars
-    ):
+    def test_invalid_tone_falls_back_to_casual(self, temp_dir, mock_provider, mock_env_vars):
         """Test that invalid tone falls back to 'casual'."""
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
             MockDB.return_value = mock_db_instance
@@ -60,15 +58,13 @@ class TestTonePresets:
             assert generator.tone == "casual"
             generator.close()
 
-    def test_get_tone_preset_returns_correct_preset(
-        self, temp_dir, mock_anthropic_client, mock_env_vars
-    ):
+    def test_get_tone_preset_returns_correct_preset(self, temp_dir, mock_provider, mock_env_vars):
         """Test that get_tone_preset returns the correct preset."""
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
             MockDB.return_value = mock_db_instance
@@ -83,15 +79,13 @@ class TestTonePresets:
             assert "reflective" in preset["description"].lower()
             generator.close()
 
-    def test_generate_review_uses_tone_system_prompt(
-        self, temp_dir, mock_anthropic_client, mock_env_vars
-    ):
+    def test_generate_review_uses_tone_system_prompt(self, temp_dir, mock_provider, mock_env_vars):
         """Test that generate_review uses the tone's system prompt."""
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
             MockDB.return_value = mock_db_instance
@@ -102,7 +96,7 @@ class TestTonePresets:
             film = {"name": "Test Film", "year": 2024, "rating": 4.0}
             generator.generate_review(film)
 
-            call_args = mock_anthropic_client.messages.create.call_args
+            call_args = mock_provider.generate.call_args
             system_prompt = call_args.kwargs["system"]
             assert system_prompt == TONE_PRESETS["analytical"]["system"]
             generator.close()
@@ -123,14 +117,14 @@ class TestTonePresets:
 class TestReviewGenerator:
     """Test the ReviewGenerator class."""
 
-    def test_generate_review_returns_string(self, temp_dir, mock_anthropic_client, mock_env_vars):
+    def test_generate_review_returns_string(self, temp_dir, mock_provider, mock_env_vars):
         """Test that generate_review returns a string."""
         with (
             patch("src.data_processing.create_database.DATA_DIR", temp_dir),
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
 
             # Set up mock database
             mock_db_instance = MagicMock()
@@ -152,19 +146,17 @@ class TestReviewGenerator:
 
             assert isinstance(review, str)
             assert len(review) > 0
-            mock_anthropic_client.messages.create.assert_called_once()
+            mock_provider.generate.assert_called_once()
 
             generator.close()
 
-    def test_generate_review_uses_rating_context(
-        self, temp_dir, mock_anthropic_client, mock_env_vars
-    ):
+    def test_generate_review_uses_rating_context(self, temp_dir, mock_provider, mock_env_vars):
         """Test that generate_review uses rating for context."""
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
 
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
@@ -178,19 +170,19 @@ class TestReviewGenerator:
             high_rated_film = {"name": "Test", "year": 2024, "rating": 5.0}
             generator.generate_review(high_rated_film)
 
-            call_args = mock_anthropic_client.messages.create.call_args
-            prompt = call_args.kwargs["messages"][0]["content"]
+            call_args = mock_provider.generate.call_args
+            prompt = call_args.kwargs["prompt"]
             assert "loved" in prompt
 
             generator.close()
 
-    def test_build_style_prompt_with_reviews(self, temp_dir, mock_anthropic_client, mock_env_vars):
+    def test_build_style_prompt_with_reviews(self, temp_dir, mock_provider, mock_env_vars):
         """Test that style prompt is built from user reviews."""
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
 
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = [
@@ -214,15 +206,13 @@ class TestReviewGenerator:
 
             generator.close()
 
-    def test_build_style_prompt_empty_when_no_reviews(
-        self, temp_dir, mock_anthropic_client, mock_env_vars
-    ):
+    def test_build_style_prompt_empty_when_no_reviews(self, temp_dir, mock_provider, mock_env_vars):
         """Test that style prompt is empty when no reviews exist."""
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
 
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
@@ -237,14 +227,14 @@ class TestReviewGenerator:
 
             generator.close()
 
-    def test_generate_reviews_respects_limit(self, temp_dir, mock_anthropic_client, mock_env_vars):
+    def test_generate_reviews_respects_limit(self, temp_dir, mock_provider, mock_env_vars):
         """Test that generate_reviews respects the limit parameter."""
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
             patch("src.reviewing.write_review.time.sleep"),  # Skip delays
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
 
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
@@ -260,18 +250,18 @@ class TestReviewGenerator:
             generated = generator.generate_reviews(limit=2)
 
             assert generated == 2
-            assert mock_anthropic_client.messages.create.call_count == 2
+            assert mock_provider.generate.call_count == 2
 
             generator.close()
 
-    def test_export_reviews_csv(self, temp_dir, mock_anthropic_client, mock_env_vars):
+    def test_export_reviews_csv(self, temp_dir, mock_provider, mock_env_vars):
         """Test exporting reviews to CSV."""
         with (
             patch("src.reviewing.write_review.DATA_DIR", temp_dir),
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
 
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
@@ -291,14 +281,14 @@ class TestReviewGenerator:
 
             generator.close()
 
-    def test_export_reviews_json(self, temp_dir, mock_anthropic_client, mock_env_vars):
+    def test_export_reviews_json(self, temp_dir, mock_provider, mock_env_vars):
         """Test exporting reviews to JSON."""
         with (
             patch("src.reviewing.write_review.DATA_DIR", temp_dir),
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
 
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
@@ -324,15 +314,13 @@ class TestReviewGenerator:
 
             generator.close()
 
-    def test_export_reviews_empty_returns_none(
-        self, temp_dir, mock_anthropic_client, mock_env_vars
-    ):
+    def test_export_reviews_empty_returns_none(self, temp_dir, mock_provider, mock_env_vars):
         """Test that export_reviews returns None when no reviews exist."""
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
 
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
@@ -348,13 +336,13 @@ class TestReviewGenerator:
 
             generator.close()
 
-    def test_preview_review_finds_film(self, temp_dir, mock_anthropic_client, mock_env_vars):
+    def test_preview_review_finds_film(self, temp_dir, mock_provider, mock_env_vars):
         """Test that preview_review finds and generates review for a film."""
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
 
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
@@ -376,13 +364,13 @@ class TestReviewGenerator:
 
             generator.close()
 
-    def test_preview_review_film_not_found(self, temp_dir, mock_anthropic_client, mock_env_vars):
+    def test_preview_review_film_not_found(self, temp_dir, mock_provider, mock_env_vars):
         """Test that preview_review returns None when film not found."""
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
 
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
@@ -401,12 +389,12 @@ class TestReviewGenerator:
     def test_generate_review_handles_api_error(self, temp_dir, mock_env_vars):
         """Test that generate_review handles API errors gracefully."""
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
             mock_client = MagicMock()
-            mock_client.messages.create.side_effect = Exception("API Error")
-            mock_anthropic.return_value = mock_client
+            mock_client.generate.side_effect = Exception("API Error")
+            mock_get_provider.return_value = mock_client
 
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
@@ -423,13 +411,13 @@ class TestReviewGenerator:
 
             generator.close()
 
-    def test_rating_context_varies_by_rating(self, temp_dir, mock_anthropic_client, mock_env_vars):
+    def test_rating_context_varies_by_rating(self, temp_dir, mock_provider, mock_env_vars):
         """Test that different ratings produce different context."""
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_anthropic,
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
-            mock_anthropic.return_value = mock_anthropic_client
+            mock_get_provider.return_value = mock_provider
 
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
@@ -443,8 +431,8 @@ class TestReviewGenerator:
             low_rated_film = {"name": "Bad Movie", "year": 2024, "rating": 1.5}
             generator.generate_review(low_rated_film)
 
-            call_args = mock_anthropic_client.messages.create.call_args
-            prompt = call_args.kwargs["messages"][0]["content"]
+            call_args = mock_provider.generate.call_args
+            prompt = call_args.kwargs["prompt"]
             assert "didn't like" in prompt
 
             generator.close()

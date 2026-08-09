@@ -292,12 +292,15 @@
                     </select>
                 </div>
                 <button class="btn" id="btn-generate" onclick="startGenerateReviews()"
-                        {% if not setup_ok.ANTHROPIC_API_KEY %}disabled{% endif %}>
+                        {% if not setup_ok.AI_PROVIDER_KEY %}disabled{% endif %}>
                     <span class="status-indicator" id="generate_reviews-status"></span>
                     Generate
                 </button>
-                {% if not setup_ok.ANTHROPIC_API_KEY %}
-                <p class="qa-blocked">Needs ANTHROPIC_API_KEY in .env.</p>
+                {% if not setup_ok.AI_PROVIDER_KEY %}
+                <p class="qa-blocked">
+                    Needs one of ANTHROPIC_API_KEY, OPENAI_API_KEY or
+                    GEMINI_API_KEY in .env.
+                </p>
                 {% endif %}
             </div>
 

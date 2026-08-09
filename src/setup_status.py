@@ -45,6 +45,18 @@ def _is_set(env: Mapping[str, str], key: str) -> bool:
     return bool(env.get(key, "").strip())
 
 
+# Any one of these unlocks review generation.
+_PROVIDER_KEYS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY")
+
+
+def _provider_detail(env: Mapping[str, str]) -> str:
+    """Name the vendors that are actually usable right now."""
+    usable = [k.split("_")[0].title() for k in _PROVIDER_KEYS[:3] if _is_set(env, k)]
+    if not usable:
+        return "No provider key is set, so no review can be generated."
+    return f"Available: {', '.join(usable)}."
+
+
 def _is_analytics(name: str) -> bool:
     return name.startswith(_ANALYTICS_PREFIXES)
 
@@ -85,12 +97,18 @@ def describe_setup(
 
     return [
         Requirement(
-            key="ANTHROPIC_API_KEY",
-            label="Claude API key",
-            ok=_is_set(environ, "ANTHROPIC_API_KEY"),
+            key="AI_PROVIDER_KEY",
+            label="An AI provider key",
+            # Any one vendor will do, so demanding Anthropic specifically
+            # would overstate what is actually missing.
+            ok=any(_is_set(environ, key) for key in _PROVIDER_KEYS),
             required=True,
             enables="Generating draft reviews in your writing style",
-            how="Add ANTHROPIC_API_KEY to .env — console.anthropic.com/settings/keys",
+            how=(
+                "Add any one of ANTHROPIC_API_KEY, OPENAI_API_KEY or "
+                "GEMINI_API_KEY to .env, then pick it with --provider"
+            ),
+            detail=_provider_detail(environ),
         ),
         Requirement(
             key="LETTERBOXD_USERNAME",
