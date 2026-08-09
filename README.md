@@ -189,7 +189,6 @@ letterboxd/
 │   │   ├── auth.py                      # Shared login & navigation
 │   │   ├── errors.py                    # Error handling & suggestions
 │   │   ├── follow_actions.py            # Shared follow-button click
-│   │   ├── notifications.py             # Desktop notifications
 │   │   ├── retry.py                     # Retry logic for network failures
 │   │   └── tmdb.py                      # TMDB metadata client
 │   └── web/

@@ -132,7 +132,6 @@ src/
 │   ├── retry.py                       # Retry decorators for network failures
 │   ├── errors.py                      # User-friendly error handling
 │   ├── tmdb.py                        # TMDB API client for film metadata
-│   └── notifications.py               # Desktop notifications (built, not yet wired up)
 └── web/
     ├── app.py                         # FastAPI dashboard (binds 127.0.0.1 only)
     └── templates/                     # Jinja2 templates
