@@ -8,7 +8,7 @@ import sqlite3
 
 import pytest
 
-from src.action_board import REVIEW_SECTION_CAP, build_action_board
+from src.action_board import LOVED_SECTION_CAP, REVIEW_SECTION_CAP, build_action_board
 
 
 @pytest.fixture
@@ -94,6 +94,14 @@ def _section(board, key):
     return next(s for s in board.sections if s.key == key)
 
 
+REVIEW_SECTIONS = ("review_loved", "review_recent", "review")
+
+
+def _review_items(board):
+    """Review targets across every review section."""
+    return [i for s in board.sections if s.key in REVIEW_SECTIONS for i in s.items]
+
+
 class TestRatingSection:
     def test_lists_watched_films_with_no_rating(self, db):
         board = build_action_board(db)
@@ -109,34 +117,35 @@ class TestRatingSection:
 class TestReviewSection:
     def test_only_films_you_liked_are_review_targets(self, db):
         board = build_action_board(db)
-        titles = [i.title for i in _section(board, "review").items]
+        titles = [i.title for i in _review_items(board)]
         assert "Burning" in titles
         assert "Drive" in titles
         assert "Morbius" not in titles  # rated 2.0, below the bar
 
     def test_already_reviewed_films_are_excluded(self, db):
         board = build_action_board(db)
-        titles = [i.title for i in _section(board, "review").items]
+        titles = [i.title for i in _review_items(board)]
         assert "Parasite" not in titles
 
     def test_highest_rated_comes_first(self, db):
         board = build_action_board(db)
-        titles = [i.title for i in _section(board, "review").items]
+        titles = [i.title for i in _review_items(board)]
         assert titles.index("Burning") < titles.index("Drive")
 
     def test_existing_ai_draft_is_flagged(self, db):
         board = build_action_board(db)
-        items = {i.title: i for i in _section(board, "review").items}
+        items = {i.title: i for i in _review_items(board)}
         assert "draft ready" in items["Burning"].detail.lower()
         assert "draft ready" not in items["Drive"].detail.lower()
 
     def test_cap_is_reported_not_silent(self, db):
         """A truncated section must say so rather than look complete."""
         conn = sqlite3.connect(db)
+        # Rated 4.0, so these land in the wider-backlog section
         conn.executemany(
             "INSERT INTO films VALUES (?,?,?,?,?,?)",
             [
-                (f"/f/extra{n}/", f"Extra {n}", 2000, "2024-01-01", 4.5, 0)
+                (f"/f/extra{n}/", f"Extra {n}", 2000, "2020-01-01", 4.0, 0)
                 for n in range(REVIEW_SECTION_CAP + 10)
             ],
         )
@@ -148,6 +157,22 @@ class TestReviewSection:
         assert len(section.items) == REVIEW_SECTION_CAP
         assert str(REVIEW_SECTION_CAP) in section.note
         assert "of" in section.note
+
+    def test_loved_section_cap_is_reported(self, db):
+        conn = sqlite3.connect(db)
+        conn.executemany(
+            "INSERT INTO films VALUES (?,?,?,?,?,?)",
+            [
+                (f"/f/loved{n}/", f"Loved {n}", 2000, "2020-01-01", 4.5, 0)
+                for n in range(LOVED_SECTION_CAP + 5)
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        section = _section(build_action_board(db), "review_loved")
+        assert len(section.items) == LOVED_SECTION_CAP
+        assert str(LOVED_SECTION_CAP) in section.note
 
 
 class TestRatingsTableIsAuthoritative:
@@ -191,7 +216,7 @@ class TestRatingsTableIsAuthoritative:
         conn.close()
 
         board = build_action_board(path)
-        review_titles = [i.title for i in _section(board, "review").items]
+        review_titles = [i.title for i in _review_items(board)]
         rate_titles = [i.title for i in _section(board, "rate").items]
 
         assert "Sparse Film" in review_titles  # 5 stars: worth reviewing
@@ -202,7 +227,7 @@ class TestStableIds:
     """Ticks persist by id, so ids must not shift when data changes."""
 
     def test_id_survives_new_higher_priority_film(self, db):
-        before = {i.title: i.id for i in _section(build_action_board(db), "review").items}
+        before = {i.title: i.id for i in _review_items(build_action_board(db))}
 
         conn = sqlite3.connect(db)
         conn.execute(
@@ -212,7 +237,7 @@ class TestStableIds:
         conn.commit()
         conn.close()
 
-        after = {i.title: i.id for i in _section(build_action_board(db), "review").items}
+        after = {i.title: i.id for i in _review_items(build_action_board(db))}
         assert after["Burning"] == before["Burning"]
         assert after["Drive"] == before["Drive"]
 

@@ -12,20 +12,34 @@ from __future__ import annotations
 import hashlib
 import logging
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.config import DATA_DIR
+from src.freshness import ExportFreshness, describe_freshness
+from src.taste import TasteAnalysis, analyze_taste
 
 logger = logging.getLogger(__name__)
 
 # A review is worth writing when you liked the film. Below this, a review
-# is usually not what grows an account.
-REVIEW_RATING_FLOOR = 3.5
+# is rarely what anyone writes — reviewing clusters hard at the top of
+# the scale, so the board follows that rather than fighting it.
+REVIEW_RATING_FLOOR = 4.0
+
+# Films at or above this are "loved" and lead the board: a short list you
+# can actually finish, rather than a backlog that reads as a life sentence.
+LOVED_RATING_FLOOR = 4.5
+
+# A film watched within this window is still fresh enough to write about
+# from memory, which is what makes a review easy to start.
+RECENT_WINDOW_DAYS = 90
 
 # Sections are capped so the page stays usable; the cap is always
 # reported in the section note rather than silently truncating.
 REVIEW_SECTION_CAP = 50
+LOVED_SECTION_CAP = 30
+RECENT_SECTION_CAP = 15
 RATE_SECTION_CAP = 50
 WATCHLIST_SECTION_CAP = 20
 FAVORITES_SUGGESTION_COUNT = 4
@@ -82,6 +96,10 @@ class ActionBoard:
     sections: list[ActionSection] = field(default_factory=list)
     is_empty: bool = False
     total_items: int = 0
+    # How old the data underneath all of this is. Rendered as a banner,
+    # because stale input makes every item below quietly wrong.
+    freshness: ExportFreshness | None = None
+    taste: TasteAnalysis | None = None
 
 
 def _item_id(prefix: str, uri: str) -> str:
@@ -119,22 +137,25 @@ def build_action_board(db_path: Path | None = None) -> ActionBoard:
         returns one with is_empty set rather than raising.
     """
     path = Path(db_path) if db_path else (DATA_DIR / "movie_database.db")
+    freshness = describe_freshness(data_dir=path.parent)
     if not path.exists():
-        return ActionBoard(is_empty=True)
+        return ActionBoard(is_empty=True, freshness=freshness)
 
     # Read-only connection: the board must never modify the database.
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
-        return _build(conn)
+        board = _build(conn, freshness)
     except sqlite3.Error as e:
         logger.warning(f"Could not build action board from {path}: {e}")
-        return ActionBoard(is_empty=True)
+        return ActionBoard(is_empty=True, freshness=freshness)
     finally:
         conn.close()
 
+    return replace(board, freshness=freshness, taste=analyze_taste(path))
 
-def _build(conn: sqlite3.Connection) -> ActionBoard:
+
+def _build(conn: sqlite3.Connection, freshness: ExportFreshness | None = None) -> ActionBoard:
     films = [dict(r) for r in conn.execute("SELECT * FROM films")]
     if not films:
         return ActionBoard(is_empty=True)
@@ -192,43 +213,105 @@ def _build(conn: sqlite3.Connection) -> ActionBoard:
         )
     )
 
-    # --- Review: films you liked but never wrote about ---
-    targets = [
-        f
-        for f in films
-        if _rating_of(f) >= REVIEW_RATING_FLOOR and (f["name"], f.get("year")) not in reviewed_keys
-    ]
-    # Best films first; a like breaks ties toward the one you felt more about.
-    targets.sort(
-        key=lambda f: (
-            -_rating_of(f),
-            0 if f["letterboxd_uri"] in liked_uris else 1,
-            f["name"],
+    # --- Review targets, split so the achievable work leads ---
+    def _sort_key(film: dict):
+        # Best first; a like breaks ties toward the one you felt more about.
+        return (
+            -_rating_of(film),
+            0 if film["letterboxd_uri"] in liked_uris else 1,
+            film["name"],
         )
-    )
-    review_items = []
-    for f in targets[:REVIEW_SECTION_CAP]:
-        uri = f["letterboxd_uri"]
-        bits = [b for b in (_stars(_rating_of(f)), str(f["year"]) if f.get("year") else "") if b]
+
+    def _review_item(film: dict, prefix: str) -> ActionItem:
+        uri = film["letterboxd_uri"]
+        bits = [
+            b
+            for b in (_stars(_rating_of(film)), str(film["year"]) if film.get("year") else "")
+            if b
+        ]
         if uri in drafts and not drafts[uri]["posted_at"]:
             bits.append("AI draft ready to post")
-        review_items.append(
-            ActionItem(
-                id=_item_id("review", uri),
-                title=f["name"],
-                detail=" · ".join(bits),
-                url=_film_url(uri),
-            )
+        return ActionItem(
+            id=_item_id(prefix, uri),
+            title=film["name"],
+            detail=" · ".join(bits),
+            url=_film_url(uri),
         )
+
+    unreviewed = [f for f in films if (f["name"], f.get("year")) not in reviewed_keys]
+
+    # 1. Films you loved. Short and finishable — this is the list that
+    #    matches how reviewing actually happens.
+    loved = sorted((f for f in unreviewed if _rating_of(f) >= LOVED_RATING_FLOOR), key=_sort_key)
+    sections.append(
+        ActionSection(
+            key="review_loved",
+            title=f"Write about {len(loved)} films you loved",
+            blurb=(
+                "Start here. These are the films you rated highest and never wrote "
+                "about — the shortest path to a profile that reflects your taste."
+            ),
+            items=[_review_item(f, "loved") for f in loved[:LOVED_SECTION_CAP]],
+            note=_cap_note(len(loved), LOVED_SECTION_CAP),
+        )
+    )
+
+    # 2. Still fresh in memory. Recency is what makes a review easy to
+    #    start, independent of how highly you rated it.
+    cutoff = (datetime.now() - timedelta(days=RECENT_WINDOW_DAYS)).strftime("%Y-%m-%d")
+    loved_uris = {f["letterboxd_uri"] for f in loved}
+    recent = sorted(
+        (
+            f
+            for f in unreviewed
+            if f["letterboxd_uri"] not in loved_uris
+            and _rating_of(f) >= REVIEW_RATING_FLOOR
+            and (f.get("date_watched") or "") >= cutoff
+        ),
+        key=lambda f: f.get("date_watched") or "",
+        reverse=True,
+    )
+    recent_note = _cap_note(len(recent), RECENT_SECTION_CAP)
+    if not recent and freshness and freshness.days_old and freshness.days_old > RECENT_WINDOW_DAYS:
+        # Empty here means the export predates the window, not that the
+        # work is finished — say which, or this reads as "all done".
+        recent_note = (
+            f"Empty because your export is {freshness.days_old} days old, which is "
+            f"older than this {RECENT_WINDOW_DAYS}-day window. Re-export to populate it."
+        )
+
+    sections.append(
+        ActionSection(
+            key="review_recent",
+            title=f"Write about {len(recent)} you watched recently",
+            blurb=(
+                f"Watched in the last {RECENT_WINDOW_DAYS} days and still unreviewed. "
+                "You can still remember these, which is most of the work."
+            ),
+            items=[_review_item(f, "recent") for f in recent[:RECENT_SECTION_CAP]],
+            note=recent_note,
+        )
+    )
+
+    # 3. The wider backlog, for when the two lists above are done.
+    already_listed = loved_uris | {f["letterboxd_uri"] for f in recent}
+    targets = sorted(
+        (
+            f
+            for f in unreviewed
+            if f["letterboxd_uri"] not in already_listed and _rating_of(f) >= REVIEW_RATING_FLOOR
+        ),
+        key=_sort_key,
+    )
     sections.append(
         ActionSection(
             key="review",
-            title=f"Write {len(targets)} reviews",
+            title=f"The wider backlog: {len(targets)} more",
             blurb=(
-                "Reviews are what other people actually find and follow you for. "
-                "Highest-rated first — write about the films you have most to say about."
+                "Everything else you rated well and never reviewed. Worth having, "
+                "not worth clearing in one sitting."
             ),
-            items=review_items,
+            items=[_review_item(f, "review") for f in targets[:REVIEW_SECTION_CAP]],
             note=_cap_note(len(targets), REVIEW_SECTION_CAP),
         )
     )
@@ -321,12 +404,18 @@ def _build(conn: sqlite3.Connection) -> ActionBoard:
         )
     )
 
-    # Targets are what "done" would look like, not arbitrary goals:
-    # every watched film rated, and every film worth reviewing reviewed.
+    # Targets are what "done" would look like, not arbitrary goals.
+    # "Films you loved" is the headline because it is the number that
+    # actually moves; the Films page separately reports every unreviewed
+    # film, which is a larger and much less actionable count.
     ready_drafts = sum(1 for uri, row in drafts.items() if not row["posted_at"])
     scorecards = [
         Scorecard("Films rated", len(films) - len(unrated), len(films)),
-        Scorecard("Reviews written", len(reviewed_keys), len(reviewed_keys) + len(targets)),
+        Scorecard(
+            "Films you loved, reviewed",
+            len(reviewed_keys),
+            len(reviewed_keys) + len(loved),
+        ),
         Scorecard("Drafts ready to post", ready_drafts, max(ready_drafts, 1)),
         # The batch actually in front of you, not the whole watchlist —
         # a card that always reads 555 → 555 would teach nothing.
