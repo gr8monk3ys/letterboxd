@@ -21,9 +21,12 @@ def client(monkeypatch):
 
 class TestAnalyticsEmptyState:
     def test_explains_why_it_is_empty(self, client):
+        # "never used" was wrong: logs/follower.log shows dozens of runs and
+        # zero follows. The zeros mean the automation never worked, which is
+        # a different and more actionable statement.
         body = client.get("/analytics").text.lower()
         assert "no follow activity" in body
-        assert "never used" in body
+        assert "never worked" in body
 
     def test_warns_that_the_automation_violates_terms(self, client):
         assert "terms of service" in client.get("/analytics").text.lower()

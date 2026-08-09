@@ -126,11 +126,13 @@
 {% if not analytics or not analytics.growth or analytics.growth.total_follows == 0 %}
 <div class="notice-empty">
     <strong>No follow activity recorded.</strong>
-    These figures come from the follow/unfollow automation, which has not been run
-    on this install — so the zeros below mean "never used", not "no growth".
+    These figures come from the follow/unfollow automation. It has been run on this
+    install, but it has never once succeeded: logs/follower.log holds dozens of
+    attempts and zero follows, because Letterboxd's sign-in is reCAPTCHA-protected.
+    So the zeros mean "never worked", not "no growth".
     <div class="notice-cmd">uv run python -m src.following.follow_users --popular week</div>
     <p class="notice-warn">
-        Automated following is against Letterboxd's terms of service. The manual
+        Automated following is also against Letterboxd's terms of service. The manual
         <a href="/actions">action board</a> is the zero-risk alternative.
     </p>
 </div>
