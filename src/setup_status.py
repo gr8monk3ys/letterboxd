@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,7 +40,7 @@ class Requirement:
     detail: str = ""
 
 
-def _is_set(env: dict[str, str], key: str) -> bool:
+def _is_set(env: Mapping[str, str], key: str) -> bool:
     """A blank value in .env is 'set' to the shell and useless to the code."""
     return bool(env.get(key, "").strip())
 
@@ -69,11 +70,13 @@ def _describe_session(session_file: Path) -> tuple[bool, str]:
 
 
 def describe_setup(
-    env: dict[str, str] | None = None,
+    env: Mapping[str, str] | None = None,
     session_file: Path | None = None,
 ) -> list[Requirement]:
     """Report every configurable dependency and whether it is satisfied."""
-    env = os.environ if env is None else env  # type: ignore[assignment]
+    # A distinct name, not a reassignment of the optional parameter: the
+    # latter leaves `env` typed as `... | None` at every use site.
+    environ: Mapping[str, str] = os.environ if env is None else env
     if session_file is None:
         session_file = get_data_path("letterboxd_storage_state.json")
     session_file = Path(session_file)
@@ -84,7 +87,7 @@ def describe_setup(
         Requirement(
             key="ANTHROPIC_API_KEY",
             label="Claude API key",
-            ok=_is_set(env, "ANTHROPIC_API_KEY"),
+            ok=_is_set(environ, "ANTHROPIC_API_KEY"),
             required=True,
             enables="Generating draft reviews in your writing style",
             how="Add ANTHROPIC_API_KEY to .env — console.anthropic.com/settings/keys",
@@ -92,7 +95,7 @@ def describe_setup(
         Requirement(
             key="LETTERBOXD_USERNAME",
             label="Letterboxd username",
-            ok=_is_set(env, "LETTERBOXD_USERNAME"),
+            ok=_is_set(environ, "LETTERBOXD_USERNAME"),
             required=True,
             enables="Syncing recent watches from your public RSS feed",
             how="Add LETTERBOXD_USERNAME to .env",
@@ -116,7 +119,7 @@ def describe_setup(
         Requirement(
             key="TMDB_API_KEY",
             label="TMDB API key",
-            ok=_is_set(env, "TMDB_API_KEY"),
+            ok=_is_set(environ, "TMDB_API_KEY"),
             required=False,
             enables="Director, cast and genre context in generated reviews",
             how="Add TMDB_API_KEY to .env — themoviedb.org/settings/api",
