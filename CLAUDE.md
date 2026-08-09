@@ -56,6 +56,10 @@ uv run python -m src.following.unfollow_users --list-protected
 uv run python -m src.stats              # All stats
 uv run python -m src.stats --rate-limits # Rate limit status
 
+# Top up from the RSS feed (no API key, no login, no scraping)
+uv run python -m src.sync --dry-run   # preview recent watches
+uv run python -m src.sync             # merge them into the database
+
 # Database migrations
 uv run python -m src.data_processing.migrations           # Run pending migrations
 uv run python -m src.data_processing.migrations --status  # Check migration status
@@ -136,6 +140,16 @@ src/
     ├── app.py                         # FastAPI dashboard (binds 127.0.0.1 only)
     └── templates/                     # Jinja2 templates
 ```
+
+### Keeping data current
+
+The export is a snapshot and goes stale the moment you watch something.
+`src/sync.py` closes the gap from Letterboxd's **public RSS feed**
+(`letterboxd.com/<user>/rss/`) — no API key, no login, no page scraping.
+It carries roughly the 50 most recent diary entries with title, year,
+rating, like and rewatch. Idempotent, so it is safe to re-run or schedule.
+
+Full history still requires a real export; RSS only covers the recent tail.
 
 ### Film identity: the trap that has cost real time
 
