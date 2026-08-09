@@ -206,6 +206,19 @@ letterboxd/
 └── CLAUDE.md                          # AI assistant guidance
 ```
 
+## Keeping Data Current
+
+The Letterboxd export is a snapshot. To pull in what you've watched since:
+
+```bash
+uv run python -m src.sync --dry-run   # preview
+uv run python -m src.sync             # merge into the database
+```
+
+Uses Letterboxd's public RSS feed — no API key, no login, no scraping. It
+covers roughly the 50 most recent diary entries and is safe to re-run.
+For full history, re-export from https://letterboxd.com/settings/data/.
+
 ## Web Dashboard
 
 ```bash

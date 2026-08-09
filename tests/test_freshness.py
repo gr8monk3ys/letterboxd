@@ -91,6 +91,48 @@ class TestMessage:
         assert "no export" in message.lower()
 
 
+class TestSyncedDataCountsAsFresh:
+    """An RSS sync makes the data current even when the ZIP is old.
+
+    Measuring only the export would keep warning about staleness that has
+    already been fixed, which trains you to ignore the warning.
+    """
+
+    def test_recent_watch_overrides_an_old_export(self, tmp_path):
+        (tmp_path / "letterboxd-x-2026-03-02-00-00-utc.zip").touch()
+
+        freshness = describe_freshness(
+            data_dir=tmp_path,
+            today=date(2026, 8, 8),
+            latest_watch=date(2026, 8, 7),
+        )
+
+        assert freshness.days_old == 1
+        assert not freshness.is_stale
+
+    def test_export_is_used_when_it_is_the_newer_source(self, tmp_path):
+        (tmp_path / "letterboxd-x-2026-08-01-00-00-utc.zip").touch()
+
+        freshness = describe_freshness(
+            data_dir=tmp_path,
+            today=date(2026, 8, 8),
+            latest_watch=date(2020, 1, 1),
+        )
+
+        assert freshness.days_old == 7
+
+    def test_watch_date_alone_is_enough(self, tmp_path):
+        """No export ZIP, but synced data — that is not 'unknown'."""
+        freshness = describe_freshness(
+            data_dir=tmp_path,
+            today=date(2026, 8, 8),
+            latest_watch=date(2026, 8, 6),
+        )
+
+        assert not freshness.is_unknown
+        assert freshness.days_old == 2
+
+
 class TestDefaults:
     def test_today_defaults_to_the_real_date(self, tmp_path):
         """Callers should not have to pass a date."""

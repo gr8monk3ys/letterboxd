@@ -67,12 +67,17 @@ class ExportFreshness:
 def describe_freshness(
     data_dir: Path | None = None,
     today: date | None = None,
+    latest_watch: date | None = None,
 ) -> ExportFreshness:
-    """Report the age of the newest Letterboxd export.
+    """Report how current the local data is.
 
     Args:
         data_dir: Directory holding export ZIPs. Defaults to the data dir.
         today: Reference date, injectable for testing.
+        latest_watch: Newest watch date already in the database, which an
+            RSS sync can advance past the export. Whichever source is
+            newer wins, so a sync clears the staleness warning instead of
+            leaving it to cry wolf.
 
     Returns:
         An ExportFreshness. Never raises — an unreadable or absent export
@@ -95,6 +100,9 @@ def describe_freshness(
                 newest = found
     except OSError:
         return ExportFreshness(export_date=None, days_old=None)
+
+    if latest_watch and (newest is None or latest_watch > newest):
+        newest = latest_watch
 
     if newest is None:
         return ExportFreshness(export_date=None, days_old=None)

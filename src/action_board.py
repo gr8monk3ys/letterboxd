@@ -13,7 +13,7 @@ import hashlib
 import logging
 import sqlite3
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from src.config import DATA_DIR
@@ -126,6 +126,25 @@ def _stars(rating: float | None) -> str:
     return "★" * full + ("½" if rating - full >= 0.5 else "")
 
 
+def _latest_watch_date(path: Path) -> date | None:
+    """Newest diary entry, which an RSS sync can advance past the export."""
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            row = conn.execute("SELECT MAX(date_watched) FROM diary").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+
+    if not row or not row[0]:
+        return None
+    try:
+        return date.fromisoformat(str(row[0])[:10])
+    except ValueError:
+        return None
+
+
 def build_action_board(db_path: Path | None = None) -> ActionBoard:
     """Build the action board from the local database.
 
@@ -137,9 +156,10 @@ def build_action_board(db_path: Path | None = None) -> ActionBoard:
         returns one with is_empty set rather than raising.
     """
     path = Path(db_path) if db_path else (DATA_DIR / "movie_database.db")
-    freshness = describe_freshness(data_dir=path.parent)
     if not path.exists():
-        return ActionBoard(is_empty=True, freshness=freshness)
+        return ActionBoard(is_empty=True, freshness=describe_freshness(data_dir=path.parent))
+
+    freshness = describe_freshness(data_dir=path.parent, latest_watch=_latest_watch_date(path))
 
     # Read-only connection: the board must never modify the database.
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
