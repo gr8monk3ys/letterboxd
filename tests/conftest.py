@@ -8,7 +8,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from anthropic.types import TextBlock
 
 
 @pytest.fixture
@@ -84,11 +83,14 @@ def mock_env_vars(temp_dir):
 
 
 @pytest.fixture
-def mock_anthropic_client():
-    """Create a mock Anthropic client for testing."""
-    mock_client = MagicMock()
-    mock_response = MagicMock()
-    # Use a real TextBlock to pass isinstance checks in write_review.py
-    mock_response.content = [TextBlock(type="text", text="This is a great test review!")]
-    mock_client.messages.create.return_value = mock_response
-    return mock_client
+def mock_provider():
+    """A stand-in AI provider.
+
+    Review generation goes through the AIProvider protocol rather than one
+    vendor's SDK, so tests drive `generate(prompt, system, max_tokens)`
+    instead of anthropic's `messages.create`. Vendor-specific response
+    shapes are the provider's concern, and are tested there.
+    """
+    provider = MagicMock()
+    provider.generate.return_value = "This is a great test review!"
+    return provider

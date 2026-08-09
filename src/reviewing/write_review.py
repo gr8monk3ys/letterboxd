@@ -1,5 +1,6 @@
 """Generate AI-powered movie reviews that match your writing style."""
 
+import argparse
 import csv
 import json
 import logging
@@ -8,13 +9,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import anthropic
-from anthropic.types import TextBlock
 from tqdm import tqdm
 
 from src.config import DATA_DIR, get_config, get_log_path
 from src.data_processing.create_database import MovieDatabase
-from src.utils.errors import ErrorCategory, handle_exception, log_error_with_suggestions
+from src.providers import get_provider
+from src.providers.base import VALID_PROVIDERS
+from src.utils.errors import handle_exception
 from src.utils.tmdb import TMDBClient, format_film_context
 
 # Set up logging
@@ -95,9 +96,34 @@ VALID_TONES = list(TONE_PRESETS.keys())
 
 
 class ReviewGenerator:
-    def __init__(self, tone: str | None = None, use_tmdb: bool = True):
+    # Which env var holds the key for each vendor. The provider classes fall
+    # back to reading these themselves; this lets config supply one first.
+    _KEY_ENV = {
+        "anthropic": "anthropic_api_key",
+        "openai": "openai_api_key",
+        "gemini": "gemini_api_key",
+    }
+
+    def _api_key_for(self, provider_name: str) -> str:
+        """The configured key for a vendor, or "" to let the provider look."""
+        return str(getattr(self.config, self._KEY_ENV.get(provider_name, ""), "") or "")
+
+    def _log_provider(self) -> None:
+        logging.info(f"Generating with provider: {self.provider_name}")
+
+    def __init__(self, tone: str | None = None, use_tmdb: bool = True, provider: str | None = None):
         self.config = get_config()
-        self.client = anthropic.Anthropic(api_key=self.config.anthropic_api_key)
+
+        # A typo in AI_PROVIDER should not take a whole batch down, so fall
+        # back rather than raise. Same shape as the tone handling below.
+        self.provider_name = provider or getattr(self.config, "ai_provider", "") or "anthropic"
+        if self.provider_name not in VALID_PROVIDERS:
+            logging.warning(f"Unknown provider '{self.provider_name}', using 'anthropic'")
+            self.provider_name = "anthropic"
+        self.provider = get_provider(
+            self.provider_name, api_key=self._api_key_for(self.provider_name)
+        )
+
         self.db = MovieDatabase(db_path=self.config.database_file)
         self.db.connect()
         self._style_examples: list[dict] | None = None
@@ -107,6 +133,8 @@ class ReviewGenerator:
         if self.tone not in VALID_TONES:
             logging.warning(f"Invalid tone '{self.tone}', using 'casual'")
             self.tone = "casual"
+
+        self._log_provider()
 
         # Initialize TMDB client for richer film metadata
         self.use_tmdb = use_tmdb
@@ -189,28 +217,15 @@ Guidelines:
 
 Now write a review for "{title}" ({year}):"""
 
-            response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=300,
+            # Vendor-specific error handling lives in the provider, which
+            # logs and returns None rather than leaking one SDK's exception
+            # types into this module.
+            return self.provider.generate(
+                prompt=prompt,
                 system=tone_preset["system"],
-                messages=[
-                    {"role": "user", "content": prompt},
-                ],
+                max_tokens=300,
             )
 
-            block = response.content[0]
-            if isinstance(block, TextBlock):
-                text: str = block.text
-                return text.strip()
-            return None
-
-        except anthropic.APIError as e:
-            log_error_with_suggestions(
-                f"API error generating review for '{film.get('name')}'",
-                ErrorCategory.API,
-                e,
-            )
-            return None
         except Exception as e:
             handle_exception(e, f"Error generating review for '{film.get('name')}'")
             return None
@@ -339,9 +354,8 @@ Now write a review for "{title}" ({year}):"""
             self.tmdb.close()
 
 
-def main() -> None:
-    import argparse
-
+def build_arg_parser() -> "argparse.ArgumentParser":
+    """The CLI surface, separated from main() so it can be tested."""
     parser = argparse.ArgumentParser(description="Generate AI reviews matching your style")
     parser.add_argument(
         "-n",
@@ -375,6 +389,15 @@ def main() -> None:
         action="store_true",
         help="List available tone presets and exit",
     )
+    parser.add_argument(
+        "--provider",
+        choices=VALID_PROVIDERS,
+        help=(
+            "AI vendor to generate with "
+            f"(choices: {', '.join(VALID_PROVIDERS)}; default: anthropic, "
+            "or the AI_PROVIDER env var)"
+        ),
+    )
 
     # Batch filtering options
     filter_group = parser.add_argument_group("batch filtering")
@@ -395,6 +418,11 @@ def main() -> None:
         help="Only generate reviews for films rated at least this high (e.g., 4.0)",
     )
 
+    return parser
+
+
+def main() -> None:
+    parser = build_arg_parser()
     args = parser.parse_args()
 
     # Parse year range if provided

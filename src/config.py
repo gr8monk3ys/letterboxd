@@ -36,6 +36,15 @@ class Config:
 
     # API Keys
     anthropic_api_key: str = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
+    # Review generation is not locked to one vendor; whichever key you have
+    # is the one you can use.
+    openai_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
+    # GOOGLE_API_KEY is the name the google-genai SDK itself looks for, so
+    # accept either rather than making people set a second variable.
+    gemini_api_key: str = field(
+        default_factory=lambda: os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
+    )
+    ai_provider: str = field(default_factory=lambda: os.getenv("AI_PROVIDER", "anthropic"))
     tmdb_api_key: str = field(default_factory=lambda: os.getenv("TMDB_API_KEY", ""))
 
     # Following settings

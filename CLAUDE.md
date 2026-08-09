@@ -27,6 +27,7 @@ uv run python -m src.reviewing.write_review -n 10           # Generate 10 review
 uv run python -m src.reviewing.write_review --all           # All unreviewed films
 uv run python -m src.reviewing.write_review --preview "Film Name"  # Preview without saving
 uv run python -m src.reviewing.write_review --tone snarky -n 5     # Use specific tone
+uv run python -m src.reviewing.write_review --provider openai -n 5 # Use a different AI vendor
 uv run python -m src.reviewing.write_review --list-tones           # Show tone presets
 uv run python -m src.reviewing.write_review --export csv           # Export to CSV
 uv run python -m src.reviewing.write_review --year 2024 -n 10      # Filter by year
@@ -199,7 +200,10 @@ and matches films by name+year.
 Environment variables (`.env`):
 | Variable | Required For | Description |
 |----------|--------------|-------------|
-| `ANTHROPIC_API_KEY` | Reviews | Claude API key for generating reviews |
+| `ANTHROPIC_API_KEY` | Reviews | Claude API key. **Any one** of the three provider keys is enough |
+| `OPENAI_API_KEY` | Reviews (alt) | Needs `uv sync --extra openai` |
+| `GEMINI_API_KEY` | Reviews (alt) | Needs `uv sync --extra gemini`; `GOOGLE_API_KEY` also accepted |
+| `AI_PROVIDER` | Optional | `anthropic` (default), `openai`, or `gemini` |
 | `LETTERBOXD_USERNAME` | Following | Your Letterboxd username |
 | `LETTERBOXD_PASSWORD` | Following | Your Letterboxd password |
 | `TMDB_API_KEY` | Optional | TMDB API key for film metadata enrichment |

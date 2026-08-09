@@ -467,7 +467,7 @@ class TestReviewGenerationIntegration:
         yield db
         db.close()
 
-    def test_generate_review_with_style(self, temp_dir, mock_anthropic_client, mock_env_vars):
+    def test_generate_review_with_style(self, temp_dir, mock_provider, mock_env_vars):
         """Test that review generation uses existing reviews for style."""
         from src.data_processing.create_database import MovieDatabase
         from src.reviewing.write_review import ReviewGenerator
@@ -493,15 +493,27 @@ class TestReviewGenerationIntegration:
 
         # Mock the API and database
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_cls,
+            patch("src.reviewing.write_review.get_provider") as mock_cls,
             patch("src.reviewing.write_review.MovieDatabase") as mock_db_cls,
         ):
-            mock_cls.return_value = mock_anthropic_client
+            mock_cls.return_value = mock_provider
 
             # Set up mock database
             mock_db = MagicMock()
+            # Longer than 50 characters on purpose: _get_style_examples
+            # drops anything shorter, so the previous 13-character review
+            # was silently filtered out and no style ever reached the
+            # prompt this test claims to check.
             mock_db.get_user_reviews.return_value = [
-                {"name": "Matrix", "year": 1999, "rating": 5.0, "review": "Mind-bending!"}
+                {
+                    "name": "Matrix",
+                    "year": 1999,
+                    "rating": 5.0,
+                    "review": (
+                        "Mind-bending in the way only the best science fiction is, "
+                        "and it still looks extraordinary decades later."
+                    ),
+                }
             ]
             mock_db_cls.return_value = mock_db
 
@@ -512,21 +524,24 @@ class TestReviewGenerationIntegration:
             assert review is not None
             assert len(review) > 0
 
-            # Verify API was called
-            assert mock_anthropic_client.messages.create.called
-            call_args = mock_anthropic_client.messages.create.call_args
-            messages = call_args.kwargs.get("messages", [])
-            assert len(messages) > 0
+            # The provider was called, and the user's existing review was
+            # carried into the prompt as a style example — which is the
+            # whole point of "with_style". The old assertion only checked
+            # that an Anthropic-shaped `messages` list was non-empty.
+            assert mock_provider.generate.called
+            prompt = mock_provider.generate.call_args.kwargs["prompt"]
+            assert "Mind-bending" in prompt
+            assert "Inception" in prompt
 
-    def test_tone_preset_affects_prompt(self, mock_anthropic_client, mock_env_vars):
+    def test_tone_preset_affects_prompt(self, mock_provider, mock_env_vars):
         """Test that tone presets modify the generation prompt."""
         from src.reviewing.write_review import ReviewGenerator
 
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_cls,
+            patch("src.reviewing.write_review.get_provider") as mock_cls,
             patch("src.reviewing.write_review.MovieDatabase") as mock_db_cls,
         ):
-            mock_cls.return_value = mock_anthropic_client
+            mock_cls.return_value = mock_provider
 
             mock_db = MagicMock()
             mock_db.get_user_reviews.return_value = []
@@ -546,7 +561,7 @@ class TestReviewGenerationIntegration:
             generator.generate_review(film)
 
             # Verify API was called with snarky system prompt
-            call_args = mock_anthropic_client.messages.create.call_args
+            call_args = mock_provider.generate.call_args
             system = call_args.kwargs.get("system", "")
             assert "snarky" in system.lower() or "witty" in system.lower()
 
@@ -575,7 +590,7 @@ class TestReviewGenerationIntegration:
 
         # Export using ReviewGenerator with the real database
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_cls,
+            patch("src.reviewing.write_review.get_provider") as mock_cls,
             patch("src.reviewing.write_review.DATA_DIR", temp_dir),
         ):
             mock_cls.return_value = MagicMock()
@@ -610,7 +625,7 @@ class TestEndToEndFlow:
     """Test complete workflows from start to finish."""
 
     def test_import_to_review_generation_flow(
-        self, temp_dir, sample_letterboxd_zip, mock_anthropic_client, mock_env_vars
+        self, temp_dir, sample_letterboxd_zip, mock_provider, mock_env_vars
     ):
         """Test the complete flow from import to review generation."""
         from src.data_processing.create_database import MovieDatabase
@@ -638,10 +653,10 @@ class TestEndToEndFlow:
         # Step 5: Generate review for first film using ReviewGenerator
         film = films_needing_reviews[0]
         with (
-            patch("src.reviewing.write_review.anthropic.Anthropic") as mock_cls,
+            patch("src.reviewing.write_review.get_provider") as mock_cls,
             patch("src.reviewing.write_review.MovieDatabase") as mock_db_cls,
         ):
-            mock_cls.return_value = mock_anthropic_client
+            mock_cls.return_value = mock_provider
 
             # Mock database for ReviewGenerator
             mock_db = MagicMock()

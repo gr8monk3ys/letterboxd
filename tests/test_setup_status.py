@@ -22,28 +22,30 @@ def _by_key(reqs):
 
 
 class TestApiKeys:
-    def test_missing_anthropic_key_blocks_review_generation(self, tmp_path):
+    # Review generation accepts any one vendor, so the requirement is keyed
+    # on the capability (AI_PROVIDER_KEY) rather than on one vendor's name.
+    def test_no_provider_key_blocks_review_generation(self, tmp_path):
         reqs = _by_key(describe_setup(env={}, session_file=tmp_path / "none.json"))
-        assert reqs["ANTHROPIC_API_KEY"].ok is False
-        assert "review" in reqs["ANTHROPIC_API_KEY"].enables.lower()
+        assert reqs["AI_PROVIDER_KEY"].ok is False
+        assert "review" in reqs["AI_PROVIDER_KEY"].enables.lower()
 
     def test_present_key_is_satisfied(self, tmp_path):
         reqs = _by_key(
             describe_setup(env={"ANTHROPIC_API_KEY": "sk-ant-x"}, session_file=tmp_path / "n.json")
         )
-        assert reqs["ANTHROPIC_API_KEY"].ok is True
+        assert reqs["AI_PROVIDER_KEY"].ok is True
 
     def test_blank_key_counts_as_missing(self, tmp_path):
         """An empty value in .env is the common failure — it is 'set' but useless."""
         reqs = _by_key(
             describe_setup(env={"ANTHROPIC_API_KEY": "   "}, session_file=tmp_path / "n")
         )
-        assert reqs["ANTHROPIC_API_KEY"].ok is False
+        assert reqs["AI_PROVIDER_KEY"].ok is False
 
     def test_tmdb_key_is_optional_not_required(self, tmp_path):
         reqs = _by_key(describe_setup(env={}, session_file=tmp_path / "n.json"))
         assert reqs["TMDB_API_KEY"].required is False
-        assert reqs["ANTHROPIC_API_KEY"].required is True
+        assert reqs["AI_PROVIDER_KEY"].required is True
 
 
 class TestBrowserSession:
@@ -104,7 +106,7 @@ class TestSummary:
     def test_blocking_gaps_are_the_required_and_missing_ones(self, tmp_path):
         reqs = describe_setup(env={"TMDB_API_KEY": ""}, session_file=tmp_path / "n")
         blocking = [r for r in reqs if r.required and not r.ok]
-        assert any(r.key == "ANTHROPIC_API_KEY" for r in blocking)
+        assert any(r.key == "AI_PROVIDER_KEY" for r in blocking)
         assert all(r.key != "TMDB_API_KEY" for r in blocking)
 
 
