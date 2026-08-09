@@ -102,6 +102,45 @@
     .task a.filmlink { color: var(--accent); text-decoration: none; font-size: 0.85rem; }
     .task a.filmlink:hover { text-decoration: underline; }
 
+    .staleness {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-left: 4px solid var(--accent-orange, #ff8000);
+        border-radius: 10px;
+        padding: 14px 18px;
+        margin-bottom: 24px;
+    }
+    .staleness strong { color: var(--text-bright); }
+
+    .taste {
+        background: var(--card-bg);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 20px 24px;
+        margin-bottom: 20px;
+    }
+    .taste h2 { color: var(--text-bright); font-size: 1.25rem; margin-bottom: 6px; }
+    .taste .lede { margin-bottom: 16px; max-width: 70ch; }
+    .taste .highlight { color: var(--accent); font-weight: 600; }
+    .erarow {
+        display: grid;
+        grid-template-columns: 62px 1fr 108px;
+        align-items: center;
+        gap: 12px;
+        padding: 3px 0;
+    }
+    .erarow .eralabel { color: var(--text-color); font-size: 0.85rem; }
+    .erarow .eraval {
+        color: var(--text-bright);
+        font-size: 0.82rem;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+    .erabar { display: block; height: 8px; background: var(--border-color); border-radius: 999px; }
+    .erabar > span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+    .erarow.peak .erabar > span { background: var(--accent-orange, #ff8000); }
+    .erarow.peak .eralabel { color: var(--accent-orange, #ff8000); font-weight: 600; }
+
     .empty-state {
         background: var(--card-bg);
         border: 1px solid var(--border-color);
@@ -132,6 +171,12 @@
     {% endif %}
 </div>
 
+{% if board.freshness and (board.freshness.is_stale or board.freshness.is_unknown) %}
+<div class="staleness">
+    <strong>Working from old data.</strong> {{ board.freshness.message }}
+</div>
+{% endif %}
+
 {% if board.is_empty %}
 <div class="empty-state">
     <h2 style="color: var(--text-bright);">No film data yet</h2>
@@ -153,6 +198,35 @@
     {% endfor %}
 </div>
 
+{% if board.taste and board.taste.eras %}
+<div class="taste">
+    <h2>What you actually enjoy</h2>
+    {% if board.taste.underwatched %}
+    {% set u = board.taste.underwatched %}
+    <p class="lede">
+        You rate <span class="highlight">{{ u.label }} films</span> at
+        <span class="highlight">{{ u.pct_loved }}%</span> loved, against a
+        {{ u.baseline_pct_loved }}% baseline — about
+        <span class="highlight">{{ '%.1f'|format(u.times_better) }}×</span> better.
+        They are only {{ u.share_of_library }}% of your library
+        ({{ u.count }} films). Some of that is selection bias: you reach for
+        canonical older films and watch modern ones indiscriminately. Even so,
+        it is the clearest signal in your ratings.
+    </p>
+    {% else %}
+    <p class="lede">Your ratings are fairly even across eras.</p>
+    {% endif %}
+
+    {% for era in board.taste.eras %}
+    <div class="erarow {% if board.taste.underwatched and era.decade == board.taste.underwatched.decade %}peak{% endif %}">
+        <span class="eralabel">{{ era.label }}</span>
+        <span class="erabar"><span style="width: {{ era.pct_loved }}%"></span></span>
+        <span class="eraval">{{ era.pct_loved }}% of {{ era.count }}</span>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
 {% for section in board.sections %}
 <div class="section">
     <h2>{{ section.title }}</h2>
@@ -172,7 +246,8 @@
     </div>
     {% endfor %}
 
-    {% if not section.items %}
+    {# Only claim "done" when nothing else already explained the emptiness #}
+    {% if not section.items and not section.note %}
     <p style="padding: 10px 0;">Nothing to do here — this one is done.</p>
     {% endif %}
 </div>

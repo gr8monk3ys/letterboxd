@@ -53,6 +53,32 @@ class TestActionsPage:
         assert response.status_code == 200
         assert "import" in response.text.lower()
 
+    def test_empty_section_with_an_explanation_does_not_also_claim_done(self, client, monkeypatch):
+        board = ActionBoard(
+            sections=[
+                ActionSection(
+                    key="review_recent",
+                    title="Write about 0 you watched recently",
+                    blurb="b",
+                    items=[],
+                    note="Empty because your export is 159 days old.",
+                )
+            ],
+        )
+        monkeypatch.setattr("src.web.app.build_action_board", lambda: board)
+
+        text = client.get("/actions").text
+        assert "159 days old" in text
+        assert "this one is done" not in text
+
+    def test_empty_section_without_an_explanation_still_says_done(self, client, monkeypatch):
+        board = ActionBoard(
+            sections=[ActionSection(key="rate", title="Rate 0", blurb="b", items=[])]
+        )
+        monkeypatch.setattr("src.web.app.build_action_board", lambda: board)
+
+        assert "this one is done" in client.get("/actions").text
+
     def test_nav_links_to_actions(self, client, monkeypatch):
         monkeypatch.setattr("src.web.app.build_action_board", lambda: ActionBoard(is_empty=True))
         response = client.get("/actions")
