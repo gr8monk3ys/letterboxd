@@ -117,10 +117,16 @@ class ReviewPoster:
 
     def get_pending_reviews(self) -> list[dict]:
         """Get AI reviews that haven't been posted yet."""
+        # films.rating is NULL for every row in a real export; the score lives
+        # in the ratings table. Reading films.rating alone shows every film as
+        # unrated in the confirmation prompt.
         self.db.cursor.execute("""
-            SELECT ar.letterboxd_uri, ar.name, ar.year, ar.ai_review, f.rating
+            SELECT ar.letterboxd_uri, ar.name, ar.year, ar.ai_review,
+                   COALESCE(rt.rating, f.rating) AS rating
             FROM ai_reviews ar
             LEFT JOIN films f ON ar.letterboxd_uri = f.letterboxd_uri
+            LEFT JOIN ratings rt ON ar.letterboxd_uri = rt.letterboxd_uri
+            WHERE ar.posted_at IS NULL
             ORDER BY ar.generated_at DESC
         """)
         columns = ["letterboxd_uri", "name", "year", "review", "rating"]
@@ -307,6 +313,7 @@ class ReviewPoster:
                         success, review_url = self.post_review(page, film)
                         if success:
                             self.posted_count += 1
+                            self.db.mark_ai_review_posted(film["letterboxd_uri"], review_url)
                             # Track the posted review for metrics
                             self.metrics_db.save_posted_review(
                                 letterboxd_uri=film["letterboxd_uri"],

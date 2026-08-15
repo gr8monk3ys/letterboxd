@@ -6,6 +6,59 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+def _create_schema(cursor):
+    """Build the subset of the real schema these tests exercise.
+
+    Mirrors src/data_processing/create_database.py plus the posted-tracking
+    columns added by migration 6.
+    """
+    cursor.execute("""
+        CREATE TABLE films (
+            letterboxd_uri TEXT PRIMARY KEY,
+            name TEXT,
+            year INTEGER,
+            rating REAL
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE ai_reviews (
+            letterboxd_uri TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            year INTEGER,
+            ai_review TEXT,
+            generated_at TEXT,
+            posted_at TEXT,
+            posted_url TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE ratings (
+            letterboxd_uri TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            year INTEGER,
+            rating REAL,
+            date_rated TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE posted_reviews (
+            id INTEGER PRIMARY KEY,
+            letterboxd_uri TEXT,
+            film_name TEXT,
+            film_year INTEGER,
+            review_text TEXT,
+            tone_preset TEXT,
+            letterboxd_review_url TEXT,
+            posted_at TEXT,
+            likes_count INTEGER DEFAULT 0,
+            comments_count INTEGER DEFAULT 0,
+            last_engagement_check TEXT
+        )
+    """)
+    cursor.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+    cursor.execute("INSERT INTO schema_version VALUES (1)")
+
+
 class TestReviewPoster:
     """Test the ReviewPoster class."""
 
@@ -19,42 +72,7 @@ class TestReviewPoster:
         cursor = conn.cursor()
 
         # Create required tables
-        cursor.execute("""
-            CREATE TABLE films (
-                letterboxd_uri TEXT PRIMARY KEY,
-                name TEXT,
-                year INTEGER,
-                rating REAL
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE ai_reviews (
-                letterboxd_uri TEXT PRIMARY KEY,
-                name TEXT,
-                year INTEGER,
-                ai_review TEXT,
-                generated_at TEXT
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE posted_reviews (
-                id INTEGER PRIMARY KEY,
-                letterboxd_uri TEXT,
-                film_name TEXT,
-                film_year INTEGER,
-                review_text TEXT,
-                tone_preset TEXT,
-                letterboxd_review_url TEXT,
-                posted_at TEXT,
-                likes_count INTEGER DEFAULT 0,
-                comments_count INTEGER DEFAULT 0,
-                last_engagement_check TEXT
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE schema_version (version INTEGER PRIMARY KEY)
-        """)
-        cursor.execute("INSERT INTO schema_version VALUES (1)")
+        _create_schema(cursor)
 
         # Insert test data
         cursor.execute(
@@ -62,7 +80,9 @@ class TestReviewPoster:
             ("https://letterboxd.com/film/test-film/", "Test Film", 2024, 4.0),
         )
         cursor.execute(
-            "INSERT INTO ai_reviews VALUES (?, ?, ?, ?, ?)",
+            """INSERT INTO ai_reviews
+               (letterboxd_uri, name, year, ai_review, generated_at)
+               VALUES (?, ?, ?, ?, ?)""",
             (
                 "https://letterboxd.com/film/test-film/",
                 "Test Film",
@@ -112,6 +132,26 @@ class TestReviewPoster:
         assert reviews[0]["name"] == "Test Film"
         assert reviews[0]["year"] == 2024
         assert reviews[0]["review"] == "This is a great test review!"
+
+    def test_get_pending_reviews_excludes_posted(self, poster):
+        """A review that has been posted is never offered again."""
+        poster.db.mark_ai_review_posted(
+            "https://letterboxd.com/film/test-film/",
+            "https://letterboxd.com/testuser/film/test-film/review/",
+        )
+
+        assert poster.get_pending_reviews() == []
+
+    def test_get_pending_reviews_rating_comes_from_ratings_table(self, poster):
+        """films.rating is NULL in a real export; the score lives in ratings."""
+        poster.db.cursor.execute("UPDATE films SET rating = NULL")
+        poster.db.cursor.execute(
+            "INSERT INTO ratings (letterboxd_uri, name, year, rating) VALUES (?, ?, ?, ?)",
+            ("https://letterboxd.com/film/test-film/", "Test Film", 2024, 4.5),
+        )
+        poster.db.conn.commit()
+
+        assert poster.get_pending_reviews()[0]["rating"] == 4.5
 
     def test_get_pending_reviews_empty(self, poster):
         """Test getting pending reviews when none exist."""
@@ -170,42 +210,7 @@ class TestReviewPosterPostReview:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
-            CREATE TABLE films (
-                letterboxd_uri TEXT PRIMARY KEY,
-                name TEXT,
-                year INTEGER,
-                rating REAL
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE ai_reviews (
-                letterboxd_uri TEXT PRIMARY KEY,
-                name TEXT,
-                year INTEGER,
-                ai_review TEXT,
-                generated_at TEXT
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE posted_reviews (
-                id INTEGER PRIMARY KEY,
-                letterboxd_uri TEXT,
-                film_name TEXT,
-                film_year INTEGER,
-                review_text TEXT,
-                tone_preset TEXT,
-                letterboxd_review_url TEXT,
-                posted_at TEXT,
-                likes_count INTEGER DEFAULT 0,
-                comments_count INTEGER DEFAULT 0,
-                last_engagement_check TEXT
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE schema_version (version INTEGER PRIMARY KEY)
-        """)
-        cursor.execute("INSERT INTO schema_version VALUES (1)")
+        _create_schema(cursor)
         conn.commit()
         conn.close()
 
@@ -301,44 +306,11 @@ class TestMain:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
-            CREATE TABLE films (
-                letterboxd_uri TEXT PRIMARY KEY,
-                name TEXT,
-                year INTEGER,
-                rating REAL
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE ai_reviews (
-                letterboxd_uri TEXT PRIMARY KEY,
-                name TEXT,
-                year INTEGER,
-                ai_review TEXT,
-                generated_at TEXT
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE posted_reviews (
-                id INTEGER PRIMARY KEY,
-                letterboxd_uri TEXT,
-                film_name TEXT,
-                film_year INTEGER,
-                review_text TEXT,
-                tone_preset TEXT,
-                letterboxd_review_url TEXT,
-                posted_at TEXT,
-                likes_count INTEGER DEFAULT 0,
-                comments_count INTEGER DEFAULT 0,
-                last_engagement_check TEXT
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE schema_version (version INTEGER PRIMARY KEY)
-        """)
-        cursor.execute("INSERT INTO schema_version VALUES (1)")
+        _create_schema(cursor)
         cursor.execute(
-            "INSERT INTO ai_reviews VALUES (?, ?, ?, ?, ?)",
+            """INSERT INTO ai_reviews
+               (letterboxd_uri, name, year, ai_review, generated_at)
+               VALUES (?, ?, ?, ?, ?)""",
             (
                 "https://letterboxd.com/film/test/",
                 "Test Film",
