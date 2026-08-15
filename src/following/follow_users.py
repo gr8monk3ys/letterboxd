@@ -14,7 +14,7 @@ from playwright.sync_api import Page, sync_playwright
 
 from src.config import DATA_DIR, get_config, get_log_path
 from src.rate_limiter import RateLimiter
-from src.utils.auth import login_and_navigate
+from src.utils.auth import login_and_navigate, open_browser
 from src.utils.errors import format_rate_limit_message, handle_exception
 
 # Set up logging
@@ -467,15 +467,17 @@ Examples:
 
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=follower.config.headless)
-            page = browser.new_page()
+            context, page = open_browser(playwright, follower.config)
 
-            if follower.login(page):
-                follower.follow_users(page)
-            else:
-                logging.error("Failed to start following process due to login failure")
-
-            browser.close()
+            # Must close on every path: an abandoned persistent profile keeps
+            # Chromium's SingletonLock and the next run cannot launch.
+            try:
+                if follower.login(page):
+                    follower.follow_users(page)
+                else:
+                    logging.error("Failed to start following process due to login failure")
+            finally:
+                context.close()
 
     except KeyboardInterrupt:
         logging.info("Process interrupted by user")

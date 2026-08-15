@@ -10,7 +10,7 @@ from playwright.sync_api import Page, sync_playwright
 from src.config import get_config, get_log_path
 from src.data_processing.create_database import MovieDatabase
 from src.review_metrics import ReviewMetricsDB
-from src.utils.auth import goto_with_retry, login
+from src.utils.auth import goto_with_retry, login, open_browser
 from src.utils.errors import handle_exception
 
 
@@ -289,8 +289,7 @@ class ReviewPoster:
             return 0
 
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=self.config.headless)
-            page = browser.new_page()
+            context, page = open_browser(playwright, self.config)
 
             try:
                 if not self.do_login(page):
@@ -326,7 +325,7 @@ class ReviewPoster:
             except Exception as e:
                 handle_exception(e, "Unexpected error during review posting")
             finally:
-                browser.close()
+                context.close()
 
         return self.posted_count
 

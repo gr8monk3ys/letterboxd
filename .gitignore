@@ -46,6 +46,8 @@ data/*.zip
 data/*.csv
 data/*.json
 data/protected_users.txt
+# Browser profile: holds live Letterboxd session and Cloudflare cookies
+data/letterboxd_cdp_profile/
 
 # macOS
 .DS_Store

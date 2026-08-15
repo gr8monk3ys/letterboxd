@@ -19,7 +19,7 @@ from playwright.sync_api import sync_playwright
 from src.config import DATA_DIR, get_config, get_log_path
 from src.rate_limiter import RateLimiter
 from src.scraper import LetterboxdScraper
-from src.utils.auth import goto_with_retry, login
+from src.utils.auth import goto_with_retry, login, open_browser
 from src.utils.follow_actions import FOLLOW_BUTTON_SELECTOR, click_follow, human_delay
 
 # Set up logging
@@ -279,8 +279,7 @@ class SmartFollower:
         skipped = 0
 
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=self.config.headless)
-            page = browser.new_page()
+            context, page = open_browser(playwright, self.config)
 
             try:
                 if not login(page, self.config):
@@ -331,7 +330,7 @@ class SmartFollower:
 
             finally:
                 self.conn.commit()
-                browser.close()
+                context.close()
 
         return {"followed": followed, "skipped": skipped, "error": None}
 

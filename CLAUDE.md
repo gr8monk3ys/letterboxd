@@ -207,7 +207,8 @@ Environment variables (`.env`):
 | `LETTERBOXD_USERNAME` | Following | Your Letterboxd username |
 | `LETTERBOXD_PASSWORD` | Following | Your Letterboxd password |
 | `TMDB_API_KEY` | Optional | TMDB API key for film metadata enrichment |
-| `HEADLESS` | Optional | Set to `true` for headless browser mode |
+| `HEADLESS` | Optional | Leave `false`. Cloudflare 403s headless Chromium — see below |
+| `BROWSER_PROFILE_DIR` | Optional | Persistent browser profile (default `data/letterboxd_cdp_profile`) |
 | `REVIEW_TONE` | Optional | Default tone preset |
 | `PAGE_LOAD_TIMEOUT` | Optional | Page load timeout in ms (default: 30000) |
 | `ELEMENT_TIMEOUT` | Optional | Element timeout in ms (default: 10000) |
@@ -218,6 +219,33 @@ Environment variables (`.env`):
 - `data/` - Letterboxd export ZIP, SQLite database, CSV logs
 - `data/protected_users.txt` - Usernames to never unfollow (one per line)
 - `logs/` - Per-module log files (follower.log, unfollower.log, review_generation.log)
+
+### Cloudflare: the trap that blocks every browser path
+
+Letterboxd sits behind Cloudflare, and **headless Chromium is refused outright** —
+`letterboxd.com/sign-in/` returns 403 with the title `Just a moment...`, so
+`input[name="username"]` never appears. Measured 2026-08-15: headless 403,
+headed 200. `HEADLESS=true` therefore breaks *every* module that signs in
+(`follow_users`, `unfollow_users`, `post_review`, `create_list`,
+`growth/smart_follow`) plus `review_metrics` engagement scraping.
+
+Headed is necessary but **not sufficient**: once Cloudflare flags the client,
+headed automation is challenged too, and a stored `cf_clearance` cookie does
+not buy its way past. The only reliable path is a human completing the sign-in
+once. `login()` does this automatically — on failure, with a visible browser
+and a TTY, it prompts and polls for the session cookie. All browser entry
+points go through `open_browser()`, which uses `launch_persistent_context` so
+that session survives into later runs.
+
+Consequences worth remembering:
+- **Never `chromium.launch()` directly** — an ephemeral context throws away the
+  session and draws a fresh challenge every run. Use `open_browser()`.
+- **Always close the context in a `finally`.** An abandoned persistent profile
+  keeps Chromium's `SingletonLock` and the *next* run cannot launch at all.
+- **A challenge is not transient** — `perform_login` raises `BotChallengeError`,
+  which is deliberately outside the retry tuple. Retrying it only turned a 13s
+  failure into a 45s one reported as "Letterboxd might be slow".
+- `data/letterboxd_cdp_profile/` holds live session cookies and is gitignored.
 
 ### Playwright Selectors
 - Login button: `button[type="submit"].standalone-flow-button`

@@ -587,55 +587,55 @@ class EngagementScraper:
         try:
             from playwright.sync_api import sync_playwright
 
+            from src.utils.auth import open_browser
+
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                page = browser.new_page()
-
-                page.goto(review_url, timeout=30000)
-                page.wait_for_timeout(2000)
-
-                # Scrape likes count
-                likes_count = 0
-                likes_element = page.locator(
-                    ".like-link-target .count, .likes-count, "
-                    "[data-likes-count], .activity-summary .likes"
-                ).first
-
-                if likes_element.count() > 0:
-                    likes_text = likes_element.text_content() or "0"
-                    # Extract number from text like "12 likes" or "12"
-                    match = re.search(r"(\d+)", likes_text.replace(",", ""))
-                    if match:
-                        likes_count = int(match.group(1))
-
-                # Scrape comments count
-                comments_count = 0
-                comments_element = page.locator(
-                    ".comment-count, .comments-count, "
-                    "[data-comments-count], .activity-summary .comments"
-                ).first
-
-                if comments_element.count() > 0:
-                    comments_text = comments_element.text_content() or "0"
-                    match = re.search(r"(\d+)", comments_text.replace(",", ""))
-                    if match:
-                        comments_count = int(match.group(1))
-
-                # Alternative: count actual comment elements
-                if comments_count == 0:
-                    comment_items = page.locator(".comment, .review-comment")
-                    comments_count = comment_items.count()
-
-                browser.close()
-
-                return {
-                    "likes_count": likes_count,
-                    "comments_count": comments_count,
-                }
+                # Shares the persistent profile so this reuses the Cloudflare
+                # clearance instead of drawing a fresh challenge per review.
+                context, page = open_browser(p, self.config)
+                try:
+                    return self._read_engagement(page, review_url)
+                finally:
+                    context.close()
 
         except Exception as e:
             logger.error(f"Error scraping engagement from {review_url}: {e}")
             return None
+
+    @staticmethod
+    def _count_from(page, selector: str) -> int:
+        """Read the first number out of the first element matching selector.
+
+        Handles both bare counts and text like "12 likes"; a missing element
+        reads as zero.
+        """
+        element = page.locator(selector).first
+        if element.count() == 0:
+            return 0
+        match = re.search(r"(\d+)", (element.text_content() or "0").replace(",", ""))
+        return int(match.group(1)) if match else 0
+
+    def _read_engagement(self, page, review_url: str) -> dict:
+        """Read the like and comment counts off an open review page."""
+        page.goto(review_url, timeout=30000)
+        page.wait_for_timeout(2000)
+
+        comments_count = self._count_from(
+            page,
+            ".comment-count, .comments-count, [data-comments-count], .activity-summary .comments",
+        )
+        if comments_count == 0:
+            # No summary element: fall back to counting the comments themselves.
+            comments_count = page.locator(".comment, .review-comment").count()
+
+        return {
+            "likes_count": self._count_from(
+                page,
+                ".like-link-target .count, .likes-count, "
+                "[data-likes-count], .activity-summary .likes",
+            ),
+            "comments_count": comments_count,
+        }
 
     def update_all_engagement(self, db: ReviewMetricsDB) -> dict:
         """Update engagement for all reviews that need checking.
