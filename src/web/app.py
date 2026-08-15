@@ -274,6 +274,41 @@ async def actions_page(request: Request):
     )
 
 
+@app.get("/drafts", response_class=HTMLResponse)
+async def drafts_page(request: Request):
+    """Review drafts, editable before you post them by hand."""
+    db = MovieDatabase()
+    db.connect()
+    try:
+        drafts = db.get_ai_review_drafts()
+    finally:
+        db.close()
+
+    return templates.TemplateResponse(request, "drafts.html", {"drafts": drafts})
+
+
+@app.post("/api/reviews/ai/update")
+async def api_update_ai_review(payload: dict):
+    """Save an edited draft."""
+    uri = (payload.get("letterboxd_uri") or "").strip()
+    review = payload.get("review")
+
+    if not uri or review is None:
+        return JSONResponse({"error": "letterboxd_uri and review are required"}, status_code=400)
+    if not review.strip():
+        return JSONResponse({"error": "Review cannot be empty"}, status_code=400)
+
+    db = MovieDatabase()
+    db.connect()
+    try:
+        if not db.update_ai_review(uri, review):
+            return JSONResponse({"error": "No draft found for that film"}, status_code=404)
+    finally:
+        db.close()
+
+    return JSONResponse({"message": "Draft saved", "letterboxd_uri": uri})
+
+
 @app.get("/films", response_class=HTMLResponse)
 async def films_page(request: Request):
     """Films management page."""

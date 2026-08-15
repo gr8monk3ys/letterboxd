@@ -555,3 +555,90 @@ class TestRunCommandInBackground:
 
         # Task should be reset even on failure
         assert app_module.running_tasks["test"] is False
+
+
+class TestDraftsPage:
+    """Test the editable review drafts page and its save endpoint."""
+
+    @pytest.fixture
+    def client(self, monkeypatch, tmp_path):
+        db_path = tmp_path / "movie_database.db"
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+        cursor.execute("INSERT INTO schema_version VALUES (1)")
+        cursor.execute(
+            """CREATE TABLE films (letterboxd_uri TEXT PRIMARY KEY, name TEXT,
+            year INTEGER, date_watched TEXT, rating REAL, rewatch BOOLEAN)"""
+        )
+        cursor.execute(
+            """CREATE TABLE ratings (letterboxd_uri TEXT PRIMARY KEY, name TEXT,
+            year INTEGER, rating REAL, date_rated TEXT)"""
+        )
+        cursor.execute(
+            """CREATE TABLE ai_reviews (letterboxd_uri TEXT PRIMARY KEY, name TEXT,
+            year INTEGER, ai_review TEXT, generated_at TEXT, posted_at TEXT, posted_url TEXT)"""
+        )
+        # films.rating NULL, score in ratings — the real-export shape
+        cursor.execute("INSERT INTO films VALUES ('uri1', 'Taste of Cherry', 1997, NULL, NULL, 0)")
+        cursor.execute("INSERT INTO ratings VALUES ('uri1', 'Taste of Cherry', 1997, 5.0, NULL)")
+        cursor.execute(
+            """INSERT INTO ai_reviews
+               (letterboxd_uri, name, year, ai_review, generated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("uri1", "Taste of Cherry", 1997, "Original text", "2026-01-01"),
+        )
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setattr("src.data_processing.create_database.DATA_DIR", tmp_path)
+        monkeypatch.setattr("src.web.app.LOGS_DIR", tmp_path)
+        monkeypatch.setattr("src.web.app.get_config", lambda: MagicMock())
+
+        from src.web.app import app
+
+        return TestClient(app)
+
+    def test_page_renders_draft_in_an_editable_field(self, client):
+        response = client.get("/drafts")
+        assert response.status_code == 200
+        assert "Taste of Cherry" in response.text
+        assert "Original text" in response.text
+        assert "<textarea" in response.text
+
+    def test_page_shows_rating_from_ratings_table(self, client):
+        """films.rating is NULL in a real export; the score lives in ratings."""
+        assert "5.0" in client.get("/drafts").text
+
+    def test_save_persists_the_edit(self, client):
+        response = client.post(
+            "/api/reviews/ai/update",
+            json={"letterboxd_uri": "uri1", "review": "My edited take."},
+        )
+        assert response.status_code == 200
+
+        # The edit survives a reload, i.e. it actually hit the database
+        assert "My edited take." in client.get("/drafts").text
+
+    def test_save_rejects_empty_review(self, client):
+        response = client.post(
+            "/api/reviews/ai/update", json={"letterboxd_uri": "uri1", "review": "   "}
+        )
+        assert response.status_code == 400
+        assert "Original text" in client.get("/drafts").text
+
+    def test_save_unknown_film_is_404(self, client):
+        response = client.post(
+            "/api/reviews/ai/update", json={"letterboxd_uri": "nope", "review": "text"}
+        )
+        assert response.status_code == 404
+
+    def test_empty_state_names_the_command(self, client, monkeypatch, tmp_path):
+        conn = sqlite3.connect(tmp_path / "movie_database.db")
+        conn.execute("DELETE FROM ai_reviews")
+        conn.commit()
+        conn.close()
+
+        body = client.get("/drafts").text
+        assert "No drafts yet" in body
+        assert "write_review" in body
