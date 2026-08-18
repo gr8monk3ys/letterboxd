@@ -10,137 +10,11 @@ Letterboxd automation toolkit for:
 - **User management** - Follow users and unfollow non-followers with browser automation
 - **Web dashboard** - Simple FastAPI dashboard for stats and logs
 
-## Build/Run Commands
-
-```bash
-# Install dependencies (uv creates venv automatically)
-uv sync
-
-# Install browser for automation
-uv run playwright install chromium
-
-# Import Letterboxd data (requires ZIP export in data/)
-uv run python -m src.data_processing.create_database
-
-# Generate AI reviews
-uv run python -m src.reviewing.write_review -n 10           # Generate 10 reviews
-uv run python -m src.reviewing.write_review --all           # All unreviewed films
-uv run python -m src.reviewing.write_review --preview "Film Name"  # Preview without saving
-uv run python -m src.reviewing.write_review --tone snarky -n 5     # Use specific tone
-uv run python -m src.reviewing.write_review --provider openai -n 5 # Use a different AI vendor
-uv run python -m src.reviewing.write_review --list-tones           # Show tone presets
-uv run python -m src.reviewing.write_review --export csv           # Export to CSV
-uv run python -m src.reviewing.write_review --year 2024 -n 10      # Filter by year
-uv run python -m src.reviewing.write_review --year-range 2020-2024 # Year range
-uv run python -m src.reviewing.write_review --min-rating 4.0       # Min rating filter
-
-# Post reviews to Letterboxd (interactive, confirms each)
-uv run python -m src.reviewing.post_review --dry-run   # Preview what would be posted
-uv run python -m src.reviewing.post_review -n 5        # Post up to 5 reviews
-
-# Follow users from various sources
-uv run python -m src.following.follow_users --fans-of "Parasite"     # Fans of a film
-uv run python -m src.following.follow_users --followers-of username  # Someone's followers
-uv run python -m src.following.follow_users --popular week           # Popular members
-uv run python -m src.following.follow_users --url "/film/x/fans/"    # Custom URL
-uv run python -m src.following.follow_users -n 20 --pages 5          # Limit follows/pages
-
-# Unfollow non-followers
-uv run python -m src.following.unfollow_users --dry-run  # Preview who would be unfollowed
-uv run python -m src.following.unfollow_users -n 10      # Unfollow 10 non-followers
-
-# Protected users (never unfollowed)
-uv run python -m src.following.unfollow_users --protect username
-uv run python -m src.following.unfollow_users --list-protected
-
-# Statistics dashboard
-uv run python -m src.stats              # All stats
-uv run python -m src.stats --rate-limits # Rate limit status
-
-# Top up from the RSS feed (no API key, no login, no scraping)
-uv run python -m src.sync --dry-run   # preview recent watches
-uv run python -m src.sync             # merge them into the database
-
-# Database migrations
-uv run python -m src.data_processing.migrations           # Run pending migrations
-uv run python -m src.data_processing.migrations --status  # Check migration status
-
-# Web UI dashboard (FastAPI) - binds 127.0.0.1 only, no auth
-uv run python -m src.web.app  # Opens at http://localhost:8000
-# Pages: / (stats), /actions (manual action board), /growth, /films,
-#        /analytics, /metrics, /logs
-
-# Linting and formatting
-uv run ruff check src/ tests/           # Check for issues
-uv run ruff check --fix src/ tests/     # Auto-fix issues
-uv run ruff format src/ tests/          # Format code
-
-# Database backup / restore
-uv run python -m src.data_processing.backup --help
-
-# Testing (397 tests)
-uv run pytest                           # Run all tests
-uv run pytest -v                        # Verbose output
-uv run pytest tests/test_config.py      # Single test file
-uv run pytest tests/test_config.py::TestConfig::test_default_values  # Single test
-uv run pytest -k "test_login"           # Tests matching pattern
-uv run pytest --cov=src                 # Run with coverage
-uv run pytest --cov=src --cov-report=html  # Generate HTML coverage report
-```
+Exact commands for every workflow (import, reviews, following, sync,
+migrations, backups, dashboard, lint, tests) live in the
+`letterboxd-commands` skill at `.claude/skills/letterboxd-commands/SKILL.md`.
 
 ## Architecture
-
-### Data Flow
-1. User exports data from https://letterboxd.com/settings/data/
-2. `import_letterboxd_export.py` parses the ZIP file (watched.csv, reviews.csv, etc.)
-3. `create_database.py` stores data in SQLite with transaction support
-4. `write_review.py` uses few-shot learning from user's existing reviews
-5. TMDB client optionally enriches reviews with director/cast/genre context
-6. Generated reviews stored in `ai_reviews` table
-
-### Module Structure
-```
-src/
-├── action_board.py                    # Manual action board (pure, read-only)
-├── config.py                          # Centralized config (paths, env vars, settings)
-├── stats.py                           # Statistics dashboard
-├── rate_limiter.py                    # Rate limiting with WAL mode for concurrency
-├── analytics.py                       # Usage analytics (web-only consumer)
-├── completions.py                     # Shell completion support (not yet wired up)
-├── review_metrics.py                  # Review quality metrics + tone A/B tests
-├── scraper.py                         # Web scraping (letterboxdpy + httpx/bs4)
-├── data_processing/
-│   ├── import_letterboxd_export.py    # Parse Letterboxd ZIP export
-│   ├── create_database.py             # SQLite database with batch inserts
-│   ├── migrations.py                  # Database version migrations
-│   └── backup.py                      # Database backup utilities
-├── following/
-│   ├── follow_users.py                # Browser automation for following
-│   └── unfollow_users.py              # Unfollow non-followers (with protected users)
-├── growth/                            # Growth tooling (all web-dashboard backed)
-│   ├── tracker.py                     # Daily follower snapshots
-│   ├── trending.py                    # Trending films → review targeting
-│   ├── smart_follow.py                # Similar-taste follow queue
-│   ├── campaigns.py                   # Grouped growth campaigns
-│   ├── attribution.py                 # Review → follower attribution
-│   ├── optimizer.py                   # Posting-time optimization
-│   └── dashboard.py                   # Growth summary aggregation
-├── lists/
-│   ├── generate_lists.py              # Build list definitions from ratings + TMDB
-│   └── create_list.py                 # Post lists to Letterboxd (no rate limiting yet)
-├── reviewing/
-│   ├── write_review.py                # Style-matched AI review generation (tone presets)
-│   └── post_review.py                 # Post reviews to Letterboxd
-├── utils/
-│   ├── auth.py                        # Shared login/navigation logic
-│   ├── follow_actions.py              # Shared follow-button click + human delay
-│   ├── retry.py                       # Retry decorators for network failures
-│   ├── errors.py                      # User-friendly error handling
-│   ├── tmdb.py                        # TMDB API client for film metadata
-└── web/
-    ├── app.py                         # FastAPI dashboard (binds 127.0.0.1 only)
-    └── templates/                     # Jinja2 templates
-```
 
 ### Keeping data current
 
@@ -166,6 +40,12 @@ live in the `ratings` table. Reading `films.rating` alone yields zero rated
 films. And `reviews` has **no film URI at all** — it keys on `review_uri`
 and matches films by name+year.
 
+Per-table keys, recorded nowhere else: `films`, `ratings`, `watchlist`,
+`liked_films` and `ai_reviews` key on `letterboxd_uri`; `reviews` keys on
+`review_uri`; `diary` and the tables added by migrations (snapshots,
+attribution, trending, campaigns) use auto-increment ids. `rate_limits` and
+`schema_version` are infrastructure for the limiter and migrations.
+
 ### Key Design Decisions
 - **Official export for your own data** - the export is the source of truth for
   your films/ratings/reviews. Scraping (`scraper.py`, all of `growth/`) is used
@@ -182,19 +62,6 @@ and matches films by name+year.
 - **Database transactions** - Batch inserts with rollback on error
 - **TMDB integration** - Optional enrichment with director/cast/genre (degrades gracefully)
 - **CLI-first design** - All features accessible via command line with `--help`
-
-### Database Tables
-| Table | Primary Key | Description |
-|-------|-------------|-------------|
-| `films` | letterboxd_uri | Watched films with ratings |
-| `reviews` | review_uri | User's existing reviews (matched by name+year) |
-| `ai_reviews` | letterboxd_uri | Generated AI reviews |
-| `ratings` | letterboxd_uri | User ratings |
-| `watchlist` | letterboxd_uri | Watchlist items |
-| `diary` | id (auto) | Viewing diary entries |
-| `liked_films` | letterboxd_uri | Liked films |
-| `rate_limits` | id (auto) | Follow/unfollow action timestamps |
-| `schema_version` | version | Migration tracking |
 
 ### Configuration
 Environment variables (`.env`):
