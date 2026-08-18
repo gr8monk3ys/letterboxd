@@ -425,17 +425,39 @@ class MovieDatabase:
         self.conn.commit()
 
     def get_ai_review_drafts(self) -> list[dict]:
-        """Get AI reviews that have not been posted yet, newest first."""
+        """Get AI reviews that have not been posted yet, newest first.
+
+        The single definition of "pending draft", shared by the dashboard's
+        /drafts page and the posting CLI.
+        """
         # films.rating is NULL for every row in a real export; the score lives
         # in the ratings table, so ratings is authoritative and films.rating is
         # only a fallback.
-        self.cursor.execute("""
+        # posted_reviews is the durable record of past posts: it predates the
+        # posted_at column and survives re-imports, so it also excludes
+        # reviews posted before posted_at existed. It is created lazily by
+        # ReviewMetricsDB, so a database it has never touched may lack it -
+        # and on such a database nothing was ever posted through the tool,
+        # making the posted_at filter alone complete.
+        self.cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'posted_reviews'"
+        )
+        posted_filter = (
+            """AND NOT EXISTS (
+                   SELECT 1 FROM posted_reviews pr
+                   WHERE pr.letterboxd_uri = ar.letterboxd_uri
+               )"""
+            if self.cursor.fetchone()
+            else ""
+        )
+        self.cursor.execute(f"""
             SELECT ar.letterboxd_uri, ar.name, ar.year, ar.ai_review,
                    COALESCE(rt.rating, f.rating) AS rating
             FROM ai_reviews ar
             LEFT JOIN films f ON ar.letterboxd_uri = f.letterboxd_uri
             LEFT JOIN ratings rt ON ar.letterboxd_uri = rt.letterboxd_uri
             WHERE ar.posted_at IS NULL
+              {posted_filter}
             ORDER BY ar.generated_at DESC
         """)
         columns = ["letterboxd_uri", "name", "year", "review", "rating"]
@@ -444,11 +466,14 @@ class MovieDatabase:
     def update_ai_review(self, letterboxd_uri: str, review: str) -> bool:
         """Edit the text of an existing AI review draft.
 
-        Returns False if no draft exists for that film, so a caller editing a
-        stale page gets a 404 rather than a silent no-op.
+        Returns False if no unposted draft exists for that film, so a caller
+        editing a stale page gets a 404 rather than a silent no-op. The
+        posted_at guard lives here, in the layer every caller goes through:
+        editing a posted review would silently diverge the local copy from
+        what is live on Letterboxd.
         """
         self.cursor.execute(
-            "UPDATE ai_reviews SET ai_review = ? WHERE letterboxd_uri = ?",
+            "UPDATE ai_reviews SET ai_review = ? WHERE letterboxd_uri = ? AND posted_at IS NULL",
             (review, letterboxd_uri),
         )
         self.conn.commit()
