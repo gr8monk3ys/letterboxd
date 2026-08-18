@@ -120,6 +120,10 @@ class ReviewPoster:
         # films.rating is NULL for every row in a real export; the score lives
         # in the ratings table. Reading films.rating alone shows every film as
         # unrated in the confirmation prompt.
+        # posted_reviews is the durable record of past posts: it predates the
+        # posted_at column and survives re-imports, so it also excludes
+        # reviews posted before posted_at existed. It is guaranteed to exist
+        # here because __init__ connects ReviewMetricsDB, which creates it.
         self.db.cursor.execute("""
             SELECT ar.letterboxd_uri, ar.name, ar.year, ar.ai_review,
                    COALESCE(rt.rating, f.rating) AS rating
@@ -127,6 +131,10 @@ class ReviewPoster:
             LEFT JOIN films f ON ar.letterboxd_uri = f.letterboxd_uri
             LEFT JOIN ratings rt ON ar.letterboxd_uri = rt.letterboxd_uri
             WHERE ar.posted_at IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM posted_reviews pr
+                  WHERE pr.letterboxd_uri = ar.letterboxd_uri
+              )
             ORDER BY ar.generated_at DESC
         """)
         columns = ["letterboxd_uri", "name", "year", "review", "rating"]
@@ -280,7 +288,7 @@ class ReviewPoster:
             print("  uv run python -m src.reviewing.write_review -n 10")
             return 0
 
-        if limit:
+        if limit is not None:
             reviews = reviews[:limit]
 
         if dry_run:
@@ -313,16 +321,32 @@ class ReviewPoster:
                         success, review_url = self.post_review(page, film)
                         if success:
                             self.posted_count += 1
-                            self.db.mark_ai_review_posted(film["letterboxd_uri"], review_url)
-                            # Track the posted review for metrics
-                            self.metrics_db.save_posted_review(
-                                letterboxd_uri=film["letterboxd_uri"],
-                                film_name=film["name"],
-                                film_year=film["year"],
-                                review_text=film["review"],
-                                tone_preset=self.tone,
-                                letterboxd_review_url=review_url,
-                            )
+                            # The review is already live on Letterboxd, so a
+                            # bookkeeping failure (e.g. database locked by the
+                            # dashboard) must neither abort the remaining
+                            # posts nor take the other record down with it.
+                            try:
+                                self.db.mark_ai_review_posted(film["letterboxd_uri"], review_url)
+                            except Exception as e:
+                                logging.error(
+                                    f"Posted {film['name']} but could not mark it "
+                                    f"posted; it will be offered again: {e}"
+                                )
+                            try:
+                                # Track the posted review for metrics
+                                self.metrics_db.save_posted_review(
+                                    letterboxd_uri=film["letterboxd_uri"],
+                                    film_name=film["name"],
+                                    film_year=film["year"],
+                                    review_text=film["review"],
+                                    tone_preset=self.tone,
+                                    letterboxd_review_url=review_url,
+                                )
+                            except Exception as e:
+                                logging.error(
+                                    f"Posted {film['name']} but could not record "
+                                    f"metrics for it: {e}"
+                                )
                         # Delay between posts
                         time.sleep(2)
 

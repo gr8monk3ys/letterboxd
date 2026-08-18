@@ -295,9 +295,16 @@ Now write a review for "{title}" ({year}):"""
 
     def preview_review(self, film_name: str) -> str | None:
         """Generate a preview review for a specific film (doesn't save)."""
-        # Find the film
+        # Find the film. films.rating is NULL in a real export; the score
+        # lives in the ratings table, and the preview's sentiment follows it.
         self.db.cursor.execute(
-            "SELECT letterboxd_uri, name, year, rating FROM films WHERE name LIKE ?",
+            """
+            SELECT f.letterboxd_uri, f.name, f.year,
+                   COALESCE(rt.rating, f.rating) AS rating
+            FROM films f
+            LEFT JOIN ratings rt ON f.letterboxd_uri = rt.letterboxd_uri
+            WHERE f.name LIKE ?
+            """,
             (f"%{film_name}%",),
         )
         row = self.db.cursor.fetchone()
