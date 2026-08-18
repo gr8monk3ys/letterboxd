@@ -7,6 +7,7 @@ Supports importing from:
 
 import logging
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 from src.config import DATA_DIR, get_log_path
@@ -135,14 +136,19 @@ class MovieDatabase:
                 )
             """)
 
-            # AI-generated reviews table (uses film URI as PK)
+            # AI-generated reviews table (uses film URI as PK). posted_at and
+            # posted_url must live in the base schema, not only in migration 6:
+            # main() recreates this table from here, and schema_version still
+            # records migration 6 as applied, so the migration never re-runs.
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS ai_reviews (
                     letterboxd_uri TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     year INTEGER,
                     ai_review TEXT,
-                    generated_at TEXT
+                    generated_at TEXT,
+                    posted_at TEXT,
+                    posted_url TEXT
                 )
             """)
 
@@ -392,15 +398,29 @@ class MovieDatabase:
 
     def save_ai_review(self, letterboxd_uri: str, name: str, year: int, review: str) -> None:
         """Save an AI-generated review to the database."""
-        from datetime import datetime
-
+        # Upsert rather than INSERT OR REPLACE: REPLACE deletes the row first,
+        # which would drop posted_at/posted_url and let a posted review be
+        # offered for posting a second time.
         self.cursor.execute(
             """
-            INSERT OR REPLACE INTO ai_reviews
+            INSERT INTO ai_reviews
             (letterboxd_uri, name, year, ai_review, generated_at)
             VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(letterboxd_uri) DO UPDATE SET
+                name = excluded.name,
+                year = excluded.year,
+                ai_review = excluded.ai_review,
+                generated_at = excluded.generated_at
             """,
             (letterboxd_uri, name, year, review, datetime.now().isoformat()),
+        )
+        self.conn.commit()
+
+    def mark_ai_review_posted(self, letterboxd_uri: str, review_url: str | None) -> None:
+        """Record that an AI review was posted so it is not offered again."""
+        self.cursor.execute(
+            "UPDATE ai_reviews SET posted_at = ?, posted_url = ? WHERE letterboxd_uri = ?",
+            (datetime.now().isoformat(), review_url, letterboxd_uri),
         )
         self.conn.commit()
 
@@ -469,14 +489,16 @@ def main():
         db = MovieDatabase()
         db.connect()
 
-        # Drop old tables to recreate with new schema
+        # Drop only export-derived tables: the import replaces their contents
+        # wholesale. ai_reviews is generated locally, not derivable from the
+        # export - dropping it would destroy every generated review and its
+        # posted_at bookkeeping on each re-import.
         db.cursor.execute("DROP TABLE IF EXISTS films")
         db.cursor.execute("DROP TABLE IF EXISTS ratings")
         db.cursor.execute("DROP TABLE IF EXISTS reviews")
         db.cursor.execute("DROP TABLE IF EXISTS watchlist")
         db.cursor.execute("DROP TABLE IF EXISTS diary")
         db.cursor.execute("DROP TABLE IF EXISTS liked_films")
-        db.cursor.execute("DROP TABLE IF EXISTS ai_reviews")
         db.conn.commit()
 
         db.create_tables()

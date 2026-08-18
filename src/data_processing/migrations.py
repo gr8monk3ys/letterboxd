@@ -371,7 +371,15 @@ class MigrationManager:
             cursor.execute("BEGIN IMMEDIATE")
 
             for statement in statements:
-                cursor.execute(statement)
+                try:
+                    cursor.execute(statement)
+                except sqlite3.OperationalError as e:
+                    # ALTER TABLE ADD COLUMN has no IF NOT EXISTS form. A
+                    # column already present (the base schema now carries
+                    # migration 6's columns) means the statement's goal is
+                    # already met, not that the migration failed.
+                    if "duplicate column name" not in str(e):
+                        raise
 
             # Record the migration in the same transaction
             from datetime import UTC, datetime
