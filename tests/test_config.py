@@ -33,6 +33,20 @@ class TestConfig:
             assert config.max_delay == 5.0
             assert config.max_follows_per_session == 100
 
+    def test_relative_browser_profile_dir_anchors_to_project_root(self):
+        """A LaunchAgent run (cwd /) must find the same profile as a shell run,
+        or every scheduled run draws a fresh Cloudflare challenge."""
+        from src.config import PROJECT_ROOT, Config
+
+        with patch.dict(os.environ, {"BROWSER_PROFILE_DIR": "data/letterboxd_cdp_profile"}):
+            assert Config().browser_profile_dir == PROJECT_ROOT / "data/letterboxd_cdp_profile"
+
+    def test_absolute_browser_profile_dir_passes_through(self):
+        from src.config import Config
+
+        with patch.dict(os.environ, {"BROWSER_PROFILE_DIR": "/tmp/some_profile"}):
+            assert Config().browser_profile_dir == Path("/tmp/some_profile")
+
     def test_get_config_returns_config_instance(self, mock_env_vars):
         """Test that get_config returns a Config instance."""
         from src.config import Config, get_config

@@ -94,9 +94,11 @@ def log_error_with_suggestions(
         exception: Optional exception that caused the error
         show_traceback: Whether to include full traceback in logs
     """
-    full_message = message
-    if exception:
-        full_message = f"{message}: {exception}"
+    error_str = str(exception) if exception else ""
+    # When the message is the exception, repeating it as "Details" is noise.
+    detail = error_str if exception and error_str != message else ""
+
+    full_message = f"{message}: {exception}" if detail else message
 
     # Log the error
     if show_traceback and exception:
@@ -106,20 +108,27 @@ def log_error_with_suggestions(
 
     # Print user-friendly message with suggestions
     print(f"\nError: {message}")
-    if exception:
-        # Show a simplified error message for common exceptions
-        error_str = str(exception)
-        if len(error_str) > 100:
-            error_str = error_str[:100] + "..."
-        print(f"  Details: {error_str}")
+    if detail:
+        print(f"  Details: {detail[:100] + '...' if len(detail) > 100 else detail}")
 
-    suggestions = get_suggestions(category)
-    if suggestions:
-        print(suggestions)
+    # An exception carrying its own suggestions knows more than its category
+    # does: category advice has to fit every error filed under it.
+    specific = getattr(exception, "suggestions", None)
+    if specific:
+        print("\n".join(["", "Suggestions:", *(f"  - {s}" for s in specific)]))
+    else:
+        suggestions = get_suggestions(category)
+        if suggestions:
+            print(suggestions)
 
 
 def format_login_error(exception: Exception) -> str:
     """Format a login error with helpful context."""
+    # The challenge message already names the cause and the fix; the generic
+    # branches below would relabel it as a timeout and hide both.
+    if isinstance(exception, BotChallengeError):
+        return str(exception)
+
     error_str = str(exception).lower()
 
     if "timeout" in error_str:
@@ -186,6 +195,33 @@ class AuthenticationError(LetterboxdError):
 
     def __init__(self, message: str = "Authentication failed"):
         super().__init__(message, ErrorCategory.AUTH)
+
+
+class BotChallengeError(AuthenticationError):
+    """Raised when Cloudflare serves an interstitial instead of the page.
+
+    Distinct from AuthenticationError because the credentials are irrelevant:
+    the browser never reached a login form. Retrying does not help, so this is
+    deliberately outside the exception tuple that perform_login retries on.
+    """
+
+    def __init__(
+        self,
+        message: str = (
+            "Cloudflare served a bot challenge instead of the page. Headless "
+            "Chromium is blocked outright, and headed automation is challenged "
+            "once flagged. Set HEADLESS=false and sign in by hand in the browser "
+            "window - the session is saved to the profile and reused after that."
+        ),
+    ):
+        super().__init__(message)
+        # Credentials are not the problem here, so the generic AUTH advice
+        # would send you to check the one thing that is already fine.
+        self.suggestions = [
+            "Set HEADLESS=false in .env so the browser window is visible",
+            "Sign in by hand in that window; the session is saved and reused",
+            "If it keeps challenging, wait a few minutes before retrying",
+        ]
 
 
 class RateLimitError(LetterboxdError):

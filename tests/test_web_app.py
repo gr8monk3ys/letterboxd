@@ -284,6 +284,11 @@ class TestActionEndpoints:
             "generate_reviews": False,
         }
 
+        # TestClient runs BackgroundTasks synchronously, so without this mock
+        # the action endpoints would spawn the real follow/unfollow/review
+        # subprocesses against the live Letterboxd session.
+        monkeypatch.setattr(app_module.subprocess, "run", MagicMock())
+
         from src.web.app import app
 
         return TestClient(app)

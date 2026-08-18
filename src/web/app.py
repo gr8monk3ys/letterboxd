@@ -386,7 +386,12 @@ def release_task(task_id: str) -> None:
 def run_command_in_background(task_id: str, command: list[str]):
     """Run an already-claimed task, releasing its slot when finished."""
     try:
-        subprocess.run(command, check=True, capture_output=True, text=True)
+        # stdin must not inherit the server's terminal: with a TTY the child's
+        # login fallback opens a browser and blocks minutes on a prompt whose
+        # output lands in a captured pipe nobody reads.
+        subprocess.run(
+            command, check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL
+        )
     except subprocess.CalledProcessError as e:
         logger.error(f"Task {task_id} failed: {e.stderr}")
     except Exception as e:

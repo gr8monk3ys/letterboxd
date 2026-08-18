@@ -2,6 +2,7 @@
 
 from src.utils.errors import (
     AuthenticationError,
+    BotChallengeError,
     ConfigurationError,
     DatabaseError,
     ErrorCategory,
@@ -11,6 +12,7 @@ from src.utils.errors import (
     format_navigation_error,
     format_rate_limit_message,
     get_suggestions,
+    log_error_with_suggestions,
 )
 
 
@@ -150,3 +152,34 @@ class TestCustomExceptions:
         """Test DatabaseError."""
         error = DatabaseError()
         assert error.category == ErrorCategory.DATABASE
+
+
+class TestBotChallengeReporting:
+    """A challenge must not be reported as a credentials problem."""
+
+    def test_carries_its_own_suggestions(self):
+        assert any("HEADLESS=false" in s for s in BotChallengeError().suggestions)
+
+    def test_does_not_advise_checking_the_password(self):
+        advice = " ".join(BotChallengeError().suggestions).lower()
+        assert "password" not in advice
+
+    def test_specific_suggestions_win_over_category_advice(self, capsys):
+        log_error_with_suggestions("boom", ErrorCategory.AUTH, BotChallengeError())
+        out = capsys.readouterr().out
+        assert "HEADLESS=false" in out
+        assert "LETTERBOXD_PASSWORD" not in out
+
+    def test_plain_exception_still_gets_category_advice(self, capsys):
+        log_error_with_suggestions("boom", ErrorCategory.AUTH, ValueError("nope"))
+        out = capsys.readouterr().out
+        assert "LETTERBOXD_PASSWORD" in out
+
+    def test_details_omitted_when_it_repeats_the_message(self, capsys):
+        error = BotChallengeError()
+        log_error_with_suggestions(str(error), ErrorCategory.AUTH, error)
+        assert "Details:" not in capsys.readouterr().out
+
+    def test_details_kept_when_it_adds_information(self, capsys):
+        log_error_with_suggestions("Login failed", ErrorCategory.AUTH, ValueError("timeout"))
+        assert "Details: timeout" in capsys.readouterr().out

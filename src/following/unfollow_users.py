@@ -11,7 +11,7 @@ from playwright.sync_api import Page, sync_playwright
 
 from src.config import DATA_DIR, get_config, get_log_path
 from src.rate_limiter import RateLimiter
-from src.utils.auth import login
+from src.utils.auth import login, open_browser
 from src.utils.errors import handle_exception
 
 # Set up logging
@@ -268,8 +268,7 @@ class LetterboxdUnfollower:
     def run(self, limit: int | None = None, dry_run: bool = False) -> None:
         """Run the full unfollow process."""
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=self.config.headless)
-            page = browser.new_page()
+            context, page = open_browser(playwright, self.config)
 
             try:
                 if not self.do_login(page):
@@ -310,7 +309,7 @@ class LetterboxdUnfollower:
             except Exception as e:
                 handle_exception(e, "Unexpected error during unfollow process")
             finally:
-                browser.close()
+                context.close()
                 self.rate_limiter.close()
 
 

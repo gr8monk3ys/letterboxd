@@ -1,10 +1,12 @@
 """Tests for review quality metrics module."""
 
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock
 
 import pytest
 
 from src.review_metrics import (
+    EngagementScraper,
     ReviewMetricsDB,
     TonePerformance,
     get_tone_suggestions,
@@ -464,3 +466,45 @@ class TestTonePerformanceDataclass:
         assert perf.tone == "casual"
         assert perf.review_count == 10
         assert perf.engagement_score == 11.0
+
+
+class TestEngagementChallengeDetection:
+    def test_a_challenge_page_raises_instead_of_reading_zeros(self):
+        """An interstitial matches no count selectors, so without this guard it
+        would be recorded as genuine likes=0/comments=0 over real history."""
+        from src.utils.errors import BotChallengeError
+
+        page = MagicMock()
+        page.title.return_value = "Just a moment..."
+        with pytest.raises(BotChallengeError):
+            EngagementScraper()._read_engagement(page, "https://boxd.it/x")
+
+
+class TestEngagementCounts:
+    """The count parser extracted from scrape_review_engagement."""
+
+    @staticmethod
+    def _page(text, present=True):
+        page = MagicMock()
+        element = page.locator.return_value.first
+        element.count.return_value = 1 if present else 0
+        element.text_content.return_value = text
+        return page
+
+    def test_missing_element_reads_as_zero(self):
+        assert EngagementScraper._count_from(self._page(None, present=False), ".x") == 0
+
+    def test_bare_number(self):
+        assert EngagementScraper._count_from(self._page("12"), ".x") == 12
+
+    def test_number_inside_text(self):
+        assert EngagementScraper._count_from(self._page("12 likes"), ".x") == 12
+
+    def test_thousands_separator(self):
+        assert EngagementScraper._count_from(self._page("1,204 likes"), ".x") == 1204
+
+    def test_text_without_a_number(self):
+        assert EngagementScraper._count_from(self._page("no likes yet"), ".x") == 0
+
+    def test_empty_text(self):
+        assert EngagementScraper._count_from(self._page(None), ".x") == 0

@@ -7,7 +7,7 @@ from playwright.sync_api import Page, sync_playwright
 from src.config import get_config, get_log_path
 from src.lists.generate_lists import ListDefinition, ListGenerator
 from src.rate_limiter import RateLimiter
-from src.utils.auth import goto_with_retry, login
+from src.utils.auth import goto_with_retry, login, open_browser
 from src.utils.follow_actions import human_delay
 
 # Set up logging
@@ -212,8 +212,7 @@ class ListCreator:
             return 0
 
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=self.config.headless)
-            page = browser.new_page()
+            context, page = open_browser(playwright, self.config)
 
             try:
                 # Login first
@@ -246,7 +245,7 @@ class ListCreator:
             except KeyboardInterrupt:
                 logger.info("Process interrupted by user")
             finally:
-                browser.close()
+                context.close()
 
         return self.created_count
 
