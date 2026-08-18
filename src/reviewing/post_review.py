@@ -10,7 +10,7 @@ from playwright.sync_api import Page, sync_playwright
 from src.config import get_config, get_log_path
 from src.data_processing.create_database import MovieDatabase
 from src.review_metrics import ReviewMetricsDB
-from src.utils.auth import goto_with_retry, login, open_browser
+from src.utils.auth import goto_with_retry, login, open_browser, raise_if_challenged
 from src.utils.errors import handle_exception
 
 
@@ -237,6 +237,24 @@ class ReviewPoster:
             submit_button.click()
             page.wait_for_timeout(3000)
 
+            # A click that "succeeded" proves nothing: a validation error or
+            # a Cloudflare interstitial leaves the form open while the click
+            # reports success - and posted_at would then hide the review
+            # forever. A still-open form or a challenge page means it did
+            # not land.
+            raise_if_challenged(page)
+            form_still_open = page.locator(
+                'textarea[name="review"], '
+                "textarea.review-field, "
+                "#diary-entry-review, "
+                ".review-text textarea"
+            ).first
+            if form_still_open.count() > 0 and form_still_open.is_visible():
+                logging.warning(
+                    f"Review form still open after submitting {name}; treating the post as failed"
+                )
+                return False, None
+
             # Try to capture the review URL after posting
             review_url = None
             try:
@@ -371,11 +389,25 @@ def main() -> None:
         default="casual",
         help="Tone preset used for these reviews (for metrics tracking)",
     )
+    parser.add_argument(
+        "--unpost",
+        metavar="URI",
+        help="Clear the posted mark for a film URI so its review is offered "
+        "again (e.g. after a falsely-reported post). Also removes the film's "
+        "posted_reviews metrics rows.",
+    )
     args = parser.parse_args()
 
     poster = ReviewPoster(tone=args.tone)
 
     try:
+        if args.unpost:
+            if poster.db.clear_ai_review_posted(args.unpost):
+                print(f"Reopened {args.unpost}; it will be offered on the next run.")
+            else:
+                print(f"No AI review found for {args.unpost}.")
+            return
+
         posted = poster.run(limit=args.limit, dry_run=args.dry_run)
         if posted > 0:
             print(f"\nPosted {posted} reviews!")

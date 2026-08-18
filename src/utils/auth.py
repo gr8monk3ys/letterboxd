@@ -257,7 +257,10 @@ def login(page: Page, config: Config) -> bool:
         logging.info("Successfully logged in to Letterboxd")
         return True
 
-    except Exception as e:
+    except (BotChallengeError, ConnectionError, PlaywrightTimeout) as e:
+        # Only sign-in-shaped failures earn the manual fallback: a challenge,
+        # a rejected form, or a page that never loaded. A human at the window
+        # can recover all three (including a mistyped .env password).
         error_msg = format_login_error(e)
         log_error_with_suggestions(error_msg, ErrorCategory.AUTH, e)
         # Headless has no window to type into, and an unattended run must not
@@ -265,6 +268,12 @@ def login(page: Page, config: Config) -> bool:
         if config.headless or not sys.stdin.isatty():
             return False
         return wait_for_manual_login(page)
+
+    except Exception as e:
+        # Anything else is a bug in this code, not a sign-in problem;
+        # surface it instead of asking a human to work around it.
+        log_error_with_suggestions(format_login_error(e), ErrorCategory.AUTH, e)
+        return False
 
 
 def login_and_navigate(page: Page, config: Config, target_url: str) -> bool:

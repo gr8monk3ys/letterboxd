@@ -650,6 +650,15 @@ class TestDraftsPage:
         assert "No drafts yet" in body
         assert "write_review" in body
 
+    def test_api_ai_reviews_uses_the_shared_query(self, client):
+        """The endpoint's rating must come from the ratings table (films.rating
+        is NULL in a real export), proving it goes through get_ai_reviews."""
+        data = client.get("/api/reviews/ai").json()
+        assert data["total"] == 1
+        review = data["reviews"][0]
+        assert review["review"] == "Original text"
+        assert review["rating"] == 5.0
+
     def test_save_refuses_a_posted_review(self, client, tmp_path):
         """Once a review is posted, editing the local copy would silently
         diverge from what is live on Letterboxd."""

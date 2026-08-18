@@ -140,6 +140,26 @@ class TestReviewPoster:
 
         assert poster.get_pending_reviews() == []
 
+    def test_clear_ai_review_posted_reopens_the_draft(self, poster):
+        """--unpost must undo both records of a post: posted_at and the
+        posted_reviews metrics rows, since either alone keeps it hidden."""
+        uri = "https://letterboxd.com/film/test-film/"
+        poster.db.mark_ai_review_posted(uri, None)
+        poster.db.cursor.execute(
+            """INSERT INTO posted_reviews
+               (letterboxd_uri, film_name, film_year, review_text, tone_preset, posted_at)
+               VALUES (?, 'Test Film', 2024, 'x', 'casual', '2026-01-01')""",
+            (uri,),
+        )
+        poster.db.conn.commit()
+        assert poster.get_pending_reviews() == []
+
+        assert poster.db.clear_ai_review_posted(uri) is True
+        assert len(poster.get_pending_reviews()) == 1
+
+    def test_clear_ai_review_posted_unknown_uri_is_false(self, poster):
+        assert poster.db.clear_ai_review_posted("https://boxd.it/nope") is False
+
     def test_limit_zero_posts_nothing(self, poster, capsys):
         """-n 0 must mean 'post nothing', not 'no limit'."""
         result = poster.run(limit=0, dry_run=True)
@@ -303,10 +323,12 @@ class TestReviewPosterPostReview:
     def test_post_review_success(self, poster_with_mocks, mock_page):
         """Test successful review posting."""
         with patch("src.reviewing.post_review.goto_with_retry", return_value=True):
-            # Mock successful element finding
+            # Mock successful element finding; after submit the form closes
             mock_locator = MagicMock()
             mock_locator.count.return_value = 1
+            mock_locator.is_visible.return_value = False
             mock_page.locator.return_value.first = mock_locator
+            mock_page.title.return_value = "Test Film review"
             mock_page.url = "https://letterboxd.com/testuser/film/test/review/"
 
             film = {
@@ -319,6 +341,46 @@ class TestReviewPosterPostReview:
             success, url = poster_with_mocks.post_review(mock_page, film)
             assert success is True
             assert url == "https://letterboxd.com/testuser/film/test/review/"
+
+    def test_post_review_form_still_open_is_failure(self, poster_with_mocks, mock_page):
+        """A submit that leaves the form open did not land; reporting success
+        would set posted_at and hide the review forever."""
+        with patch("src.reviewing.post_review.goto_with_retry", return_value=True):
+            mock_locator = MagicMock()
+            mock_locator.count.return_value = 1
+            mock_locator.is_visible.return_value = True
+            mock_page.locator.return_value.first = mock_locator
+            mock_page.title.return_value = "Test Film review"
+
+            film = {
+                "name": "Test Film",
+                "year": 2024,
+                "review": "Great movie!",
+                "letterboxd_uri": "https://letterboxd.com/film/test-film/",
+            }
+
+            success, url = poster_with_mocks.post_review(mock_page, film)
+            assert success is False
+            assert url is None
+
+    def test_post_review_challenge_after_submit_is_failure(self, poster_with_mocks, mock_page):
+        """A Cloudflare interstitial after submit means nothing was posted."""
+        with patch("src.reviewing.post_review.goto_with_retry", return_value=True):
+            mock_locator = MagicMock()
+            mock_locator.count.return_value = 1
+            mock_locator.is_visible.return_value = False
+            mock_page.locator.return_value.first = mock_locator
+            mock_page.title.return_value = "Just a moment..."
+
+            film = {
+                "name": "Test Film",
+                "year": 2024,
+                "review": "Great movie!",
+                "letterboxd_uri": "https://letterboxd.com/film/test-film/",
+            }
+
+            success, url = poster_with_mocks.post_review(mock_page, film)
+            assert success is False
 
     def test_post_review_exception_handling(self, poster_with_mocks, mock_page):
         """Test that exceptions are handled gracefully."""
