@@ -52,14 +52,13 @@ def open_browser(playwright: Playwright, config: Config) -> tuple[BrowserContext
     # bundled Chromium sets to true - the checkbox then loops forever instead
     # of failing, so it reads as a broken widget rather than a block. Real
     # Chrome with the automation flags stripped reports false and passes.
-    launch_args = {
-        "headless": config.headless,
-        "ignore_default_args": ["--enable-automation"],
-        "args": ["--disable-blink-features=AutomationControlled"],
-    }
     try:
         context = playwright.chromium.launch_persistent_context(
-            str(config.browser_profile_dir), channel="chrome", **launch_args
+            str(config.browser_profile_dir),
+            channel="chrome",
+            headless=config.headless,
+            ignore_default_args=["--enable-automation"],
+            args=["--disable-blink-features=AutomationControlled"],
         )
     except Exception:
         logging.warning(
@@ -68,7 +67,10 @@ def open_browser(playwright: Playwright, config: Config) -> tuple[BrowserContext
             "Install Chrome if sign-in loops."
         )
         context = playwright.chromium.launch_persistent_context(
-            str(config.browser_profile_dir), **launch_args
+            str(config.browser_profile_dir),
+            headless=config.headless,
+            ignore_default_args=["--enable-automation"],
+            args=["--disable-blink-features=AutomationControlled"],
         )
     # A persistent context starts with a page already open; new_page() here
     # would leave an orphan blank tab.
