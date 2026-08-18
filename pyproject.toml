@@ -50,7 +50,7 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "mypy>=1.19.1",
-    "pre-commit>=4.6.1",
+    "pre-commit>=4.6.2",
     "pytest>=8.0.0",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
