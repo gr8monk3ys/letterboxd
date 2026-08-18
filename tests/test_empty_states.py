@@ -11,9 +11,20 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, tmp_path):
     cfg = type("Cfg", (), {"hourly_rate_limit": 30, "daily_rate_limit": 100, "headless": True})()
     monkeypatch.setattr("src.web.app.get_config", lambda: cfg)
+    # The pages read DATA_DIR/movie_database.db at request time, so on a
+    # machine whose real data/ holds follow activity the empty state never
+    # renders. Point every backing module at an empty temp dir instead.
+    for mod in (
+        "src.analytics",
+        "src.review_metrics",
+        "src.growth.dashboard",
+        "src.growth.attribution",
+        "src.growth.campaigns",
+    ):
+        monkeypatch.setattr(f"{mod}.DATA_DIR", tmp_path)
     from src.web.app import app
 
     return TestClient(app)
