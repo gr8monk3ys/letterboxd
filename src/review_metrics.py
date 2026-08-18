@@ -617,8 +617,13 @@ class EngagementScraper:
 
     def _read_engagement(self, page, review_url: str) -> dict:
         """Read the like and comment counts off an open review page."""
-        page.goto(review_url, timeout=30000)
+        from src.utils.auth import raise_if_challenged
+
+        page.goto(review_url, timeout=self.config.page_load_timeout)
         page.wait_for_timeout(2000)
+        # An interstitial matches no count selectors and would be recorded as
+        # genuine likes=0/comments=0 over real history.
+        raise_if_challenged(page)
 
         comments_count = self._count_from(
             page,

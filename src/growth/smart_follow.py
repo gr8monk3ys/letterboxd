@@ -329,8 +329,13 @@ class SmartFollower:
                         skipped += 1
 
             finally:
-                self.conn.commit()
-                context.close()
+                # close() must run even if the commit raises: an abandoned
+                # persistent profile keeps Chromium's SingletonLock and no
+                # later run can launch a browser at all.
+                try:
+                    self.conn.commit()
+                finally:
+                    context.close()
 
         return {"followed": followed, "skipped": skipped, "error": None}
 

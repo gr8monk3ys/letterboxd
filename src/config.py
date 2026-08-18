@@ -59,9 +59,13 @@ class Config:
     # A persistent profile keeps Cloudflare's cf_clearance cookie and the
     # Letterboxd session between runs, so a challenge is answered once rather
     # than on every invocation. Holds live credentials - keep it out of git.
+    # PROJECT_ROOT anchors a relative value (the form .env.example suggests) so
+    # a LaunchAgent run with cwd / finds the same profile as a shell run; an
+    # absolute value passes through untouched.
     browser_profile_dir: Path = field(
-        default_factory=lambda: Path(
-            os.getenv("BROWSER_PROFILE_DIR", str(DATA_DIR / "letterboxd_cdp_profile"))
+        default_factory=lambda: (
+            PROJECT_ROOT
+            / os.getenv("BROWSER_PROFILE_DIR", str(DATA_DIR / "letterboxd_cdp_profile"))
         )
     )
 

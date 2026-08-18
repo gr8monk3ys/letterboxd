@@ -161,3 +161,16 @@ class TestManualFallback:
         wait_for_manual_login(page, timeout_seconds=10)
         # One navigation to open the form, and none from the poll loop.
         assert page.goto.call_count == 1
+
+    def test_clears_any_stale_session_cookie_before_polling(self):
+        """A dead cookie from an expired session must not satisfy the poll."""
+        page = make_page()
+        page.context.cookies.side_effect = [[], SESSION]
+        assert wait_for_manual_login(page, timeout_seconds=10) is True
+        page.context.clear_cookies.assert_called_once_with(name=SESSION_COOKIE)
+
+    def test_closing_the_window_before_the_form_opens_ends_the_wait_cleanly(self):
+        """The initial navigation deserves the same clean decline as the poll."""
+        page = make_page()
+        page.goto.side_effect = PlaywrightError("Target page has been closed")
+        assert wait_for_manual_login(page, timeout_seconds=10) is False

@@ -60,11 +60,12 @@ def open_browser(playwright: Playwright, config: Config) -> tuple[BrowserContext
             ignore_default_args=["--enable-automation"],
             args=["--disable-blink-features=AutomationControlled"],
         )
-    except Exception:
+    except Exception as e:
         logging.warning(
-            "Google Chrome not found; falling back to bundled Chromium, whose "
+            "Chrome launch failed (%s); falling back to bundled Chromium, whose "
             "navigator.webdriver=true makes Cloudflare's checkbox unpassable. "
-            "Install Chrome if sign-in loops."
+            "Install Chrome if sign-in loops.",
+            e,
         )
         context = playwright.chromium.launch_persistent_context(
             str(config.browser_profile_dir),
@@ -210,11 +211,15 @@ def wait_for_manual_login(page: Page, timeout_seconds: int = 180) -> bool:
         "  Please sign in yourself in the browser window that just opened.\n"
         f"  Waiting up to {timeout_seconds}s; this is only needed once.\n"
     )
-    goto_with_retry(page, "https://letterboxd.com/sign-in/")
-
     deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        try:
+    try:
+        # A cookie that outlived its server session would satisfy the first
+        # poll instantly and the run would proceed logged out. Drop only the
+        # session cookie so the Cloudflare clearance survives.
+        page.context.clear_cookies(name=SESSION_COOKIE)
+        goto_with_retry(page, "https://letterboxd.com/sign-in/")
+
+        while time.monotonic() < deadline:
             # Cookie check only: navigating on each poll would reload the form
             # out from under whoever is typing into it. A cookie minted seconds
             # ago by a real sign-in needs no further confirmation.
@@ -223,12 +228,12 @@ def wait_for_manual_login(page: Page, timeout_seconds: int = 180) -> bool:
                 print("  Signed in. Continuing.\n")
                 return True
             page.wait_for_timeout(2000)
-        except PlaywrightError:
-            # Closing the window is how a person says no. Report it as a
-            # declined sign-in, not as a crash three frames deep in Playwright.
-            logging.error("Browser window closed before sign-in completed")
-            print("  Browser window closed; no session saved.\n")
-            return False
+    except PlaywrightError:
+        # Closing the window is how a person says no. Report it as a
+        # declined sign-in, not as a crash three frames deep in Playwright.
+        logging.error("Browser window closed before sign-in completed")
+        print("  Browser window closed; no session saved.\n")
+        return False
 
     logging.error("Timed out waiting for manual sign-in")
     return False
