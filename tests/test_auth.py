@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from src.config import Config
@@ -137,6 +138,17 @@ class TestManualFallback:
         page = make_page()
         page.context.cookies.side_effect = [[], [], SESSION]
         assert wait_for_manual_login(page, timeout_seconds=10) is True
+
+    def test_closing_the_window_ends_the_wait_cleanly(self):
+        """Closing the window is how a person declines, not a crash."""
+        page = make_page()
+        page.context.cookies.side_effect = PlaywrightError("Target page has been closed")
+        assert wait_for_manual_login(page, timeout_seconds=10) is False
+
+    def test_closing_the_window_mid_sleep_ends_the_wait_cleanly(self):
+        page = make_page()
+        page.wait_for_timeout.side_effect = PlaywrightError("Target page has been closed")
+        assert wait_for_manual_login(page, timeout_seconds=10) is False
 
     def test_times_out_when_nobody_signs_in(self):
         page = make_page()

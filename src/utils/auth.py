@@ -5,6 +5,7 @@ import sys
 import time
 
 from playwright.sync_api import BrowserContext, Page, Playwright
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from src.config import Config
@@ -47,10 +48,28 @@ def open_browser(playwright: Playwright, config: Config) -> tuple[BrowserContext
             "Set HEADLESS=false in .env."
         )
 
-    context = playwright.chromium.launch_persistent_context(
-        str(config.browser_profile_dir),
-        headless=config.headless,
-    )
+    # Cloudflare's Turnstile reads navigator.webdriver, which Playwright's
+    # bundled Chromium sets to true - the checkbox then loops forever instead
+    # of failing, so it reads as a broken widget rather than a block. Real
+    # Chrome with the automation flags stripped reports false and passes.
+    launch_args = {
+        "headless": config.headless,
+        "ignore_default_args": ["--enable-automation"],
+        "args": ["--disable-blink-features=AutomationControlled"],
+    }
+    try:
+        context = playwright.chromium.launch_persistent_context(
+            str(config.browser_profile_dir), channel="chrome", **launch_args
+        )
+    except Exception:
+        logging.warning(
+            "Google Chrome not found; falling back to bundled Chromium, whose "
+            "navigator.webdriver=true makes Cloudflare's checkbox unpassable. "
+            "Install Chrome if sign-in loops."
+        )
+        context = playwright.chromium.launch_persistent_context(
+            str(config.browser_profile_dir), **launch_args
+        )
     # A persistent context starts with a page already open; new_page() here
     # would leave an orphan blank tab.
     page = context.pages[0] if context.pages else context.new_page()
@@ -193,14 +212,21 @@ def wait_for_manual_login(page: Page, timeout_seconds: int = 180) -> bool:
 
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        # Cookie check only: navigating on each poll would reload the form out
-        # from under whoever is typing into it. A cookie minted seconds ago by
-        # a real sign-in needs no further confirmation.
-        if has_session_cookie(page.context):
-            logging.info("Manual sign-in detected; session saved to the browser profile")
-            print("  Signed in. Continuing.\n")
-            return True
-        page.wait_for_timeout(2000)
+        try:
+            # Cookie check only: navigating on each poll would reload the form
+            # out from under whoever is typing into it. A cookie minted seconds
+            # ago by a real sign-in needs no further confirmation.
+            if has_session_cookie(page.context):
+                logging.info("Manual sign-in detected; session saved to the browser profile")
+                print("  Signed in. Continuing.\n")
+                return True
+            page.wait_for_timeout(2000)
+        except PlaywrightError:
+            # Closing the window is how a person says no. Report it as a
+            # declined sign-in, not as a crash three frames deep in Playwright.
+            logging.error("Browser window closed before sign-in completed")
+            print("  Browser window closed; no session saved.\n")
+            return False
 
     logging.error("Timed out waiting for manual sign-in")
     return False

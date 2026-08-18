@@ -229,13 +229,27 @@ headed 200. `HEADLESS=true` therefore breaks *every* module that signs in
 (`follow_users`, `unfollow_users`, `post_review`, `create_list`,
 `growth/smart_follow`) plus `review_metrics` engagement scraping.
 
-Headed is necessary but **not sufficient**: once Cloudflare flags the client,
-headed automation is challenged too, and a stored `cf_clearance` cookie does
-not buy its way past. The only reliable path is a human completing the sign-in
-once. `login()` does this automatically — on failure, with a visible browser
-and a TTY, it prompts and polls for the session cookie. All browser entry
-points go through `open_browser()`, which uses `launch_persistent_context` so
-that session survives into later runs.
+Headed is necessary but **not sufficient**. The binary matters more than the
+mode: Playwright's bundled Chromium sets **`navigator.webdriver = true`**, and
+Cloudflare's Turnstile is built so a flagged client's checkbox *loops forever*
+rather than visibly failing — it reads as a broken widget, not a block, and no
+amount of clicking will ever pass it. Measured 2026-08-15:
+
+| Binary | `navigator.webdriver` | UA brand |
+|---|---|---|
+| bundled Chromium | `true` — Turnstile unpassable | `Chromium` |
+| real Chrome, automation flags stripped | `false` | `Google Chrome` |
+
+So `open_browser()` launches `channel="chrome"` with
+`ignore_default_args=["--enable-automation"]` and
+`args=["--disable-blink-features=AutomationControlled"]`, falling back to
+bundled Chromium with a warning if Chrome is absent. Do not drop those flags.
+
+Even then, scripted credential entry gets challenged; the reliable path is a
+human completing the sign-in once. `login()` does this automatically — on
+failure, with a visible browser and a TTY, it prompts and polls for the session
+cookie. All browser entry points go through `open_browser()`, which uses
+`launch_persistent_context` so that session survives into later runs.
 
 Consequences worth remembering:
 - **Never `chromium.launch()` directly** — an ephemeral context throws away the
