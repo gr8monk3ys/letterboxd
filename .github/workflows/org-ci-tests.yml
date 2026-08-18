@@ -9,4 +9,4 @@ permissions: read-all
 
 jobs:
   ci-tests:
-    uses: gr8monk3ys/github/.github/workflows/reusable-ci-tests-minimum.yml@4a306a94d72d10b8d7835d697521a469fc6deab1
+    uses: gr8monk3ys/org-workflows/.github/workflows/reusable-ci-tests-minimum.yml@2659a9a32c4e6e3858f69a2f502210941a886d5a
