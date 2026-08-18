@@ -5,14 +5,22 @@ and provides analytics to help optimize review tone selection.
 """
 
 import logging
-import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from playwright.sync_api import sync_playwright
+
 from src.config import DATA_DIR, get_config, get_log_path
+from src.utils.auth import open_browser, raise_if_challenged
+from src.utils.engagement_selectors import (
+    COMMENT_COUNT_SELECTORS,
+    COMMENT_ELEMENT_SELECTORS,
+    LIKES_SELECTORS,
+    parse_count,
+)
 
 # Set up logging
 logging.basicConfig(
@@ -576,7 +584,10 @@ class EngagementScraper:
         self.config = get_config()
 
     def scrape_review_engagement(self, review_url: str) -> dict | None:
-        """Scrape likes and comments from a Letterboxd review page.
+        """Scrape likes and comments from a single Letterboxd review page.
+
+        Launches a browser for one page; batch callers should use
+        update_all_engagement, which opens one browser for the whole run.
 
         Args:
             review_url: URL to the Letterboxd review
@@ -585,10 +596,6 @@ class EngagementScraper:
             Dict with likes_count and comments_count, or None on error
         """
         try:
-            from playwright.sync_api import sync_playwright
-
-            from src.utils.auth import open_browser
-
             with sync_playwright() as p:
                 # Shares the persistent profile so this reuses the Cloudflare
                 # clearance instead of drawing a fresh challenge per review.
@@ -612,38 +619,32 @@ class EngagementScraper:
         element = page.locator(selector).first
         if element.count() == 0:
             return 0
-        match = re.search(r"(\d+)", (element.text_content() or "0").replace(",", ""))
-        return int(match.group(1)) if match else 0
+        return parse_count(element.text_content())
 
     def _read_engagement(self, page, review_url: str) -> dict:
         """Read the like and comment counts off an open review page."""
-        from src.utils.auth import raise_if_challenged
-
         page.goto(review_url, timeout=self.config.page_load_timeout)
         page.wait_for_timeout(2000)
         # An interstitial matches no count selectors and would be recorded as
         # genuine likes=0/comments=0 over real history.
         raise_if_challenged(page)
 
-        comments_count = self._count_from(
-            page,
-            ".comment-count, .comments-count, [data-comments-count], .activity-summary .comments",
-        )
+        comments_count = self._count_from(page, COMMENT_COUNT_SELECTORS)
         if comments_count == 0:
             # No summary element: fall back to counting the comments themselves.
-            comments_count = page.locator(".comment, .review-comment").count()
+            comments_count = page.locator(COMMENT_ELEMENT_SELECTORS).count()
 
         return {
-            "likes_count": self._count_from(
-                page,
-                ".like-link-target .count, .likes-count, "
-                "[data-likes-count], .activity-summary .likes",
-            ),
+            "likes_count": self._count_from(page, LIKES_SELECTORS),
             "comments_count": comments_count,
         }
 
     def update_all_engagement(self, db: ReviewMetricsDB) -> dict:
         """Update engagement for all reviews that need checking.
+
+        Opens one browser for the whole batch: a launch per review costs
+        seconds each, flashes a window per review, and draws a fresh
+        Cloudflare score every time.
 
         Args:
             db: ReviewMetricsDB instance
@@ -652,27 +653,39 @@ class EngagementScraper:
             Summary of updates
         """
         reviews = db.get_reviews_needing_check()
+        targets = [r for r in reviews if r.get("letterboxd_review_url")]
         updated = 0
         failed = 0
 
-        for review in reviews:
-            if not review.get("letterboxd_review_url"):
-                continue
-
-            engagement = self.scrape_review_engagement(review["letterboxd_review_url"])
-            if engagement:
-                db.save_engagement(
-                    posted_review_id=review["id"],
-                    likes_count=engagement["likes_count"],
-                    comments_count=engagement["comments_count"],
-                )
-                updated += 1
-                logger.info(
-                    f"Updated engagement for {review['film_name']}: "
-                    f"{engagement['likes_count']} likes, {engagement['comments_count']} comments"
-                )
-            else:
-                failed += 1
+        if targets:
+            with sync_playwright() as p:
+                context, page = open_browser(p, self.config)
+                try:
+                    for review in targets:
+                        try:
+                            engagement = self._read_engagement(
+                                page, review["letterboxd_review_url"]
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Error scraping engagement from "
+                                f"{review['letterboxd_review_url']}: {e}"
+                            )
+                            failed += 1
+                            continue
+                        db.save_engagement(
+                            posted_review_id=review["id"],
+                            likes_count=engagement["likes_count"],
+                            comments_count=engagement["comments_count"],
+                        )
+                        updated += 1
+                        logger.info(
+                            f"Updated engagement for {review['film_name']}: "
+                            f"{engagement['likes_count']} likes, "
+                            f"{engagement['comments_count']} comments"
+                        )
+                finally:
+                    context.close()
 
         return {
             "checked": len(reviews),

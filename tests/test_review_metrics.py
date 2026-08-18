@@ -468,6 +468,49 @@ class TestTonePerformanceDataclass:
         assert perf.engagement_score == 11.0
 
 
+class TestEngagementBatching:
+    @pytest.fixture
+    def db(self, tmp_path):
+        db = ReviewMetricsDB(db_path=tmp_path / "metrics.db")
+        db.connect()
+        yield db
+        db.close()
+
+    def test_update_all_engagement_opens_one_browser_for_the_batch(self, db, monkeypatch):
+        """A launch per review costs seconds each and flashes a window per
+        review; the batch must share one browser."""
+        old = (datetime.now() - timedelta(hours=48)).isoformat()
+        for i in range(3):
+            db.cursor.execute(
+                """INSERT INTO posted_reviews
+                   (letterboxd_uri, film_name, film_year, review_text, tone_preset,
+                    posted_at, letterboxd_review_url)
+                   VALUES (?, ?, 2020, 'r', 'casual', ?, ?)""",
+                (f"uri{i}", f"Film {i}", old, f"https://letterboxd.com/u/film/f{i}/"),
+            )
+        db.conn.commit()
+
+        launches = []
+        mock_page = MagicMock()
+        mock_page.title.return_value = "A review"
+        mock_page.locator.return_value.count.return_value = 0
+        mock_page.locator.return_value.first.count.return_value = 0
+
+        def fake_open_browser(playwright, config):
+            launches.append(1)
+            return MagicMock(), mock_page
+
+        monkeypatch.setattr("src.review_metrics.open_browser", fake_open_browser)
+        monkeypatch.setattr("src.review_metrics.sync_playwright", MagicMock())
+
+        from src.review_metrics import EngagementScraper
+
+        result = EngagementScraper().update_all_engagement(db)
+
+        assert len(launches) == 1
+        assert result == {"checked": 3, "updated": 3, "failed": 0}
+
+
 class TestEngagementChallengeDetection:
     def test_a_challenge_page_raises_instead_of_reading_zeros(self):
         """An interstitial matches no count selectors, so without this guard it

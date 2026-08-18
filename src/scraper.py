@@ -6,7 +6,6 @@ Playwright is still used for write operations that require authentication.
 """
 
 import logging
-import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -21,6 +20,12 @@ from letterboxdpy.search import Search as LBSearch
 from letterboxdpy.user import User as LBUser
 
 from src.config import get_log_path
+from src.utils.engagement_selectors import (
+    COMMENT_COUNT_SELECTORS,
+    COMMENT_ELEMENT_SELECTORS,
+    LIKES_SELECTORS,
+    parse_count,
+)
 
 
 def _get_attr(tag: Tag, attr: str, default: str = "") -> str:
@@ -403,28 +408,20 @@ class LetterboxdScraper:
             return None
 
         likes_count = 0
-        comments_count = 0
 
         # Likes
-        likes_elem = soup.select_one(".like-link-target .count, .likes-count")
+        likes_elem = soup.select_one(LIKES_SELECTORS)
         if likes_elem:
-            likes_text = likes_elem.get_text(strip=True)
-            likes_match = re.search(r"(\d+)", likes_text.replace(",", ""))
-            if likes_match:
-                likes_count = int(likes_match.group(1))
+            likes_count = parse_count(likes_elem.get_text(strip=True))
 
         # Comments - count actual comments
-        comments = soup.select(".comment, .activity-row.comment")
-        comments_count = len(comments)
+        comments_count = len(soup.select(COMMENT_ELEMENT_SELECTORS))
 
         # Or try to find comment count text
         if comments_count == 0:
-            comments_elem = soup.select_one(".comment-count, .comments-count")
+            comments_elem = soup.select_one(COMMENT_COUNT_SELECTORS)
             if comments_elem:
-                comments_text = comments_elem.get_text(strip=True)
-                comments_match = re.search(r"(\d+)", comments_text.replace(",", ""))
-                if comments_match:
-                    comments_count = int(comments_match.group(1))
+                comments_count = parse_count(comments_elem.get_text(strip=True))
 
         return {
             "likes_count": likes_count,

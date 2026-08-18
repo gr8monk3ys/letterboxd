@@ -21,7 +21,7 @@ def reset_task_slots():
     yield
     from src.web.app import release_task
 
-    for task_id in ("follow", "unfollow", "generate_reviews"):
+    for task_id in ("follow", "unfollow", "generate_reviews", "engagement", "browser"):
         release_task(task_id)
 
 
