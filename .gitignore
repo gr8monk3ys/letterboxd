@@ -45,7 +45,9 @@ data/*.db-wal
 data/*.zip
 data/*.csv
 data/*.json
-data/protected_users.txt
+# Covers protected_users.txt and scraped outputs like non_followers-*.txt,
+# which hold other people's usernames and must never be committed
+data/*.txt
 # Browser profile: holds live Letterboxd session and Cloudflare cookies
 data/letterboxd_cdp_profile/
 
@@ -60,8 +62,10 @@ data/letterboxd_cdp_profile/
 # Legacy config
 parameters.py
 
-# Claude Code
-.claude/
+# Claude Code: local settings stay private, but skills are docs that every
+# clone (and the fleet's cloud sessions) must see
+.claude/*
+!.claude/skills/
 
 # Testing
 .pytest_cache/
