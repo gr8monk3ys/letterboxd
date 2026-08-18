@@ -213,23 +213,15 @@ async def api_unreviewed_films(limit: int = 20):
 
 
 @app.get("/api/reviews/ai")
-async def api_ai_reviews(limit: int = 20):
+def api_ai_reviews(limit: int = 20):
     """Get list of AI-generated reviews."""
     try:
         db = MovieDatabase()
         db.connect()
-        db.cursor.execute(
-            """
-            SELECT letterboxd_uri, name, year, ai_review, generated_at
-            FROM ai_reviews
-            ORDER BY generated_at DESC
-            LIMIT ?
-        """,
-            (limit,),
-        )
-        columns = ["letterboxd_uri", "name", "year", "review", "generated_at"]
-        reviews = [dict(zip(columns, row)) for row in db.cursor.fetchall()]
-        db.close()
+        try:
+            reviews = db.get_ai_reviews(limit=limit)
+        finally:
+            db.close()
         return JSONResponse({"reviews": reviews, "total": len(reviews)})
     except Exception as e:
         logger.error(f"Error getting AI reviews: {e}")

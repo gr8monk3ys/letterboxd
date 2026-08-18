@@ -323,23 +323,14 @@ Now write a review for "{title}" ({year}):"""
         Returns:
             Path to the exported file, or None if no reviews to export
         """
-        # films.rating is NULL in a real export; the score lives in ratings.
-        self.db.cursor.execute("""
-            SELECT ar.name, ar.year, COALESCE(rt.rating, f.rating) AS rating,
-                   ar.ai_review, ar.generated_at, ar.letterboxd_uri
-            FROM ai_reviews ar
-            LEFT JOIN films f ON ar.letterboxd_uri = f.letterboxd_uri
-            LEFT JOIN ratings rt ON ar.letterboxd_uri = rt.letterboxd_uri
-            ORDER BY ar.generated_at DESC
-        """)
-        rows = self.db.cursor.fetchall()
+        rows = self.db.get_ai_reviews()
 
         if not rows:
             logging.info("No AI reviews to export")
             return None
 
         columns = ["name", "year", "rating", "review", "generated_at", "letterboxd_uri"]
-        reviews = [dict(zip(columns, row)) for row in rows]
+        reviews = [{k: r[k] for k in columns} for r in rows]
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 

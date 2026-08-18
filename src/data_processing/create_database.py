@@ -424,44 +424,91 @@ class MovieDatabase:
         )
         self.conn.commit()
 
-    def get_ai_review_drafts(self) -> list[dict]:
-        """Get AI reviews that have not been posted yet, newest first.
+    def get_ai_reviews(self, pending_only: bool = False, limit: int | None = None) -> list[dict]:
+        """The one query over ai_reviews, shared by the dashboard pages, the
+        posting CLI and the exporter, so they cannot drift.
 
-        The single definition of "pending draft", shared by the dashboard's
-        /drafts page and the posting CLI.
+        films.rating is NULL for every row in a real export; the score lives
+        in the ratings table, so ratings is authoritative and films.rating is
+        only a fallback.
         """
-        # films.rating is NULL for every row in a real export; the score lives
-        # in the ratings table, so ratings is authoritative and films.rating is
-        # only a fallback.
-        # posted_reviews is the durable record of past posts: it predates the
-        # posted_at column and survives re-imports, so it also excludes
-        # reviews posted before posted_at existed. It is created lazily by
-        # ReviewMetricsDB, so a database it has never touched may lack it -
-        # and on such a database nothing was ever posted through the tool,
-        # making the posted_at filter alone complete.
+        where = ""
+        if pending_only:
+            # posted_reviews is the durable record of past posts: it predates
+            # the posted_at column and survives re-imports, so it also
+            # excludes reviews posted before posted_at existed. It is created
+            # lazily by ReviewMetricsDB, so a database it has never touched
+            # may lack it - and on such a database nothing was ever posted
+            # through the tool, making the posted_at filter alone complete.
+            self.cursor.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'posted_reviews'"
+            )
+            posted_filter = (
+                """AND NOT EXISTS (
+                       SELECT 1 FROM posted_reviews pr
+                       WHERE pr.letterboxd_uri = ar.letterboxd_uri
+                   )"""
+                if self.cursor.fetchone()
+                else ""
+            )
+            where = f"WHERE ar.posted_at IS NULL {posted_filter}"
         self.cursor.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'posted_reviews'"
-        )
-        posted_filter = (
-            """AND NOT EXISTS (
-                   SELECT 1 FROM posted_reviews pr
-                   WHERE pr.letterboxd_uri = ar.letterboxd_uri
-               )"""
-            if self.cursor.fetchone()
-            else ""
-        )
-        self.cursor.execute(f"""
+            f"""
             SELECT ar.letterboxd_uri, ar.name, ar.year, ar.ai_review,
-                   COALESCE(rt.rating, f.rating) AS rating
+                   COALESCE(rt.rating, f.rating) AS rating,
+                   ar.generated_at, ar.posted_at, ar.posted_url
             FROM ai_reviews ar
             LEFT JOIN films f ON ar.letterboxd_uri = f.letterboxd_uri
             LEFT JOIN ratings rt ON ar.letterboxd_uri = rt.letterboxd_uri
-            WHERE ar.posted_at IS NULL
-              {posted_filter}
+            {where}
             ORDER BY ar.generated_at DESC
-        """)
-        columns = ["letterboxd_uri", "name", "year", "review", "rating"]
+            {"LIMIT ?" if limit is not None else ""}
+            """,
+            (limit,) if limit is not None else (),
+        )
+        columns = [
+            "letterboxd_uri",
+            "name",
+            "year",
+            "review",
+            "rating",
+            "generated_at",
+            "posted_at",
+            "posted_url",
+        ]
         return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
+
+    def get_ai_review_drafts(self) -> list[dict]:
+        """Get AI reviews that have not been posted yet, newest first."""
+        return self.get_ai_reviews(pending_only=True)
+
+    def clear_ai_review_posted(self, letterboxd_uri: str) -> bool:
+        """Reopen a posted review as a pending draft.
+
+        Undoes both records of a post - posted_at/posted_url on the review
+        and the metrics rows in posted_reviews - because a review left in
+        either stays hidden from the pending query. Meant for posts that
+        were marked but never actually landed on Letterboxd; note it drops
+        the film's engagement-metrics history.
+
+        Returns:
+            True if an AI review existed for that film.
+        """
+        self.cursor.execute(
+            "UPDATE ai_reviews SET posted_at = NULL, posted_url = NULL WHERE letterboxd_uri = ?",
+            (letterboxd_uri,),
+        )
+        reopened = self.cursor.rowcount > 0
+        self.cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'posted_reviews'"
+        )
+        if self.cursor.fetchone():
+            self.cursor.execute(
+                "DELETE FROM posted_reviews WHERE letterboxd_uri = ?",
+                (letterboxd_uri,),
+            )
+        self.conn.commit()
+        return reopened
 
     def update_ai_review(self, letterboxd_uri: str, review: str) -> bool:
         """Edit the text of an existing AI review draft.

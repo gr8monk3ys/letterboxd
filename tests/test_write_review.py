@@ -265,8 +265,17 @@ class TestReviewGenerator:
 
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
-            mock_db_instance.cursor.fetchall.return_value = [
-                ("Test Film", 2024, 4.5, "Great movie!", "2024-01-15", "uri1")
+            mock_db_instance.get_ai_reviews.return_value = [
+                {
+                    "name": "Test Film",
+                    "year": 2024,
+                    "rating": 4.5,
+                    "review": "Great movie!",
+                    "generated_at": "2024-01-15",
+                    "letterboxd_uri": "uri1",
+                    "posted_at": None,
+                    "posted_url": None,
+                }
             ]
             MockDB.return_value = mock_db_instance
 
@@ -292,8 +301,17 @@ class TestReviewGenerator:
 
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
-            mock_db_instance.cursor.fetchall.return_value = [
-                ("Test Film", 2024, 4.5, "Great movie!", "2024-01-15", "uri1")
+            mock_db_instance.get_ai_reviews.return_value = [
+                {
+                    "name": "Test Film",
+                    "year": 2024,
+                    "rating": 4.5,
+                    "review": "Great movie!",
+                    "generated_at": "2024-01-15",
+                    "letterboxd_uri": "uri1",
+                    "posted_at": None,
+                    "posted_url": None,
+                }
             ]
             MockDB.return_value = mock_db_instance
 
@@ -324,7 +342,7 @@ class TestReviewGenerator:
 
             mock_db_instance = MagicMock()
             mock_db_instance.get_user_reviews.return_value = []
-            mock_db_instance.cursor.fetchall.return_value = []
+            mock_db_instance.get_ai_reviews.return_value = []
             MockDB.return_value = mock_db_instance
 
             from src.reviewing.write_review import ReviewGenerator
