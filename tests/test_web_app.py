@@ -338,6 +338,28 @@ class TestActionEndpoints:
         response = client.post("/api/actions/unfollow")
         assert response.status_code == 409
 
+    def test_unfollow_blocked_while_browser_in_use(self, client, monkeypatch):
+        """Every browser task drives the one persistent Chrome profile; a
+        second launch on the locked profile dies at startup."""
+        from src.web import app as app_module
+
+        monkeypatch.setitem(app_module.running_tasks, "browser", True)
+
+        response = client.post("/api/actions/unfollow")
+        assert response.status_code == 409
+
+    def test_browser_slot_claims_are_atomic(self, monkeypatch):
+        from src.web import app as app_module
+
+        monkeypatch.setattr(app_module, "running_tasks", {})
+        assert app_module.try_claim_tasks("follow", "browser") is True
+        assert app_module.try_claim_tasks("unfollow", "browser") is False
+        # The failed claim must not have half-claimed its own slot
+        assert not app_module.running_tasks.get("unfollow")
+        app_module.release_tasks("follow", "browser")
+        assert app_module.try_claim_tasks("unfollow", "browser") is True
+        app_module.release_tasks("unfollow", "browser")
+
     def test_generate_reviews_success(self, client):
         """Test starting review generation task."""
         response = client.post("/api/actions/generate-reviews?limit=5&tone=casual")

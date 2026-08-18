@@ -410,21 +410,40 @@ def try_claim_task(task_id: str) -> bool:
     Returns:
         True if the slot was free and is now claimed, False if already running.
     """
+    return try_claim_tasks(task_id)
+
+
+def try_claim_tasks(*task_ids: str) -> bool:
+    """Atomically claim all the given slots, or none of them.
+
+    Browser-using tasks claim the shared "browser" slot alongside their own:
+    every module drives the one persistent Chrome profile, and a second
+    launch on a locked profile dies at startup having done nothing.
+    """
     with _task_lock:
-        if running_tasks.get(task_id):
+        if any(running_tasks.get(t) for t in task_ids):
             return False
-        running_tasks[task_id] = True
+        for t in task_ids:
+            running_tasks[t] = True
         return True
 
 
 def release_task(task_id: str) -> None:
     """Release a previously claimed task slot."""
+    release_tasks(task_id)
+
+
+def release_tasks(*task_ids: str) -> None:
+    """Release previously claimed task slots."""
     with _task_lock:
-        running_tasks[task_id] = False
+        for t in task_ids:
+            running_tasks[t] = False
 
 
-def run_command_in_background(task_id: str, command: list[str]):
-    """Run an already-claimed task, releasing its slot when finished."""
+def run_command_in_background(task_ids: str | list[str], command: list[str]):
+    """Run an already-claimed task, releasing its slot(s) when finished."""
+    ids = [task_ids] if isinstance(task_ids, str) else list(task_ids)
+    label = ids[0]
     try:
         # stdin must not inherit the server's terminal: with a TTY the child's
         # login fallback opens a browser and blocks minutes on a prompt whose
@@ -433,11 +452,11 @@ def run_command_in_background(task_id: str, command: list[str]):
             command, check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL
         )
     except subprocess.CalledProcessError as e:
-        logger.error(f"Task {task_id} failed: {e.stderr}")
+        logger.error(f"Task {label} failed: {e.stderr}")
     except Exception as e:
-        logger.error(f"Task {task_id} errored: {e}")
+        logger.error(f"Task {label} errored: {e}")
     finally:
-        release_task(task_id)
+        release_tasks(*ids)
 
 
 @app.get("/api/tasks/status")
@@ -456,8 +475,8 @@ async def action_follow_popular(
         err = {"error": f"Invalid period. Use: {', '.join(valid_periods)}"}
         return JSONResponse(err, status_code=400)
 
-    if not try_claim_task("follow"):
-        err = {"error": "A follow task is already running"}
+    if not try_claim_tasks("follow", "browser"):
+        err = {"error": "A follow task is already running, or the browser is in use"}
         return JSONResponse(err, status_code=409)
 
     command = [
@@ -470,7 +489,7 @@ async def action_follow_popular(
         str(limit),
     ]
 
-    background_tasks.add_task(run_command_in_background, "follow", command)
+    background_tasks.add_task(run_command_in_background, ["follow", "browser"], command)
     return JSONResponse(
         {
             "message": f"Started following popular members ({period}), limit: {limit}",
@@ -482,8 +501,11 @@ async def action_follow_popular(
 @app.post("/api/actions/unfollow")
 async def action_unfollow(background_tasks: BackgroundTasks, limit: int = 20):
     """Trigger unfollowing non-followers."""
-    if not try_claim_task("unfollow"):
-        return JSONResponse({"error": "An unfollow task is already running"}, status_code=409)
+    if not try_claim_tasks("unfollow", "browser"):
+        return JSONResponse(
+            {"error": "An unfollow task is already running, or the browser is in use"},
+            status_code=409,
+        )
 
     command = [
         sys.executable,
@@ -493,7 +515,7 @@ async def action_unfollow(background_tasks: BackgroundTasks, limit: int = 20):
         str(limit),
     ]
 
-    background_tasks.add_task(run_command_in_background, "unfollow", command)
+    background_tasks.add_task(run_command_in_background, ["unfollow", "browser"], command)
     return JSONResponse(
         {
             "message": f"Started unfollowing non-followers, limit: {limit}",
@@ -752,21 +774,32 @@ async def get_metrics_performance(days: int = 30):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+# Plain def: this drives a real browser synchronously, which inside an
+# async handler would block the event loop for the whole scrape.
 @app.post("/api/metrics/update-engagement")
-async def update_engagement():
+def update_engagement():
     """Trigger engagement metrics update."""
+    if not try_claim_tasks("engagement", "browser"):
+        return JSONResponse(
+            {"error": "An engagement update is already running, or the browser is in use"},
+            status_code=409,
+        )
     try:
         from src.review_metrics import EngagementScraper, ReviewMetricsDB
 
         db = ReviewMetricsDB()
         db.connect()
-        scraper = EngagementScraper()
-        result = scraper.update_all_engagement(db)
-        db.close()
+        try:
+            scraper = EngagementScraper()
+            result = scraper.update_all_engagement(db)
+        finally:
+            db.close()
         return JSONResponse({"message": f"Updated {result['updated']} reviews", **result})
     except Exception as e:
         logger.error(f"Error updating engagement: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
+    finally:
+        release_tasks("engagement", "browser")
 
 
 @app.post("/api/metrics/ab-test/start")
