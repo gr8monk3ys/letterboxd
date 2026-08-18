@@ -116,29 +116,12 @@ class ReviewPoster:
         return login(page, self.config)
 
     def get_pending_reviews(self) -> list[dict]:
-        """Get AI reviews that haven't been posted yet."""
-        # films.rating is NULL for every row in a real export; the score lives
-        # in the ratings table. Reading films.rating alone shows every film as
-        # unrated in the confirmation prompt.
-        # posted_reviews is the durable record of past posts: it predates the
-        # posted_at column and survives re-imports, so it also excludes
-        # reviews posted before posted_at existed. It is guaranteed to exist
-        # here because __init__ connects ReviewMetricsDB, which creates it.
-        self.db.cursor.execute("""
-            SELECT ar.letterboxd_uri, ar.name, ar.year, ar.ai_review,
-                   COALESCE(rt.rating, f.rating) AS rating
-            FROM ai_reviews ar
-            LEFT JOIN films f ON ar.letterboxd_uri = f.letterboxd_uri
-            LEFT JOIN ratings rt ON ar.letterboxd_uri = rt.letterboxd_uri
-            WHERE ar.posted_at IS NULL
-              AND NOT EXISTS (
-                  SELECT 1 FROM posted_reviews pr
-                  WHERE pr.letterboxd_uri = ar.letterboxd_uri
-              )
-            ORDER BY ar.generated_at DESC
-        """)
-        columns = ["letterboxd_uri", "name", "year", "review", "rating"]
-        return [dict(zip(columns, row)) for row in self.db.cursor.fetchall()]
+        """Get AI reviews that haven't been posted yet.
+
+        Delegates so the CLI and the dashboard's /drafts page share one
+        definition of "pending draft".
+        """
+        return self.db.get_ai_review_drafts()
 
     def post_review(self, page: Page, film: dict) -> tuple[bool, str | None]:
         """Post a review for a single film.

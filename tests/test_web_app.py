@@ -555,3 +555,157 @@ class TestRunCommandInBackground:
 
         # Task should be reset even on failure
         assert app_module.running_tasks["test"] is False
+
+
+class TestDraftsPage:
+    """Test the editable review drafts page and its save endpoint."""
+
+    @pytest.fixture
+    def client(self, monkeypatch, tmp_path):
+        # Build the schema with the production DDL + migrations rather than a
+        # hand-copied mirror: mirrors drift, and a drifted one hid a schema
+        # crash on this very page.
+        from src.data_processing.create_database import MovieDatabase
+        from src.data_processing.migrations import MigrationManager
+
+        db_path = tmp_path / "movie_database.db"
+        db = MovieDatabase(db_path=db_path)
+        db.connect()
+        db.create_tables()
+        db.close()
+        manager = MigrationManager(db_path=db_path)
+        manager.connect()
+        manager.run_pending_migrations()
+        manager.close()
+
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        # films.rating NULL, score in ratings — the real-export shape
+        cursor.execute(
+            "INSERT INTO films (letterboxd_uri, name, year, rating) "
+            "VALUES ('uri1', 'Taste of Cherry', 1997, NULL)"
+        )
+        cursor.execute(
+            "INSERT INTO ratings (letterboxd_uri, name, year, rating) "
+            "VALUES ('uri1', 'Taste of Cherry', 1997, 5.0)"
+        )
+        cursor.execute(
+            """INSERT INTO ai_reviews
+               (letterboxd_uri, name, year, ai_review, generated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("uri1", "Taste of Cherry", 1997, "Original text", "2026-01-01"),
+        )
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setattr("src.data_processing.create_database.DATA_DIR", tmp_path)
+        monkeypatch.setattr("src.web.app.LOGS_DIR", tmp_path)
+        monkeypatch.setattr("src.web.app.get_config", lambda: MagicMock())
+
+        from src.web.app import app
+
+        return TestClient(app)
+
+    def test_page_renders_draft_in_an_editable_field(self, client):
+        response = client.get("/drafts")
+        assert response.status_code == 200
+        assert "Taste of Cherry" in response.text
+        assert "Original text" in response.text
+        assert "<textarea" in response.text
+
+    def test_page_shows_rating_from_ratings_table(self, client):
+        """films.rating is NULL in a real export; the score lives in ratings."""
+        assert "5.0" in client.get("/drafts").text
+
+    def test_save_persists_the_edit(self, client):
+        response = client.post(
+            "/api/reviews/ai/update",
+            json={"letterboxd_uri": "uri1", "review": "My edited take."},
+        )
+        assert response.status_code == 200
+
+        # The edit survives a reload, i.e. it actually hit the database
+        assert "My edited take." in client.get("/drafts").text
+
+    def test_save_rejects_empty_review(self, client):
+        response = client.post(
+            "/api/reviews/ai/update", json={"letterboxd_uri": "uri1", "review": "   "}
+        )
+        assert response.status_code == 400
+        assert "Original text" in client.get("/drafts").text
+
+    def test_save_unknown_film_is_404(self, client):
+        response = client.post(
+            "/api/reviews/ai/update", json={"letterboxd_uri": "nope", "review": "text"}
+        )
+        assert response.status_code == 404
+
+    def test_empty_state_names_the_command(self, client, monkeypatch, tmp_path):
+        conn = sqlite3.connect(tmp_path / "movie_database.db")
+        conn.execute("DELETE FROM ai_reviews")
+        conn.commit()
+        conn.close()
+
+        body = client.get("/drafts").text
+        assert "No drafts yet" in body
+        assert "write_review" in body
+
+    def test_save_refuses_a_posted_review(self, client, tmp_path):
+        """Once a review is posted, editing the local copy would silently
+        diverge from what is live on Letterboxd."""
+        conn = sqlite3.connect(tmp_path / "movie_database.db")
+        conn.execute("UPDATE ai_reviews SET posted_at = '2026-01-02' WHERE letterboxd_uri = 'uri1'")
+        conn.commit()
+        conn.close()
+
+        response = client.post(
+            "/api/reviews/ai/update", json={"letterboxd_uri": "uri1", "review": "New text"}
+        )
+        assert response.status_code == 404
+
+        conn = sqlite3.connect(tmp_path / "movie_database.db")
+        text = conn.execute("SELECT ai_review FROM ai_reviews WHERE letterboxd_uri = 'uri1'")
+        assert text.fetchone()[0] == "Original text"
+        conn.close()
+
+    def test_page_hides_posted_reviews(self, client, tmp_path):
+        conn = sqlite3.connect(tmp_path / "movie_database.db")
+        conn.execute("UPDATE ai_reviews SET posted_at = '2026-01-02' WHERE letterboxd_uri = 'uri1'")
+        conn.commit()
+        conn.close()
+
+        assert "Taste of Cherry" not in client.get("/drafts").text
+
+    def test_page_hides_reviews_recorded_only_in_posted_reviews(self, client, tmp_path):
+        """Reviews posted before posted_at existed live only in posted_reviews."""
+        conn = sqlite3.connect(tmp_path / "movie_database.db")
+        conn.execute(
+            """INSERT INTO posted_reviews
+               (letterboxd_uri, film_name, film_year, review_text, tone_preset, posted_at)
+               VALUES ('uri1', 'Taste of Cherry', 1997, 'Original text', 'casual', '2025-06-01')"""
+        )
+        conn.commit()
+        conn.close()
+
+        assert "Taste of Cherry" not in client.get("/drafts").text
+
+    def test_save_rejects_non_string_values_with_400(self, client):
+        """A malformed body must be a validation error, not a 500."""
+        for payload in (
+            {"letterboxd_uri": "uri1", "review": 123},
+            {"letterboxd_uri": 123, "review": "text"},
+            {"letterboxd_uri": "uri1", "review": ["a"]},
+        ):
+            response = client.post("/api/reviews/ai/update", json=payload)
+            assert response.status_code == 400, payload
+
+    def test_page_survives_a_database_error(self, client, monkeypatch):
+        """A broken database renders the empty state, matching the analytics
+        page convention, instead of a 500."""
+        mock_db = MagicMock()
+        mock_db.connect.side_effect = Exception("Connection failed")
+        monkeypatch.setattr("src.web.app.MovieDatabase", lambda: mock_db)
+
+        response = client.get("/drafts")
+        assert response.status_code == 200
+        assert "No drafts yet" in response.text

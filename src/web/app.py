@@ -274,6 +274,54 @@ async def actions_page(request: Request):
     )
 
 
+# Plain def, not async: these handlers run synchronous sqlite, and inside an
+# async handler a locked database would stall the whole event loop - including
+# the /ws/logs stream - instead of just a threadpool thread.
+@app.get("/drafts", response_class=HTMLResponse)
+def drafts_page(request: Request):
+    """Review drafts, editable before you post them by hand."""
+    try:
+        db = MovieDatabase()
+        db.connect()
+        try:
+            drafts = db.get_ai_review_drafts()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error loading drafts: {e}")
+        drafts = []
+
+    return templates.TemplateResponse(request, "drafts.html", {"drafts": drafts})
+
+
+@app.post("/api/reviews/ai/update")
+def api_update_ai_review(payload: dict):
+    """Save an edited draft."""
+    uri = payload.get("letterboxd_uri")
+    review = payload.get("review")
+
+    # JSON bodies can carry any value type; a non-string here must be a 400,
+    # not an AttributeError-turned-500 at .strip().
+    if not isinstance(uri, str) or not uri.strip() or not isinstance(review, str):
+        return JSONResponse({"error": "letterboxd_uri and review are required"}, status_code=400)
+    if not review.strip():
+        return JSONResponse({"error": "Review cannot be empty"}, status_code=400)
+
+    try:
+        db = MovieDatabase()
+        db.connect()
+        try:
+            if not db.update_ai_review(uri.strip(), review):
+                return JSONResponse({"error": "No draft found for that film"}, status_code=404)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error saving draft: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+    return JSONResponse({"message": "Draft saved", "letterboxd_uri": uri.strip()})
+
+
 @app.get("/films", response_class=HTMLResponse)
 async def films_page(request: Request):
     """Films management page."""
