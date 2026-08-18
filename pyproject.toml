@@ -25,7 +25,7 @@ dependencies = [
 # other two are opt-in so nobody installs three SDKs to use one.
 [project.optional-dependencies]
 openai = ["openai>=1.60.0"]
-gemini = ["google-genai>=1.0.0"]
+gemini = ["google-genai>=2.18.1"]
 
 # Dev dependencies live in [dependency-groups] below, which is what
 # `uv sync --dev` and CI actually install.
