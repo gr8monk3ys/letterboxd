@@ -454,3 +454,144 @@ class TestReviewGenerator:
             assert "didn't like" in prompt
 
             generator.close()
+
+
+class TestStyleExampleSelection:
+    """Test the style-example pool and rating-aware sampling."""
+
+    def _generator(self, mock_provider, reviews):
+        with (
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
+            patch("src.reviewing.write_review.MovieDatabase") as MockDB,
+        ):
+            mock_get_provider.return_value = mock_provider
+            mock_db_instance = MagicMock()
+            mock_db_instance.get_user_reviews.return_value = reviews
+            MockDB.return_value = mock_db_instance
+
+            from src.reviewing.write_review import ReviewGenerator
+
+            return ReviewGenerator()
+
+    @staticmethod
+    def _review(name, rating, text):
+        return {"name": name, "year": 2020, "rating": rating, "review": text}
+
+    def test_one_liners_are_kept_and_satire_outlier_dropped(
+        self, temp_dir, mock_provider, mock_env_vars
+    ):
+        """Short reviews are part of the voice; multi-page outliers are not."""
+        reviews = [
+            self._review("Short", 4.0, "Respect the COCK"),  # 16 chars, kept
+            self._review("Tiny", 4.0, "NosFREAKtu"),  # 10 chars, kept
+            self._review("Scrap", 4.0, "ok"),  # under 10, dropped
+            self._review("Satire", 0.5, "x" * 2600),  # over 1000, dropped
+            self._review("Normal", 4.0, "A fine film with a lot going for it."),
+        ]
+        generator = self._generator(mock_provider, reviews)
+        pool = generator._get_style_examples(count=100)
+        names = {r["name"] for r in pool}
+        assert names == {"Short", "Tiny", "Normal"}
+        generator.close()
+
+    def test_sampling_prefers_examples_near_target_rating(
+        self, temp_dir, mock_provider, mock_env_vars
+    ):
+        """With a target rating, examples come from reviews rated within 1 star."""
+        low = [
+            self._review(f"Low{i}", 1.5, f"Jokey pan number {i}, what a stinker.")
+            for i in range(20)
+        ]
+        high = [
+            self._review(f"High{i}", 4.5, f"Earnest praise number {i}, a real gem.")
+            for i in range(20)
+        ]
+        generator = self._generator(mock_provider, low + high)
+        picked = generator._get_style_examples(count=10, rating=5.0)
+        assert all(r["name"].startswith("High") for r in picked)
+        assert len(picked) == 10
+        generator.close()
+
+    def test_sampling_backfills_when_near_pool_is_small(
+        self, temp_dir, mock_provider, mock_env_vars
+    ):
+        """If few reviews match the rating, the rest of the sample is backfilled."""
+        near = [self._review("Near", 4.5, "The only five-star-adjacent review here.")]
+        far = [
+            self._review(f"Far{i}", 1.0, f"Distant register number {i}, not it.") for i in range(20)
+        ]
+        generator = self._generator(mock_provider, near + far)
+        picked = generator._get_style_examples(count=5, rating=5.0)
+        assert len(picked) == 5
+        assert any(r["name"] == "Near" for r in picked)
+        generator.close()
+
+    def test_style_prompt_uses_fifteen_examples(self, temp_dir, mock_provider, mock_env_vars):
+        """The few-shot block carries 15 examples, not 5."""
+        reviews = [
+            self._review(f"Film{i}", 3.5, f"Watchable stuff, take number {i}.") for i in range(30)
+        ]
+        generator = self._generator(mock_provider, reviews)
+        prompt = generator._build_style_prompt()
+        assert prompt.count("(2020)") == 15
+        generator.close()
+
+    def test_generate_prompt_states_typical_length(self, temp_dir, mock_provider, mock_env_vars):
+        """The prompt tells the model the user's real reviews run short."""
+        reviews = [
+            self._review(f"Film{i}", 4.0, f"Watchable stuff, take number {i}.") for i in range(5)
+        ]
+        generator = self._generator(mock_provider, reviews)
+        generator.generate_review({"name": "Target", "year": 2024, "rating": 4.0})
+        prompt = mock_provider.generate.call_args.kwargs["prompt"]
+        assert "1-3 sentences" in prompt
+        generator.close()
+
+    def test_generate_review_passes_rating_to_example_selection(
+        self, temp_dir, mock_provider, mock_env_vars
+    ):
+        """Examples in the prompt track the target film's rating."""
+        low = [
+            self._review(f"Low{i}", 1.0, f"Jokey pan number {i}, what a stinker.")
+            for i in range(20)
+        ]
+        high = [
+            self._review(f"High{i}", 5.0, f"Earnest praise number {i}, a real gem.")
+            for i in range(20)
+        ]
+        generator = self._generator(mock_provider, low + high)
+        generator.generate_review({"name": "Target", "year": 2024, "rating": 5.0})
+        prompt = mock_provider.generate.call_args.kwargs["prompt"]
+        assert "Earnest praise" in prompt
+        assert "Jokey pan" not in prompt
+        generator.close()
+
+    def test_generate_prompt_includes_sampled_length_target(
+        self, temp_dir, mock_provider, mock_env_vars
+    ):
+        """Each prompt carries a character target drawn from the user's real lengths."""
+        reviews = [self._review(f"Film{i}", 4.0, "x" * 120) for i in range(20)]
+        generator = self._generator(mock_provider, reviews)
+        generator.generate_review({"name": "Target", "year": 2024, "rating": 4.0})
+        prompt = mock_provider.generate.call_args.kwargs["prompt"]
+        assert "about 120 characters" in prompt
+        generator.close()
+
+    def test_generated_review_strips_wrapping_quotes(self, temp_dir, mock_provider, mock_env_vars):
+        """A review the model wrapped in quotation marks is unwrapped."""
+        reviews = [
+            self._review(f"Film{i}", 4.0, "Solid little movie, no complaints here.")
+            for i in range(5)
+        ]
+        generator = self._generator(mock_provider, reviews)
+        for wrapped in ('"Loved every minute of it."', "“Loved every minute of it.”"):
+            generator.provider.generate = MagicMock(return_value=wrapped)
+            result = generator.generate_review({"name": "Target", "year": 2024, "rating": 4.0})
+            assert result == "Loved every minute of it."
+        # Interior quotes survive
+        generator.provider.generate = MagicMock(return_value='He said "wow" and meant it.')
+        assert (
+            generator.generate_review({"name": "T", "year": 2024, "rating": 4.0})
+            == 'He said "wow" and meant it.'
+        )
+        generator.close()

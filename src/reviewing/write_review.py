@@ -149,29 +149,45 @@ class ReviewGenerator:
         """Get the current tone preset configuration."""
         return TONE_PRESETS[self.tone]
 
-    def _get_style_examples(self, count: int = 10) -> list[dict]:
-        """Get random sample of user's reviews for style matching."""
+    def _get_style_examples(self, count: int = 15, rating: float | None = None) -> list[dict]:
+        """Get a sample of user's reviews for style matching.
+
+        One-liners are part of the voice, so only empty scraps and
+        multi-page outliers are excluded. When the target film's rating
+        is known, examples rated within one star are preferred — the
+        user's register (earnest vs. jokey) tracks how seriously they
+        took the film, and rating is the recorded proxy for that.
+        """
         if self._style_examples is None:
             all_reviews = self.db.get_user_reviews()
-            # Filter to reviews with reasonable length
-            good_reviews = [r for r in all_reviews if 50 < len(r["review"]) < 500]
+            good_reviews = [r for r in all_reviews if 10 <= len(r["review"]) <= 1000]
             self._style_examples = good_reviews
 
-        # Return random sample
-        if len(self._style_examples) <= count:
-            return self._style_examples
-        return random.sample(self._style_examples, count)
+        pool = self._style_examples
+        if len(pool) <= count:
+            return pool
+        if rating is not None:
+            near = [
+                r
+                for r in pool
+                if r.get("rating") is not None and abs(float(r["rating"]) - rating) <= 1.0
+            ]
+            if len(near) >= count:
+                return random.sample(near, count)
+            far = [r for r in pool if r not in near]
+            return near + random.sample(far, count - len(near))
+        return random.sample(pool, count)
 
-    def _build_style_prompt(self) -> str:
+    def _build_style_prompt(self, rating: float | None = None) -> str:
         """Build a prompt section with style examples from user's reviews."""
-        examples = self._get_style_examples(5)
+        examples = self._get_style_examples(15, rating=rating)
         if not examples:
             return ""
 
         prompt = "\n\nHere are examples of my previous reviews to match my style:\n"
         for ex in examples:
-            rating = f"{ex['rating']}★" if ex["rating"] else "unrated"
-            prompt += f'\n{ex["name"]} ({ex["year"]}) [{rating}]:\n"{ex["review"]}"\n'
+            rating_label = f"{ex['rating']}★" if ex["rating"] else "unrated"
+            prompt += f'\n{ex["name"]} ({ex["year"]}) [{rating_label}]:\n"{ex["review"]}"\n'
 
         return prompt
 
@@ -201,8 +217,23 @@ class ReviewGenerator:
                     film_context = format_film_context(metadata)
                     logging.debug(f"TMDB metadata for {title}: {film_context}")
 
-            style_examples = self._build_style_prompt()
+            target_rating = float(rating) if rating else None
+            style_examples = self._build_style_prompt(rating=target_rating)
             tone_preset = self.get_tone_preset()
+
+            # Each call is independent, so without a concrete target the
+            # model writes the same medium-length review every time.
+            # Sampling a length from the user's real reviews (at this
+            # rating) reproduces their natural spread of one-liners and
+            # paragraphs across a batch.
+            length_pool = self._get_style_examples(15, rating=target_rating)
+            length_line = ""
+            if length_pool:
+                target_len = len(random.choice(length_pool)["review"])
+                length_line = (
+                    f"\n- Aim for about {target_len} characters, "
+                    "the length of one of my typical reviews"
+                )
 
             # Build prompt with optional TMDB context
             context_line = f"\nFilm info: {film_context}" if film_context else ""
@@ -212,6 +243,8 @@ class ReviewGenerator:
 
 Guidelines:
 {tone_preset["guidelines"]}
+- My real reviews are usually 1-3 sentences; never pad — a one-line reaction is fine
+- Match how seriously the examples take their films; that is my register at this rating{length_line}
 - Write only the review text, no title or rating
 {style_examples}
 
@@ -220,11 +253,20 @@ Now write a review for "{title}" ({year}):"""
             # Vendor-specific error handling lives in the provider, which
             # logs and returns None rather than leaking one SDK's exception
             # types into this module.
-            return self.provider.generate(
+            review = self.provider.generate(
                 prompt=prompt,
                 system=tone_preset["system"],
                 max_tokens=300,
             )
+            if review is not None:
+                # Models sometimes return the review wrapped in quotation
+                # marks; posted verbatim that reads as a formatting bug.
+                for open_q, close_q in (('"', '"'), ("“", "”")):
+                    if review.startswith(open_q) and review.endswith(close_q):
+                        inner = review[1:-1]
+                        if open_q not in inner and close_q not in inner:
+                            review = inner.strip()
+            return review
 
         except Exception as e:
             handle_exception(e, f"Error generating review for '{film.get('name')}'")
