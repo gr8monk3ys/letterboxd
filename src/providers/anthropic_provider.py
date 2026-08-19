@@ -9,12 +9,12 @@ logger = logging.getLogger(__name__)
 class AnthropicProvider:
     """Generate reviews using Anthropic's Claude API."""
 
-    def __init__(self, api_key: str = "", model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, api_key: str = "", model: str = ""):
         import anthropic
 
         key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
         self.client = anthropic.Anthropic(api_key=key)
-        self.model = model
+        self.model = model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 
     def generate(self, prompt: str, system: str, max_tokens: int) -> str | None:
         """Generate text using Claude."""
