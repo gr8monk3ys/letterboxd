@@ -6,6 +6,7 @@ import json
 import logging
 import random
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -122,8 +123,17 @@ class ReviewGenerator:
     def _log_provider(self) -> None:
         logging.info(f"Generating with provider: {self.provider_name}")
 
-    def __init__(self, tone: str | None = None, use_tmdb: bool = True, provider: str | None = None):
+    def __init__(
+        self,
+        tone: str | None = None,
+        use_tmdb: bool = True,
+        provider: str | None = None,
+        popular_fetcher: Callable[[dict], list[dict]] | None = None,
+    ):
         self.config = get_config()
+        # Optional callable film -> [{"text", "likes"}, ...] supplying the
+        # film's most-liked substantive reviews as style influence
+        self.popular_fetcher = popular_fetcher
 
         # A typo in AI_PROVIDER should not take a whole batch down, so fall
         # back rather than raise. Same shape as the tone handling below.
@@ -249,6 +259,27 @@ class ReviewGenerator:
             # Build prompt with optional TMDB context
             context_line = f"\nFilm info: {film_context}" if film_context else ""
 
+            # Most-liked substantive reviews of this film, as influence
+            popular_block = ""
+            if self.popular_fetcher is not None:
+                try:
+                    popular = self.popular_fetcher(film)
+                except Exception as e:
+                    logging.warning(f"Could not fetch popular reviews for {title}: {e}")
+                    popular = []
+                if popular:
+                    lines = "\n".join(f'({p["likes"]:,} likes): "{p["text"]}"' for p in popular)
+                    popular_block = f"""
+
+Popular reviews of this film, to show what lands with readers:
+{lines}
+
+About those popular reviews: learn from their ambition — a real point
+of view, specific observations, analysis that actually says something.
+Never copy their phrases, jokes, structure, or opinions; every word
+must be mine. When the film deserves it, go longer and deeper than my
+usual."""
+
             prompt = f"""Write a Letterboxd review for "{title}" ({year}).
 {rating_context}{context_line}
 
@@ -259,7 +290,7 @@ Guidelines:
 {HUMANIZER_GUIDELINES}
 - If you don't confidently know this exact film, reply with exactly SKIP; never guess or invent
 - Write only the review text, no title or rating
-{style_examples}
+{style_examples}{popular_block}
 
 Now write a review for "{title}" ({year}):"""
 
@@ -297,6 +328,7 @@ Now write a review for "{title}" ({year}):"""
         year_start: int | None = None,
         year_end: int | None = None,
         min_rating: float | None = None,
+        sample: float | None = None,
     ) -> int:
         """Generate reviews for films without reviews.
 
@@ -306,6 +338,9 @@ Now write a review for "{title}" ({year}):"""
             year_start: Start of year range (inclusive)
             year_end: End of year range (inclusive)
             min_rating: Minimum rating filter
+            sample: Review only this fraction of candidate films,
+                chosen at random — deliberate incompleteness so the
+                account doesn't review literally everything
 
         Returns:
             Number of reviews generated
@@ -317,6 +352,9 @@ Now write a review for "{title}" ({year}):"""
                 year_end=year_end,
                 min_rating=min_rating,
             )
+
+            if sample is not None:
+                films = [f for f in films if random.random() < sample]
 
             if not films:
                 logging.info("All films already have reviews!")
@@ -478,6 +516,23 @@ def build_arg_parser() -> "argparse.ArgumentParser":
         type=float,
         help="Only generate reviews for films rated at least this high (e.g., 4.0)",
     )
+    filter_group.add_argument(
+        "--sample",
+        type=float,
+        metavar="FRACTION",
+        help=(
+            "Review only this fraction of candidate films, chosen at random "
+            "(e.g., 0.3) — deliberate incompleteness for the lower-rated tiers"
+        ),
+    )
+    parser.add_argument(
+        "--viral",
+        action="store_true",
+        help=(
+            "Scrape each film's most-liked substantive reviews (needs the "
+            "browser session) and use them as style influence"
+        ),
+    )
 
     return parser
 
@@ -509,7 +564,29 @@ def main() -> None:
         print("Set tone via --tone flag or REVIEW_TONE env var")
         return
 
-    generator = ReviewGenerator(tone=args.tone)
+    # The viral fetcher shares one browser session across the batch;
+    # a scrape failure degrades to plain generation rather than aborting.
+    playwright_ctx = None
+    browser_context = None
+    fetcher = None
+    if args.viral and not (args.export or args.preview):
+        from playwright.sync_api import sync_playwright
+
+        from src.reviewing.popular_reviews import fetch_popular_reviews
+        from src.utils.auth import open_browser
+
+        try:
+            playwright_ctx = sync_playwright().start()
+            browser_context, browser_page = open_browser(playwright_ctx, get_config())
+
+            def fetcher(film: dict) -> list[dict]:
+                return fetch_popular_reviews(browser_page, film["letterboxd_uri"])
+
+            print("Viral mode: pulling each film's most-liked reviews as influence")
+        except Exception as e:
+            logging.warning(f"Viral context unavailable ({e}); generating without it")
+
+    generator = ReviewGenerator(tone=args.tone, provider=args.provider, popular_fetcher=fetcher)
 
     try:
         if args.export:
@@ -557,6 +634,7 @@ def main() -> None:
                 year_start=year_start,
                 year_end=year_end,
                 min_rating=args.min_rating,
+                sample=args.sample,
             )
 
             if generated > 0:
@@ -566,6 +644,12 @@ def main() -> None:
                 print("\nNo reviews generated.")
     finally:
         generator.close()
+        # An abandoned persistent profile keeps the browser's
+        # SingletonLock and blocks every later run
+        if browser_context is not None:
+            browser_context.close()
+        if playwright_ctx is not None:
+            playwright_ctx.stop()
 
 
 if __name__ == "__main__":

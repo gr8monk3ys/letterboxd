@@ -623,3 +623,67 @@ class TestStyleExampleSelection:
         prompt = generator.provider.generate.call_args.kwargs["prompt"]
         assert "SKIP" in prompt
         generator.close()
+
+
+class TestPopularReviewInfluence:
+    """Test the viral-review context and rating-tier sampling."""
+
+    def _generator(self, mock_provider, reviews, fetcher=None):
+        with (
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
+            patch("src.reviewing.write_review.MovieDatabase") as MockDB,
+        ):
+            mock_get_provider.return_value = mock_provider
+            mock_db_instance = MagicMock()
+            mock_db_instance.get_user_reviews.return_value = reviews
+            MockDB.return_value = mock_db_instance
+
+            from src.reviewing.write_review import ReviewGenerator
+
+            return ReviewGenerator(popular_fetcher=fetcher)
+
+    @staticmethod
+    def _review(name, rating, text):
+        return {"name": name, "year": 2020, "rating": rating, "review": text}
+
+    def test_popular_reviews_appear_in_prompt(self, temp_dir, mock_provider, mock_env_vars):
+        """Fetched popular reviews show up as influence with a no-copy rule."""
+        reviews = [self._review(f"Film{i}", 4.0, "Solid little movie, honestly.") for i in range(5)]
+        fetcher = MagicMock(
+            return_value=[
+                {"text": "An essay-grade take on longing.", "likes": 27695},
+                {"text": "Another substantive popular review.", "likes": 21053},
+            ]
+        )
+        generator = self._generator(mock_provider, reviews, fetcher=fetcher)
+        generator.generate_review({"name": "Target", "year": 2024, "rating": 5.0})
+        prompt = mock_provider.generate.call_args.kwargs["prompt"]
+        assert "27,695 likes" in prompt
+        assert "essay-grade take" in prompt
+        assert "never copy" in prompt.lower()
+        generator.close()
+
+    def test_popular_fetcher_failure_degrades_gracefully(
+        self, temp_dir, mock_provider, mock_env_vars
+    ):
+        """A scrape failure must not block generation."""
+        reviews = [self._review(f"Film{i}", 4.0, "Solid little movie, honestly.") for i in range(5)]
+        fetcher = MagicMock(side_effect=RuntimeError("cloudflare says no"))
+        generator = self._generator(mock_provider, reviews, fetcher=fetcher)
+        result = generator.generate_review({"name": "Target", "year": 2024, "rating": 4.0})
+        assert result is not None
+        assert "likes)" not in mock_provider.generate.call_args.kwargs["prompt"]
+        generator.close()
+
+    def test_sample_filters_films(self, temp_dir, mock_provider, mock_env_vars):
+        """A sample fraction reviews only that share of candidate films."""
+        reviews = [self._review(f"Film{i}", 4.0, "Solid little movie, honestly.") for i in range(5)]
+        generator = self._generator(mock_provider, reviews)
+        generator.db.get_films_without_reviews.return_value = [
+            {"letterboxd_uri": f"u{i}", "name": f"F{i}", "year": 2020, "rating": 3.0}
+            for i in range(10)
+        ]
+        with patch("src.reviewing.write_review.random.random", side_effect=[0.1, 0.9] * 5):
+            generated = generator.generate_reviews(sample=0.5)
+        assert generated == 5
+        generator.close()
