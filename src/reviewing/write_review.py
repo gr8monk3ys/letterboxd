@@ -257,6 +257,7 @@ Guidelines:
 - My real reviews are usually 1-3 sentences; never pad — a one-line reaction is fine
 - Match how seriously the examples take their films; that is my register at this rating{length_line}
 {HUMANIZER_GUIDELINES}
+- If you don't confidently know this exact film, reply with exactly SKIP; never guess or invent
 - Write only the review text, no title or rating
 {style_examples}
 
@@ -270,6 +271,11 @@ Now write a review for "{title}" ({year}):"""
                 system=tone_preset["system"],
                 max_tokens=300,
             )
+            if review is not None and review.strip().upper() == "SKIP":
+                logging.info(
+                    f"Model doesn't know '{title}' ({year}); skipping rather than inventing"
+                )
+                return None
             if review is not None:
                 # Models sometimes return the review wrapped in quotation
                 # marks; posted verbatim that reads as a formatting bug.

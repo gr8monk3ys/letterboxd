@@ -609,3 +609,17 @@ class TestStyleExampleSelection:
         assert "isn't just" in prompt
         assert "threes" in prompt
         generator.close()
+
+    def test_unknown_film_skip_sentinel_returns_none(self, temp_dir, mock_provider, mock_env_vars):
+        """A SKIP reply from the model means no review is saved for the film."""
+        reviews = [
+            self._review(f"Film{i}", 4.0, "Solid little movie, no complaints here.")
+            for i in range(5)
+        ]
+        generator = self._generator(mock_provider, reviews)
+        generator.provider.generate = MagicMock(return_value="SKIP")
+        result = generator.generate_review({"name": "Obscure Indie", "year": 2024, "rating": 4.0})
+        assert result is None
+        prompt = generator.provider.generate.call_args.kwargs["prompt"]
+        assert "SKIP" in prompt
+        generator.close()
