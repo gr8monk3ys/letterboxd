@@ -329,7 +329,9 @@ class TestReviewPosterPostReview:
             mock_locator.is_visible.return_value = False
             mock_page.locator.return_value.first = mock_locator
             mock_page.title.return_value = "Test Film review"
-            mock_page.url = "https://letterboxd.com/testuser/film/test/review/"
+            # The AJAX save leaves the browser on the film page; the
+            # entry URL is constructed from the username and film slug.
+            mock_page.url = "https://letterboxd.com/film/test-film/"
 
             film = {
                 "name": "Test Film",
@@ -340,7 +342,7 @@ class TestReviewPosterPostReview:
 
             success, url = poster_with_mocks.post_review(mock_page, film)
             assert success is True
-            assert url == "https://letterboxd.com/testuser/film/test/review/"
+            assert url == "https://letterboxd.com/testuser/film/test-film/"
 
     def test_post_review_form_still_open_is_failure(self, poster_with_mocks, mock_page):
         """A submit that leaves the form open did not land; reporting success

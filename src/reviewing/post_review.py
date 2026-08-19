@@ -1,9 +1,7 @@
 """Post AI-generated reviews to Letterboxd."""
 
 import logging
-import random
 import time
-from datetime import datetime, timedelta
 
 from playwright.sync_api import Page, sync_playwright
 
@@ -12,81 +10,6 @@ from src.data_processing.create_database import MovieDatabase
 from src.review_metrics import ReviewMetricsDB
 from src.utils.auth import goto_with_retry, login, open_browser, raise_if_challenged
 from src.utils.errors import handle_exception
-
-
-def calculate_watch_date(
-    film_year: int | None,
-    letterboxd_uri: str,
-    db: MovieDatabase,
-) -> str:
-    """Calculate the watch date based on film release year.
-
-    Logic:
-    - Pre-2009 films: Use diary date if exists, else rating date, else today
-    - 2009-2022 films: Release date + random 1-14 days
-    - 2023+ films: Release date + random 1-7 days
-
-    Args:
-        film_year: The film's release year
-        letterboxd_uri: The Letterboxd URI for database lookups
-        db: MovieDatabase instance for date lookups
-
-    Returns:
-        Date string in YYYY-MM-DD format
-    """
-    today = datetime.now()
-
-    if film_year is None:
-        return today.strftime("%Y-%m-%d")
-
-    if film_year < 2009:
-        # For older films, use actual watched date from diary or rating date
-        diary_date = db.get_diary_date(letterboxd_uri)
-        if diary_date:
-            return diary_date
-
-        rating_date = db.get_rating_date(letterboxd_uri)
-        if rating_date:
-            return rating_date
-
-        # Fallback to today
-        return today.strftime("%Y-%m-%d")
-
-    elif film_year <= 2022:
-        # 2009-2022: Watched within 2 weeks of release
-        # Use a random month (Jan-Mar) for theatrical releases
-        release_month = random.randint(1, 12)
-        release_day = random.randint(1, 28)
-        try:
-            release = datetime(film_year, release_month, release_day)
-        except ValueError:
-            release = datetime(film_year, 1, 15)
-
-        offset = random.randint(1, 14)
-        watch_date = release + timedelta(days=offset)
-
-        # Don't return future dates
-        if watch_date > today:
-            return today.strftime("%Y-%m-%d")
-        return watch_date.strftime("%Y-%m-%d")
-
-    else:
-        # 2023+: Watched within 1 week of release
-        release_month = random.randint(1, 12)
-        release_day = random.randint(1, 28)
-        try:
-            release = datetime(film_year, release_month, release_day)
-        except ValueError:
-            release = datetime(film_year, 1, 15)
-
-        offset = random.randint(1, 7)
-        watch_date = release + timedelta(days=offset)
-
-        # Don't return future dates
-        if watch_date > today:
-            return today.strftime("%Y-%m-%d")
-        return watch_date.strftime("%Y-%m-%d")
-
 
 # Set up logging
 logging.basicConfig(
@@ -139,33 +62,19 @@ class ReviewPoster:
             review_text = film["review"]
             uri = film["letterboxd_uri"]
 
-            # Calculate the watch date based on release year
-            watch_date = calculate_watch_date(year, uri, self.db)
-            logging.info(f"Calculated watch date for {name} ({year}): {watch_date}")
-
-            # Go to the film page directly using the URI with retry
             logging.info(f"Navigating to film: {name} ({year})")
 
-            # Try to find the film page - Letterboxd URIs are short links
+            # Letterboxd URIs are boxd.it short links that redirect to
+            # the film page
             if not goto_with_retry(page, uri):
                 logging.error(f"Failed to navigate to {uri} after retries")
                 return False, None
             page.wait_for_timeout(2000)
 
-            # Look for the "Review or log" button or similar
-            # Common selectors for Letterboxd review actions
-            review_button = page.locator(
-                'a[href*="/add-diary-entry"], '
-                "a.log-film, "
-                ".film-action-link, "
-                'a[data-action="add-diary-entry"]'
-            ).first
-
-            if review_button.count() == 0:
-                # Try clicking on the rate/review section
-                selector = '.rate-review-section a, .sidebar a[href*="diary"]'
-                review_button = page.locator(selector).first
-
+            # The signed-in film page has a classless <button> reading
+            # "Review or log…" that opens the diary-entry modal; text is
+            # the only stable handle on it.
+            review_button = page.locator('button:has-text("Review or log")').first
             if review_button.count() == 0:
                 logging.warning(f"Could not find review button for {name}")
                 return False, None
@@ -173,68 +82,64 @@ class ReviewPoster:
             review_button.click()
             page.wait_for_timeout(2000)
 
-            # Wait for the review form/modal to appear
-            review_textarea = page.locator(
-                'textarea[name="review"], '
-                "textarea.review-field, "
-                "#diary-entry-review, "
-                ".review-text textarea"
-            ).first
-
+            # The modal form is form.js-diary-entry-form (its id carries
+            # a per-render UUID) posting to /s/save-diary-entry
+            review_textarea = page.locator('form.js-diary-entry-form textarea[name="review"]').first
             if review_textarea.count() == 0:
                 logging.warning(f"Could not find review textarea for {name}")
                 return False, None
 
-            # Fill in the review
             review_textarea.fill(review_text)
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(500)
 
-            # Set the watch date if date input exists
-            # Letterboxd uses various date input formats
-            date_input = page.locator(
-                'input[name="viewingDate"], '
-                "input.viewing-date, "
-                'input[type="date"], '
-                "#diary-entry-date"
-            ).first
+            # Post as a plain review: an unchecked specifiedDate means no
+            # diary date is claimed. The old behavior invented a watch
+            # date, which fabricated diary history.
+            try:
+                page.evaluate(
+                    """() => {
+                        const box = document.querySelector(
+                            'form.js-diary-entry-form input[name="specifiedDate"]');
+                        if (box && box.checked) box.click();
+                    }"""
+                )
+            except Exception as e:
+                logging.warning(f"Could not clear the date checkbox: {e}")
 
-            if date_input.count() > 0:
+            # Carry the user's existing rating onto the entry so the
+            # review doesn't display unrated. Star radios are ordered
+            # half-star inputs: index = rating * 2.
+            rating = film.get("rating")
+            if rating:
                 try:
-                    # Clear and fill the date
-                    date_input.fill(watch_date)
-                    logging.info(f"Set watch date to: {watch_date}")
+                    page.evaluate(
+                        """(idx) => {
+                            const stars = document.querySelectorAll(
+                                'form.js-diary-entry-form input[type=radio]');
+                            if (stars[idx]) stars[idx].click();
+                        }""",
+                        int(float(rating) * 2),
+                    )
                 except Exception as e:
-                    logging.warning(f"Could not set watch date: {e}")
-            else:
-                # Try clicking a date picker button and using JS to set date
-                date_picker = page.locator(".date-picker, .viewing-date-picker").first
-                if date_picker.count() > 0:
-                    try:
-                        # Use JavaScript to set date value
-                        js_code = (
-                            f"document.querySelector('input[name=\"viewingDate\"]')."
-                            f"value = '{watch_date}'"
-                        )
-                        page.evaluate(js_code)
-                        logging.info(f"Set watch date via JS to: {watch_date}")
-                    except Exception as e:
-                        logging.warning(f"Could not set watch date via JS: {e}")
+                    logging.warning(f"Could not set star rating: {e}")
 
             page.wait_for_timeout(500)
 
-            # Submit the review
-            submit_button = page.locator(
-                'button[type="submit"], '
-                ".save-diary-entry, "
-                'input[value="Save"], '
-                'button:has-text("Save")'
-            ).first
-
-            if submit_button.count() == 0:
-                logging.warning(f"Could not find submit button for {name}")
+            # The visible Save button sits outside the form element (same
+            # as the list editor), so clicking it through Playwright is
+            # unreliable; requestSubmit() hands off to the site's own
+            # AJAX submit handler, which is the only path proven to save.
+            submitted = page.evaluate(
+                """() => {
+                    const form = document.querySelector('form.js-diary-entry-form');
+                    if (!form) return false;
+                    form.requestSubmit();
+                    return true;
+                }"""
+            )
+            if not submitted:
+                logging.warning(f"Could not find diary form to submit for {name}")
                 return False, None
-
-            submit_button.click()
             page.wait_for_timeout(3000)
 
             # A click that "succeeded" proves nothing: a validation error or
@@ -243,29 +148,25 @@ class ReviewPoster:
             # forever. A still-open form or a challenge page means it did
             # not land.
             raise_if_challenged(page)
-            form_still_open = page.locator(
-                'textarea[name="review"], '
-                "textarea.review-field, "
-                "#diary-entry-review, "
-                ".review-text textarea"
-            ).first
+            form_still_open = page.locator('form.js-diary-entry-form textarea[name="review"]').first
             if form_still_open.count() > 0 and form_still_open.is_visible():
                 logging.warning(
                     f"Review form still open after submitting {name}; treating the post as failed"
                 )
                 return False, None
 
-            # Try to capture the review URL after posting
+            # The AJAX save leaves us on the film page; the user's entry
+            # for the film lives at /<username>/film/<slug>/
             review_url = None
             try:
-                # After posting, the page might redirect to the review
                 current_url = page.url
-                if "/review/" in current_url or self.config.username in current_url:
-                    review_url = current_url
+                if "/film/" in current_url:
+                    slug = current_url.split("/film/")[1].strip("/").split("/")[0]
+                    review_url = f"https://letterboxd.com/{self.config.username}/film/{slug}/"
             except Exception:
                 pass
 
-            logging.info(f"Posted review for: {name} ({year}) with date {watch_date}")
+            logging.info(f"Posted review for: {name} ({year})")
             return True, review_url
 
         except Exception as e:

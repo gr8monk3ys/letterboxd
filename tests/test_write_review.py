@@ -595,3 +595,17 @@ class TestStyleExampleSelection:
             == 'He said "wow" and meant it.'
         )
         generator.close()
+
+    def test_generate_prompt_includes_humanizer_rules(self, temp_dir, mock_provider, mock_env_vars):
+        """The prompt bans the tell-tale AI writing patterns."""
+        reviews = [
+            self._review(f"Film{i}", 4.0, "Solid little movie, no complaints here.")
+            for i in range(5)
+        ]
+        generator = self._generator(mock_provider, reviews)
+        generator.generate_review({"name": "Target", "year": 2024, "rating": 4.0})
+        prompt = mock_provider.generate.call_args.kwargs["prompt"]
+        assert "em dash" in prompt
+        assert "isn't just" in prompt
+        assert "threes" in prompt
+        generator.close()

@@ -29,6 +29,17 @@ logging.basicConfig(
 )
 
 # Review tone presets with their guidelines and system prompts
+# Writing tells that read as AI-generated (per Wikipedia's "Signs of AI
+# writing"); the examples show the voice, these ban the patterns the
+# model drifts into anyway.
+HUMANIZER_GUIDELINES = """\
+- Never use an em dash; use a comma, a period, or nothing
+- No "isn't just X, it's Y", "not only X but Y", or "X, not Y" parallelisms
+- Don't group ideas in threes; it reads as a formula
+- No aphorisms or polished one-line wisdom; react, don't write epigraphs
+- Skip critic phrases like "masterclass", "gut punch", "a meditation on"
+- Not every review needs a punchline ending; it's fine to just stop"""
+
 TONE_PRESETS = {
     "casual": {
         "name": "Casual",
@@ -245,6 +256,7 @@ Guidelines:
 {tone_preset["guidelines"]}
 - My real reviews are usually 1-3 sentences; never pad — a one-line reaction is fine
 - Match how seriously the examples take their films; that is my register at this rating{length_line}
+{HUMANIZER_GUIDELINES}
 - Write only the review text, no title or rating
 {style_examples}
 
