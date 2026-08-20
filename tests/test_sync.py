@@ -193,3 +193,40 @@ class TestSafety:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestEntityDecoding:
+    """RSS carries HTML-escaped text, and the escapes must all come off."""
+
+    @staticmethod
+    def _title(raw):
+        from src.sync import parse_rss
+
+        xml = (
+            "<item><letterboxd:filmTitle>"
+            + raw
+            + "</letterboxd:filmTitle><letterboxd:filmYear>1960</letterboxd:filmYear></item>"
+        )
+        return parse_rss(xml)[0].title
+
+    def test_zero_padded_numeric_entity(self):
+        """A hand-rolled decoder covered &#39; but not &#039;, so
+        "L&#039;Avventura" was stored raw and then failed to match on
+        Letterboxd, silently dropping the film from an imported list."""
+        assert self._title("L&#039;Avventura") == "L'Avventura"
+
+    def test_unpadded_numeric_entity(self):
+        assert self._title("It&#39;s Alive") == "It's Alive"
+
+    def test_named_entity(self):
+        assert self._title("Am&eacute;lie") == "Amélie"
+
+    def test_ampersand(self):
+        assert self._title("Fire &amp; Ice") == "Fire & Ice"
+
+    def test_does_not_double_unescape(self):
+        """Decoding &amp; first would turn "&amp;lt;" into a real "<"."""
+        assert self._title("Tom &amp;lt; Jerry") == "Tom &lt; Jerry"
+
+    def test_curly_apostrophe_entity(self):
+        assert self._title("Rosemary&#8217;s Baby") == "Rosemary’s Baby"

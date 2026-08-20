@@ -14,6 +14,7 @@ reconciled on normalized title+year, exactly as growth/trending does.
 
 from __future__ import annotations
 
+import html
 import logging
 import re
 import sqlite3
@@ -65,18 +66,13 @@ def _tag(block: str, name: str) -> str | None:
     match = re.search(rf"<{name}>(.*?)</{name}>", block, re.S)
     if not match:
         return None
-    return (
-        match.group(1)
-        .replace("<![CDATA[", "")
-        .replace("]]>", "")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&#39;", "'")
-        .replace("&quot;", '"')
-        # &amp; last: decoding it first would double-unescape "&amp;lt;"
-        .replace("&amp;", "&")
-        .strip()
-    )
+    # html.unescape handles every entity form in a single pass, so
+    # "&amp;lt;" stays "&lt;" rather than being double-unescaped. The
+    # hand-rolled chain this replaces listed entities one by one and so
+    # missed the zero-padded numeric form: "L&#039;Avventura" was stored
+    # with the escape intact and no longer matched the film anywhere.
+    text = match.group(1).replace("<![CDATA[", "").replace("]]>", "")
+    return html.unescape(text).strip()
 
 
 def _film_key(title: str | None, year: int | None) -> tuple[str, int | None]:
