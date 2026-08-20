@@ -440,3 +440,76 @@ class TestMain:
 
         # Should not raise
         main()
+
+
+class TestOpenReviewForm:
+    """Letterboxd labels the diary-entry button three different ways."""
+
+    @pytest.fixture
+    def poster(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "test.db"
+        _build_schema(db_path)
+
+        mock_config = MagicMock()
+        mock_config.database_file = db_path
+        mock_config.username = "testuser"
+        mock_config.headless = True
+
+        monkeypatch.setattr("src.reviewing.post_review.get_config", lambda: mock_config)
+        monkeypatch.setattr("src.reviewing.post_review.ReviewMetricsDB", MagicMock)
+
+        from src.reviewing.post_review import ReviewPoster
+
+        return ReviewPoster()
+
+    @staticmethod
+    def _page(present: set, url="https://letterboxd.com/film/test-film/", after_goto=None):
+        """A page where only `present` button labels exist.
+
+        `after_goto` replaces that set once the page navigates, modelling
+        the different buttons the user's own entry page offers.
+        """
+        page = MagicMock()
+        page.url = url
+        state = {"present": present}
+
+        def locator(selector):
+            loc = MagicMock()
+            hit = any(label in selector for label in state["present"])
+            loc.first.count.return_value = 1 if hit else 0
+            return loc
+
+        def goto(*_args, **_kwargs):
+            if after_goto is not None:
+                state["present"] = after_goto
+
+        page.locator.side_effect = locator
+        page.goto.side_effect = goto
+        return page
+
+    def test_unlogged_film_uses_review_or_log(self, poster):
+        page = self._page({"Review or log"})
+        assert poster.open_review_form(page, "Test Film") is True
+        page.goto.assert_not_called()
+
+    def test_logged_film_edits_entry_instead_of_logging_again(self, poster):
+        """ "Log again" would create a duplicate diary entry, so the
+        existing entry is edited from the user's own page instead."""
+        page = self._page({"Log again"}, after_goto={"Edit entry or add review", "Log again"})
+        assert poster.open_review_form(page, "Test Film") is True
+        page.goto.assert_called_once()
+        assert page.goto.call_args[0][0] == "https://letterboxd.com/testuser/film/test-film/"
+
+    def test_user_entry_page_uses_edit_entry(self, poster):
+        """The user's own entry page carries both buttons; editing the
+        existing entry must win over logging a second one."""
+        page = self._page(
+            {"Edit entry or add review", "Log again"},
+            url="https://letterboxd.com/testuser/film/test-film/",
+        )
+        assert poster.open_review_form(page, "Test Film") is True
+        page.goto.assert_not_called()
+
+    def test_no_button_anywhere_is_failure(self, poster):
+        page = self._page(set())
+        assert poster.open_review_form(page, "Test Film") is False
