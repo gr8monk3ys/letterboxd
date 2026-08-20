@@ -10,6 +10,7 @@ is a far better bet for an evening than a 2010s one of equal reputation.
 
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass
 
@@ -19,6 +20,16 @@ logger = logging.getLogger(__name__)
 # at face value. Below it, the rate is pulled towards the baseline: one
 # five-star film out of two watched is not evidence of a goldmine.
 CONFIDENCE_COUNT = 25
+
+# Era affinity is a prior about the odds, not a verdict on the film, so
+# it adjusts the quality score rather than multiplying it. As a
+# multiplier it swamped everything: a middling 1950s film outscored an
+# essential modern one and the top 100 of a real 830-film watchlist came
+# back entirely 1950s and 1960s. As a log bonus it moves a film by at
+# most a point and a half on the ten-point quality scale, which is
+# enough to reorder films of similar stature and not enough to bury a
+# masterpiece for being recent.
+ERA_BONUS = 1.5
 
 SYSTEM = (
     "You rank films for a serious viewer's watchlist. You score only the films "
@@ -110,12 +121,13 @@ def score_film(
 
     year = film.get("year")
     decade = (year // 10) * 10 if year else None
-    era_weight = affinity.get(decade, affinity.get("baseline", 1.0))
+    era = affinity.get(decade, affinity.get("baseline", 1.0))
+    era_adjustment = ERA_BONUS * math.log(era) if era > 0 else 0.0
 
     return PriorityScore(
         name=film["name"],
         year=year,
-        score=(canon + taste) / 2 * era_weight,
+        score=(canon + taste) / 2 + era_adjustment,
         canon=canon,
         taste=taste,
         reason=reason,
