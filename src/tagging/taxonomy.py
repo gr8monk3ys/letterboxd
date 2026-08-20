@@ -102,6 +102,18 @@ FACETS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# Tags that describe a list rather than a film. A film never carries
+# these, so they are kept out of the vocabulary the film suggester sees.
+LIST_FACETS: dict[str, tuple[str, ...]] = {
+    "list-kind": (
+        "ranked",
+        "director-study",
+        "year-in-review",
+        "awards",
+        "themed",
+    ),
+}
+
 # Common ways the same idea gets written, mapped onto the canonical tag.
 # The model reaches for these; resolving beats discarding.
 ALIASES: dict[str, str] = {
@@ -163,9 +175,14 @@ ALIASES: dict[str, str] = {
 MAX_TAGS = 4
 
 
-def canonical_tags() -> tuple[str, ...]:
-    """Every tag in the vocabulary, flattened."""
-    return tuple(tag for tags in FACETS.values() for tag in tags)
+def canonical_tags(include_list_kinds: bool = False) -> tuple[str, ...]:
+    """Every tag in the vocabulary, flattened.
+
+    List-kind tags are excluded by default so film tagging cannot reach
+    for them.
+    """
+    facets = {**FACETS, **LIST_FACETS} if include_list_kinds else FACETS
+    return tuple(tag for tags in facets.values() for tag in tags)
 
 
 def normalize_tag(raw: str) -> str:
@@ -176,13 +193,13 @@ def normalize_tag(raw: str) -> str:
     return text.strip("-")
 
 
-def validate_tags(raw_tags: list[str]) -> list[str]:
+def validate_tags(raw_tags: list[str], include_list_kinds: bool = False) -> list[str]:
     """Keep only vocabulary tags, resolving aliases and capping the count.
 
     Order is preserved so the suggester's ranking survives, and anything
     invented is dropped silently: a junk tag must never reach the account.
     """
-    allowed = set(canonical_tags())
+    allowed = set(canonical_tags(include_list_kinds=include_list_kinds))
     result: list[str] = []
 
     for raw in raw_tags:
