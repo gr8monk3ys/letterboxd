@@ -26,6 +26,37 @@ SYSTEM = (
 )
 
 
+def _match_key(title: str) -> str:
+    """Reduce a title to what two spellings of it have in common."""
+    text = (title or "").strip().lower()
+    text = re.sub(r"^(the|a|an|le|la|les|el|il|los)\s+", "", text)
+    return re.sub(r"[^a-z0-9]", "", text)
+
+
+def _find_film(title: str, year: int | None, by_key: dict[str, dict]) -> dict | None:
+    """Find the batch film a returned title refers to, or None.
+
+    Falls back to a prefix match so an expanded subtitle still resolves,
+    but never across a year mismatch: films share titles often enough
+    that the year is what tells two of them apart.
+    """
+    key = _match_key(title)
+    film = by_key.get(key)
+    if film is None:
+        prefixes = [
+            f
+            for k, f in by_key.items()
+            if k and (key.startswith(k) or k.startswith(key)) and abs(len(k) - len(key)) < 40
+        ]
+        film = prefixes[0] if len(prefixes) == 1 else None
+
+    if film is None:
+        return None
+    if year is not None and film.get("year") is not None and int(year) != int(film["year"]):
+        return None
+    return film
+
+
 @dataclass
 class PriorityScore:
     """One film's place in the queue."""
@@ -152,22 +183,25 @@ titles above. Do not add films. Format:
             return []
 
         # Only score what was asked for: an invented title would end up
-        # on the account's list.
-        requested = {(f["name"].strip().lower(), f.get("year")) for f in films}
-        by_name = {f["name"].strip().lower(): f for f in films}
+        # on the account's list. Matching has to tolerate the model
+        # answering with a film's canonical title rather than the one it
+        # was handed ("My Left Foot" comes back as "My Left Foot: The
+        # Story of Christy Brown"), while still rejecting a title that
+        # was never in the batch.
+        by_key = {_match_key(f["name"]): f for f in films}
 
         scored: list[PriorityScore] = []
         for row in rows:
             if not isinstance(row, dict) or "name" not in row:
                 continue
-            key = str(row["name"]).strip().lower()
-            if (key, row.get("year")) not in requested and key not in by_name:
+            film = _find_film(str(row["name"]), row.get("year"), by_key)
+            if film is None:
                 logger.warning(f"Model returned a film that was not in the batch: {row['name']}")
                 continue
             try:
                 scored.append(
                     score_film(
-                        by_name[key],
+                        film,
                         canon=int(row.get("canon", 0)),
                         taste=int(row.get("taste", 0)),
                         affinity=self.affinity,
