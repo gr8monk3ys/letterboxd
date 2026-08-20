@@ -199,3 +199,34 @@ class TestTitleMatching:
             '[{"name": "The Parent Trap", "year": 1998, "canon": 5, "taste": 5, "reason": "x"}]'
         )
         assert p.score_batch([{"name": "The Parent Trap", "year": 1961}]) == []
+
+
+class TestEraWeightCalibration:
+    """Era affinity is a prior, not a verdict."""
+
+    def _affinity(self):
+        # The real spread measured on this account
+        return {1950: 2.78, 1970: 1.95, 2010: 0.64, "baseline": 1.0}
+
+    def test_an_essential_modern_film_beats_a_minor_old_one(self):
+        """Applied at full strength the multiplier swamped quality: a
+        canon-5 1950s film outscored a canon-10 2010s film, and the top
+        100 of a real 830-film watchlist came back 100% 1950s and 1960s."""
+        minor_old = score_film(
+            {"name": "minor", "year": 1955}, canon=5, taste=5, affinity=self._affinity()
+        )
+        essential_new = score_film(
+            {"name": "essential", "year": 2015}, canon=10, taste=10, affinity=self._affinity()
+        )
+        assert essential_new.score > minor_old.score
+
+    def test_era_still_breaks_a_tie_on_quality(self):
+        """It must remain a real signal, just not the loudest one."""
+        old = score_film({"name": "old", "year": 1955}, canon=8, taste=8, affinity=self._affinity())
+        new = score_film({"name": "new", "year": 2015}, canon=8, taste=8, affinity=self._affinity())
+        assert old.score > new.score
+
+    def test_era_can_still_overturn_a_one_point_quality_gap(self):
+        older = score_film({"name": "o", "year": 1955}, canon=7, taste=7, affinity=self._affinity())
+        newer = score_film({"name": "n", "year": 2015}, canon=8, taste=8, affinity=self._affinity())
+        assert older.score > newer.score
