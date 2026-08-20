@@ -276,6 +276,15 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
             """,
         ],
     ),
+    (
+        9,
+        "Record which tags each review carries",
+        [
+            """
+            ALTER TABLE ai_reviews ADD COLUMN tags TEXT
+            """,
+        ],
+    ),
 ]
 
 

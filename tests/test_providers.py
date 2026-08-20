@@ -6,6 +6,7 @@ instead turns that from a hard stop into a choice.
 """
 
 import sys
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -62,3 +63,38 @@ class TestProviderProtocol:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestAnthropicContentBlocks:
+    """The text is not always the first content block."""
+
+    def _provider(self, blocks):
+        from src.providers.anthropic_provider import AnthropicProvider
+
+        provider = AnthropicProvider(api_key="test-key")
+        response = MagicMock()
+        response.content = blocks
+        provider.client = MagicMock()
+        provider.client.messages.create.return_value = response
+        return provider
+
+    def test_reads_text_after_a_thinking_block(self):
+        """With extended thinking on, content[0] is a ThinkingBlock and
+        the answer sits behind it; reading index 0 returned None and the
+        caller could not tell that apart from an empty answer."""
+        from anthropic.types import TextBlock, ThinkingBlock
+
+        blocks = [
+            ThinkingBlock(type="thinking", thinking="considering...", signature="sig"),
+            TextBlock(type="text", text="  grief, memory  "),
+        ]
+        assert self._provider(blocks).generate("p", "s", 60) == "grief, memory"
+
+    def test_no_text_block_at_all_is_none(self):
+        from anthropic.types import ThinkingBlock
+
+        blocks = [ThinkingBlock(type="thinking", thinking="only thinking", signature="sig")]
+        assert self._provider(blocks).generate("p", "s", 60) is None
+
+    def test_empty_content_is_none(self):
+        assert self._provider([]).generate("p", "s", 60) is None

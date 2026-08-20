@@ -11,6 +11,46 @@ from src.review_metrics import ReviewMetricsDB
 from src.utils.auth import goto_with_retry, login, open_browser, raise_if_challenged
 from src.utils.errors import handle_exception
 
+# Editing an existing entry never creates a duplicate, so these win.
+EDIT_BUTTON_LABELS = ("edit or delete review", "edit entry or add review")
+# Only offered when the film has never been logged.
+NEW_ENTRY_BUTTON_LABELS = ("review or log",)
+# Buttons that add a second diary entry for a film watched once. Their
+# wording keeps changing ("log again / add review", "log again / edit
+# review", "review or log again"), so they are recognised by the phrase
+# they share rather than by an exact list that goes stale.
+DUPLICATE_BUTTON_PHRASE = "log again"
+
+# Match on the full label, trailing ellipsis and thin spaces normalized.
+_NORMALIZE_LABEL_JS = """
+    const norm = el => (el.textContent || '').trim().toLowerCase()
+        .replace(/[\\s\\u2009\\u00a0]+/g, ' ')
+        .replace(/[\\u2026.]+$/, '').trim();
+"""
+
+_FIND_DUPLICATE_JS = (
+    """() => {"""
+    + _NORMALIZE_LABEL_JS
+    + f"""
+    const btn = [...document.querySelectorAll('button')]
+        .find(b => b.offsetParent !== null && norm(b).includes("{DUPLICATE_BUTTON_PHRASE}"));
+    return btn ? norm(btn) : null;
+}}"""
+)
+
+_CLICK_BUTTON_JS = (
+    """(labels) => {"""
+    + _NORMALIZE_LABEL_JS
+    + """
+    for (const label of labels) {
+        const btn = [...document.querySelectorAll('button')]
+            .find(b => b.offsetParent !== null && norm(b) === label);
+        if (btn) { btn.click(); return label; }
+    }
+    return null;
+}"""
+)
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -49,38 +89,75 @@ class ReviewPoster:
     def open_review_form(self, page: Page, name: str) -> bool:
         """Open the diary-entry modal from whichever button this page has.
 
-        Letterboxd labels it three ways: "Review or log…" on a film the
-        user has not logged, "Log again / add review…" on one they have,
-        and "Edit entry or add review…" on the user's own page for the
-        film. Clicking "Log again" would add a second diary entry for a
-        film already watched, so an already-logged film is routed to its
-        existing entry and edited there instead.
+        Letterboxd labels the control five ways depending on whether the
+        film is logged and whether it already carries a review. Two of
+        them ("…log again") create a *second* diary entry for a film
+        watched once, so the edit variants are always preferred and the
+        duplicate variants are never clicked. Matching is on the whole
+        normalized label, never a substring: "Review or log again"
+        contains "Review or log", and matching loosely would silently
+        duplicate an entry every time a review was edited or re-tagged.
         """
-        fresh = page.locator('button:has-text("Review or log")').first
-        if fresh.count() > 0:
-            fresh.click()
+        openers = EDIT_BUTTON_LABELS + NEW_ENTRY_BUTTON_LABELS
+        if page.evaluate(_CLICK_BUTTON_JS, list(openers)):
             return True
 
-        edit = page.locator('button:has-text("Edit entry or add review")').first
-        if edit.count() > 0:
-            edit.click()
-            return True
-
-        # Already logged, and we are on the public film page: the only
-        # button here logs a duplicate, so switch to the user's entry.
-        if page.locator('button:has-text("Log again")').first.count() > 0:
+        # Only the duplicate-creating buttons are on this page, which
+        # means the film is already logged: edit that entry instead.
+        if page.evaluate(_FIND_DUPLICATE_JS):
             slug = page.url.split("/film/")[-1].strip("/").split("/")[0]
             entry_url = f"https://letterboxd.com/{self.config.username}/film/{slug}/"
             logging.info(f"{name} is already logged; editing the existing entry")
             page.goto(entry_url, wait_until="domcontentloaded")
             page.wait_for_timeout(2000)
-            edit = page.locator('button:has-text("Edit entry or add review")').first
-            if edit.count() > 0:
-                edit.click()
+            if page.evaluate(_CLICK_BUTTON_JS, list(EDIT_BUTTON_LABELS)):
                 return True
 
         logging.warning(f"Could not find review button for {name}")
         return False
+
+    def set_tags(self, page: Page, tags: list[str]) -> list[str]:
+        """Enter tags in the modal's typeahead, returning what stuck.
+
+        The field tokenizes as you type into hidden `tag` inputs. It also
+        races: a token can land half-typed, which is how a stray
+        "tearjer" once reached a list on this account. So the tokens are
+        read back and anything that was not asked for is removed before
+        the form is saved.
+        """
+        if not tags:
+            return []
+
+        field = page.locator("input[name=tags]").first
+        if field.count() == 0:
+            logging.warning("Tag field not present; skipping tags")
+            return []
+
+        for tag in tags:
+            field.click()
+            field.type(tag, delay=40)
+            page.wait_for_timeout(500)
+            page.keyboard.press("Comma")
+            page.wait_for_timeout(400)
+
+        tokens: list[str] = page.evaluate(
+            "() => [...document.querySelectorAll('input[name=tag]')].map(i => i.value)"
+        )
+        stray = [t for t in tokens if t not in tags]
+        if stray:
+            logging.warning(f"Removing tokens the typeahead invented: {stray}")
+            page.evaluate(
+                """(bad) => {
+                    document.querySelectorAll('#current-tags li.tag, li.tag').forEach(li => {
+                        const inp = li.querySelector('input[name=tag]');
+                        if (inp && bad.includes(inp.value)) li.remove();
+                    });
+                }""",
+                stray,
+            )
+            tokens = [t for t in tokens if t not in stray]
+
+        return tokens
 
     def post_review(self, page: Page, film: dict) -> tuple[bool, str | None]:
         """Post a review for a single film.
@@ -120,6 +197,8 @@ class ReviewPoster:
 
             review_textarea.fill(review_text)
             page.wait_for_timeout(500)
+
+            applied_tags = self.set_tags(page, film.get("tags") or [])
 
             # Post as a plain review: an unchecked specifiedDate means no
             # diary date is claimed. The old behavior invented a watch
@@ -194,6 +273,12 @@ class ReviewPoster:
                     review_url = f"https://letterboxd.com/{self.config.username}/film/{slug}/"
             except Exception:
                 pass
+
+            if applied_tags:
+                try:
+                    self.db.save_ai_review_tags(uri, applied_tags)
+                except Exception as e:
+                    logging.error(f"Tagged {name} but could not record the tags: {e}")
 
             logging.info(f"Posted review for: {name} ({year})")
             return True, review_url

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.data_processing.create_database import MovieDatabase
-from src.data_processing.migrations import MigrationManager
+from src.data_processing.migrations import MIGRATIONS, MigrationManager
 
 
 def _build_schema(db_path):
@@ -238,8 +238,9 @@ class TestSchemaSelfSufficiency:
         poster.close()
 
     def test_migrations_apply_cleanly_over_the_base_schema(self, tmp_path):
-        """Migration 6's ALTERs must tolerate columns the base schema now
-        carries, or a fresh install stalls there and never reaches 7+."""
+        """Every migration's ALTERs must tolerate columns the base schema
+        now carries, or a fresh install stalls at the first one that
+        collides and never reaches the rest."""
         db_path = tmp_path / "movie_database.db"
         db = MovieDatabase(db_path=db_path)
         db.connect()
@@ -255,7 +256,9 @@ class TestSchemaSelfSufficiency:
         posted_at_columns = [row for row in cursor.fetchall() if row[1] == "posted_at"]
         manager.close()
 
-        assert version == 8
+        # Derived, not hardcoded: the point is that every migration runs,
+        # and a literal here just needs editing each time one is added.
+        assert version == MIGRATIONS[-1][0]
         assert len(posted_at_columns) == 1
 
 
@@ -443,7 +446,7 @@ class TestMain:
 
 
 class TestOpenReviewForm:
-    """Letterboxd labels the diary-entry button three different ways."""
+    """Letterboxd labels the diary button five different ways."""
 
     @pytest.fixture
     def poster(self, tmp_path, monkeypatch):
@@ -463,53 +466,112 @@ class TestOpenReviewForm:
         return ReviewPoster()
 
     @staticmethod
-    def _page(present: set, url="https://letterboxd.com/film/test-film/", after_goto=None):
-        """A page where only `present` button labels exist.
-
-        `after_goto` replaces that set once the page navigates, modelling
-        the different buttons the user's own entry page offers.
-        """
+    def _page(labels, url="https://letterboxd.com/film/test-film/", after_goto=None):
+        """A page offering exactly `labels`, which may change on navigation."""
         page = MagicMock()
         page.url = url
-        state = {"present": present}
+        state = {"labels": set(labels)}
 
-        def locator(selector):
-            loc = MagicMock()
-            hit = any(label in selector for label in state["present"])
-            loc.first.count.return_value = 1 if hit else 0
-            return loc
+        def evaluate(js, arg=None):
+            if arg is None:
+                # The duplicate probe takes no argument: it matches any
+                # button whose label contains the shared phrase.
+                return next((lbl for lbl in state["labels"] if "log again" in lbl), None)
+            return next((lbl for lbl in arg if lbl in state["labels"]), None)
 
         def goto(*_args, **_kwargs):
             if after_goto is not None:
-                state["present"] = after_goto
+                state["labels"] = set(after_goto)
 
-        page.locator.side_effect = locator
+        page.evaluate.side_effect = evaluate
         page.goto.side_effect = goto
         return page
 
-    def test_unlogged_film_uses_review_or_log(self, poster):
-        page = self._page({"Review or log"})
+    def test_unlogged_film_clicks_review_or_log(self, poster):
+        page = self._page({"review or log"})
         assert poster.open_review_form(page, "Test Film") is True
         page.goto.assert_not_called()
 
-    def test_logged_film_edits_entry_instead_of_logging_again(self, poster):
-        """ "Log again" would create a duplicate diary entry, so the
-        existing entry is edited from the user's own page instead."""
-        page = self._page({"Log again"}, after_goto={"Edit entry or add review", "Log again"})
+    def test_existing_review_is_edited_not_relogged(self, poster):
+        """ "Review or log again" contains "review or log" as a substring;
+        matching loosely here would add a second diary entry every time a
+        review is re-tagged."""
+        page = self._page(
+            {"review or log again", "edit or delete review"},
+            url="https://letterboxd.com/testuser/film/test-film/",
+        )
+        assert poster.open_review_form(page, "Test Film") is True
+        clicked = page.evaluate.call_args_list[0][0][1]
+        assert clicked[0] == "edit or delete review"
+        page.goto.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "duplicate_label",
+        [
+            "log again / add review",
+            "log again / edit review",
+            "review or log again",
+            "log again",
+        ],
+    )
+    def test_any_log_again_variant_routes_to_the_entry_page(self, poster, duplicate_label):
+        """Letterboxd has shipped at least four wordings of this button.
+        Enumerating them exactly missed "log again / edit review" and
+        left 27 reviews untagged, so the rule is the shared phrase."""
+        page = self._page({duplicate_label}, after_goto={"edit or delete review"})
         assert poster.open_review_form(page, "Test Film") is True
         page.goto.assert_called_once()
         assert page.goto.call_args[0][0] == "https://letterboxd.com/testuser/film/test-film/"
 
-    def test_user_entry_page_uses_edit_entry(self, poster):
-        """The user's own entry page carries both buttons; editing the
-        existing entry must win over logging a second one."""
-        page = self._page(
-            {"Edit entry or add review", "Log again"},
-            url="https://letterboxd.com/testuser/film/test-film/",
-        )
-        assert poster.open_review_form(page, "Test Film") is True
-        page.goto.assert_not_called()
-
-    def test_no_button_anywhere_is_failure(self, poster):
+    def test_no_usable_button_is_failure(self, poster):
         page = self._page(set())
         assert poster.open_review_form(page, "Test Film") is False
+
+
+class TestSetTags:
+    """The tag typeahead tokenizes as you type, and can race."""
+
+    @pytest.fixture
+    def poster(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "test.db"
+        _build_schema(db_path)
+        mock_config = MagicMock()
+        mock_config.database_file = db_path
+        mock_config.username = "testuser"
+        monkeypatch.setattr("src.reviewing.post_review.get_config", lambda: mock_config)
+        monkeypatch.setattr("src.reviewing.post_review.ReviewMetricsDB", MagicMock)
+        from src.reviewing.post_review import ReviewPoster
+
+        return ReviewPoster()
+
+    @staticmethod
+    def _page(tokens_after_typing):
+        page = MagicMock()
+        page.locator.return_value.first.count.return_value = 1
+        page.evaluate.side_effect = lambda js, *a: (
+            tokens_after_typing if "name=tag]" in js or "name=tag'" in js else None
+        )
+        return page
+
+    def test_returns_tokens_that_stuck(self, poster):
+        page = self._page(["minimal-dialogue", "mortality"])
+        assert poster.set_tags(page, ["minimal-dialogue", "mortality"]) == [
+            "minimal-dialogue",
+            "mortality",
+        ]
+
+    def test_drops_a_truncated_token_from_a_typeahead_race(self, poster):
+        """A half-typed token like 'tearjer' once shipped to the account
+        this way; anything not asked for is removed before saving."""
+        page = self._page(["comedy", "tearjer", "tearjerker"])
+        assert poster.set_tags(page, ["comedy", "tearjerker"]) == ["comedy", "tearjerker"]
+
+    def test_no_tags_is_a_noop(self, poster):
+        page = self._page([])
+        assert poster.set_tags(page, []) == []
+        page.locator.assert_not_called()
+
+    def test_missing_field_returns_empty(self, poster):
+        page = MagicMock()
+        page.locator.return_value.first.count.return_value = 0
+        assert poster.set_tags(page, ["grief"]) == []

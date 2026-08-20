@@ -28,9 +28,14 @@ class AnthropicProvider:
                 system=system,
                 messages=[{"role": "user", "content": prompt}],
             )
-            block = response.content[0]
-            if isinstance(block, TextBlock):
-                return block.text.strip()
+            # With extended thinking enabled the first block is a
+            # ThinkingBlock and the answer sits behind it, so the text
+            # block has to be looked for rather than assumed at index 0.
+            # Reading content[0] returned None instead, which every
+            # caller reads as "the model had nothing to say".
+            for block in response.content:
+                if isinstance(block, TextBlock):
+                    return block.text.strip()
             return None
         except anthropic.APIError as e:
             logger.error(f"Anthropic API error: {e}")
