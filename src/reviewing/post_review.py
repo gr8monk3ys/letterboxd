@@ -46,6 +46,42 @@ class ReviewPoster:
         """
         return self.db.get_ai_review_drafts()
 
+    def open_review_form(self, page: Page, name: str) -> bool:
+        """Open the diary-entry modal from whichever button this page has.
+
+        Letterboxd labels it three ways: "Review or log…" on a film the
+        user has not logged, "Log again / add review…" on one they have,
+        and "Edit entry or add review…" on the user's own page for the
+        film. Clicking "Log again" would add a second diary entry for a
+        film already watched, so an already-logged film is routed to its
+        existing entry and edited there instead.
+        """
+        fresh = page.locator('button:has-text("Review or log")').first
+        if fresh.count() > 0:
+            fresh.click()
+            return True
+
+        edit = page.locator('button:has-text("Edit entry or add review")').first
+        if edit.count() > 0:
+            edit.click()
+            return True
+
+        # Already logged, and we are on the public film page: the only
+        # button here logs a duplicate, so switch to the user's entry.
+        if page.locator('button:has-text("Log again")').first.count() > 0:
+            slug = page.url.split("/film/")[-1].strip("/").split("/")[0]
+            entry_url = f"https://letterboxd.com/{self.config.username}/film/{slug}/"
+            logging.info(f"{name} is already logged; editing the existing entry")
+            page.goto(entry_url, wait_until="domcontentloaded")
+            page.wait_for_timeout(2000)
+            edit = page.locator('button:has-text("Edit entry or add review")').first
+            if edit.count() > 0:
+                edit.click()
+                return True
+
+        logging.warning(f"Could not find review button for {name}")
+        return False
+
     def post_review(self, page: Page, film: dict) -> tuple[bool, str | None]:
         """Post a review for a single film.
 
@@ -71,15 +107,8 @@ class ReviewPoster:
                 return False, None
             page.wait_for_timeout(2000)
 
-            # The signed-in film page has a classless <button> reading
-            # "Review or log…" that opens the diary-entry modal; text is
-            # the only stable handle on it.
-            review_button = page.locator('button:has-text("Review or log")').first
-            if review_button.count() == 0:
-                logging.warning(f"Could not find review button for {name}")
+            if not self.open_review_form(page, name):
                 return False, None
-
-            review_button.click()
             page.wait_for_timeout(2000)
 
             # The modal form is form.js-diary-entry-form (its id carries
