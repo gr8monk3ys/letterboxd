@@ -712,3 +712,105 @@ class TestGenerationTokenBudget:
             generator.generate_review({"name": "T", "year": 2024, "rating": 4.0})
             assert mock_provider.generate.call_args.kwargs["max_tokens"] >= 800
             generator.close()
+
+
+class TestBorrowedPhrases:
+    """Phrases the model reaches for that the user has never written.
+
+    Measured against the real corpus: across 227 of his own reviews,
+    "rent free", "really said", "in the best way" and "wrecked me"
+    appear zero times. Across 25 generated drafts they appeared in
+    eight. That is the tell, and no amount of style examples stopped it.
+    """
+
+    def test_the_ban_list_is_in_the_prompt(self, temp_dir, mock_provider, mock_env_vars):
+        from src.reviewing.write_review import BORROWED_PHRASES, HUMANIZER_GUIDELINES
+
+        assert "rent free" in HUMANIZER_GUIDELINES.lower()
+        assert "rent free" in [p.lower() for p in BORROWED_PHRASES]
+
+    def test_it_finds_a_borrowed_phrase_regardless_of_case(self):
+        from src.reviewing.write_review import find_borrowed_phrases
+
+        assert find_borrowed_phrases("This one lives Rent Free in my head") == ["rent free"]
+
+    def test_clean_text_reports_nothing(self):
+        from src.reviewing.write_review import find_borrowed_phrases
+
+        assert find_borrowed_phrases("The chariot scene is everything.") == []
+
+
+class TestBatchRepetition:
+    """A single review reads fine; the same construction in four of them
+    is what makes a batch look generated."""
+
+    def test_distinctive_phrases_ignores_ordinary_wording(self):
+        from src.reviewing.write_review import distinctive_phrases
+
+        assert distinctive_phrases("one of the best") == set()
+
+    def test_distinctive_phrases_catches_a_repeated_construction(self):
+        from src.reviewing.write_review import distinctive_phrases
+
+        found = distinctive_phrases("it broke something in me completely")
+        assert any("broke something in me" in p for p in found)
+
+    def test_phrases_already_used_are_passed_to_the_model(
+        self, temp_dir, mock_provider, mock_env_vars
+    ):
+        from unittest.mock import MagicMock, patch
+
+        with (
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
+            patch("src.reviewing.write_review.MovieDatabase") as MockDB,
+        ):
+            mock_get_provider.return_value = mock_provider
+            db = MagicMock()
+            db.get_user_reviews.return_value = [
+                {"name": f"F{i}", "year": 2020, "rating": 4.0, "review": "A real review of mine."}
+                for i in range(5)
+            ]
+            MockDB.return_value = db
+
+            from src.reviewing.write_review import ReviewGenerator
+
+            generator = ReviewGenerator()
+            generator.generate_review(
+                {"name": "Target", "year": 2024, "rating": 5.0},
+                avoid={"broke something in me"},
+            )
+            prompt = mock_provider.generate.call_args.kwargs["prompt"]
+            assert "broke something in me" in prompt
+            assert "already used" in prompt.lower()
+            generator.close()
+
+    def test_a_batch_accumulates_what_it_has_already_said(
+        self, temp_dir, mock_provider, mock_env_vars
+    ):
+        """The second film must be told what the first one wrote."""
+        from unittest.mock import MagicMock, patch
+
+        with (
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
+            patch("src.reviewing.write_review.MovieDatabase") as MockDB,
+        ):
+            mock_get_provider.return_value = mock_provider
+            mock_provider.generate.return_value = "That ending broke something in me honestly."
+            db = MagicMock()
+            db.get_user_reviews.return_value = [
+                {"name": f"F{i}", "year": 2020, "rating": 4.0, "review": "A real review of mine."}
+                for i in range(5)
+            ]
+            db.get_films_without_reviews.return_value = [
+                {"letterboxd_uri": f"u{i}", "name": f"F{i}", "year": 2020, "rating": 4.5}
+                for i in range(3)
+            ]
+            MockDB.return_value = db
+
+            from src.reviewing.write_review import ReviewGenerator
+
+            generator = ReviewGenerator()
+            generator.generate_reviews()
+            last_prompt = mock_provider.generate.call_args.kwargs["prompt"]
+            assert "broke something in me" in last_prompt
+            generator.close()
