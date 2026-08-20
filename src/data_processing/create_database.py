@@ -137,9 +137,10 @@ class MovieDatabase:
             """)
 
             # AI-generated reviews table (uses film URI as PK). posted_at and
-            # posted_url must live in the base schema, not only in migration 6:
-            # main() recreates this table from here, and schema_version still
-            # records migration 6 as applied, so the migration never re-runs.
+            # posted_url and tags must live in the base schema, not only in
+            # their migrations: main() recreates this table from here, and
+            # schema_version still records those migrations as applied, so
+            # they never re-run and the columns would be lost.
             self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS ai_reviews (
                     letterboxd_uri TEXT PRIMARY KEY,
@@ -148,7 +149,8 @@ class MovieDatabase:
                     ai_review TEXT,
                     generated_at TEXT,
                     posted_at TEXT,
-                    posted_url TEXT
+                    posted_url TEXT,
+                    tags TEXT
                 )
             """)
 
@@ -423,6 +425,43 @@ class MovieDatabase:
             (datetime.now().isoformat(), review_url, letterboxd_uri),
         )
         self.conn.commit()
+
+    def save_ai_review_tags(self, letterboxd_uri: str, tags: list[str]) -> None:
+        """Record the tags applied to a review on Letterboxd."""
+        self.cursor.execute(
+            "UPDATE ai_reviews SET tags = ? WHERE letterboxd_uri = ?",
+            (",".join(tags), letterboxd_uri),
+        )
+        self.conn.commit()
+
+    def get_ai_review_tags(self, letterboxd_uri: str) -> list[str]:
+        """The tags recorded for a review, or [] if it has none."""
+        self.cursor.execute(
+            "SELECT tags FROM ai_reviews WHERE letterboxd_uri = ?", (letterboxd_uri,)
+        )
+        row = self.cursor.fetchone()
+        if not row or not row[0]:
+            return []
+        return [t for t in row[0].split(",") if t]
+
+    def get_posted_reviews_without_tags(self) -> list[dict]:
+        """Posted reviews that have not been tagged yet, oldest first.
+
+        Drives the retro-tagging pass, and makes it resumable: anything
+        already tagged drops out of the list on the next run.
+        """
+        self.cursor.execute("""
+            SELECT a.letterboxd_uri, a.name, a.year, a.ai_review AS review,
+                   COALESCE(rt.rating, f.rating) AS rating
+            FROM ai_reviews a
+            LEFT JOIN films f ON f.letterboxd_uri = a.letterboxd_uri
+            LEFT JOIN ratings rt ON rt.letterboxd_uri = a.letterboxd_uri
+            WHERE a.posted_at IS NOT NULL
+              AND (a.tags IS NULL OR a.tags = '')
+            ORDER BY a.posted_at
+        """)
+        columns = ["letterboxd_uri", "name", "year", "review", "rating"]
+        return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
 
     def get_ai_reviews(self, pending_only: bool = False, limit: int | None = None) -> list[dict]:
         """The one query over ai_reviews, shared by the dashboard pages, the

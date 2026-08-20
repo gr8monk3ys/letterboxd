@@ -687,3 +687,28 @@ class TestPopularReviewInfluence:
             generated = generator.generate_reviews(sample=0.5)
         assert generated == 5
         generator.close()
+
+
+class TestGenerationTokenBudget:
+    def test_review_generation_leaves_room_for_thinking(
+        self, temp_dir, mock_provider, mock_env_vars
+    ):
+        """Same trap as tag suggestion: a thinking block can eat the
+        whole budget and leave no text, which reads as a failed film."""
+        with (
+            patch("src.reviewing.write_review.get_provider") as mock_get_provider,
+            patch("src.reviewing.write_review.MovieDatabase") as MockDB,
+        ):
+            mock_get_provider.return_value = mock_provider
+            mock_db = MagicMock()
+            mock_db.get_user_reviews.return_value = [
+                {"name": "F", "year": 2020, "rating": 4.0, "review": "Good film, liked it."}
+            ]
+            MockDB.return_value = mock_db
+
+            from src.reviewing.write_review import ReviewGenerator
+
+            generator = ReviewGenerator()
+            generator.generate_review({"name": "T", "year": 2024, "rating": 4.0})
+            assert mock_provider.generate.call_args.kwargs["max_tokens"] >= 800
+            generator.close()

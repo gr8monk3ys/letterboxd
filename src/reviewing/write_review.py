@@ -297,10 +297,12 @@ Now write a review for "{title}" ({year}):"""
             # Vendor-specific error handling lives in the provider, which
             # logs and returns None rather than leaking one SDK's exception
             # types into this module.
+            # Thinking blocks draw on this same budget, so a review-sized
+            # allowance silently starved the answer on some films.
             review = self.provider.generate(
                 prompt=prompt,
                 system=tone_preset["system"],
-                max_tokens=300,
+                max_tokens=1000,
             )
             if review is not None and review.strip().upper() == "SKIP":
                 logging.info(
