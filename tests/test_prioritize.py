@@ -150,3 +150,52 @@ class TestWatchlistPrioritizer:
             '[{"name": "Ikiru", "year": 1952, "canon": 99, "taste": 9, "reason": "x"}]'
         )
         assert p.score_batch([{"name": "Ikiru", "year": 1952}]) == []
+
+
+class TestTitleMatching:
+    """The model returns canonical titles, not the ones it was handed."""
+
+    def _prioritizer(self, reply):
+        provider = MagicMock()
+        provider.generate.return_value = reply
+        return WatchlistPrioritizer(provider=provider, affinity={"baseline": 1.0})
+
+    def test_matches_when_the_model_expands_a_subtitle(self):
+        """Handed "My Left Foot", the model answers with the film's full
+        title. Rejecting that as an unknown film scored 0 of 45 in four
+        batches of a real run."""
+        p = self._prioritizer(
+            '[{"name": "My Left Foot: The Story of Christy Brown", "year": 1989,'
+            ' "canon": 8, "taste": 7, "reason": "x"}]'
+        )
+        out = p.score_batch([{"name": "My Left Foot", "year": 1989}])
+        assert [f.name for f in out] == ["My Left Foot"]
+
+    def test_matches_when_the_model_adds_a_leading_article(self):
+        p = self._prioritizer(
+            '[{"name": "The Man with a Movie Camera", "year": 1929,'
+            ' "canon": 9, "taste": 8, "reason": "x"}]'
+        )
+        out = p.score_batch([{"name": "Man with a Movie Camera", "year": 1929}])
+        assert len(out) == 1
+
+    def test_matches_across_punctuation_and_case(self):
+        p = self._prioritizer(
+            '[{"name": "Allegro Non Troppo", "year": 1976, "canon": 7, "taste": 7, "reason": "x"}]'
+        )
+        out = p.score_batch([{"name": "Allegro non troppo", "year": 1976}])
+        assert len(out) == 1
+
+    def test_still_rejects_a_film_that_was_never_in_the_batch(self):
+        """Loose matching must not become no matching."""
+        p = self._prioritizer(
+            '[{"name": "Casablanca", "year": 1942, "canon": 9, "taste": 8, "reason": "x"}]'
+        )
+        assert p.score_batch([{"name": "My Left Foot", "year": 1989}]) == []
+
+    def test_a_wrong_year_on_a_shared_title_is_not_a_match(self):
+        """Two films share a title often enough that the year matters."""
+        p = self._prioritizer(
+            '[{"name": "The Parent Trap", "year": 1998, "canon": 5, "taste": 5, "reason": "x"}]'
+        )
+        assert p.score_batch([{"name": "The Parent Trap", "year": 1961}]) == []
