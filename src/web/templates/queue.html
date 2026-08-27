@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}Queue - Letterboxd Toolkit{% endblock %}
+
+{% block extra_styles %}
+<style>
+    .queue-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) 0; border-bottom: 1px solid var(--line); }
+    .queue-row:last-child { border-bottom: 0; }
+    .queue-row .title { flex: 1; }
+    .queue-row .meta { color: var(--ink-dim); font-size: 0.9em; }
+    .queue-row input[name="rating"] { width: 5em; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Queue</h1>
+<p class="lede">
+    What the account still needs from you. Ratings typed here are saved locally;
+    <code>uv run python -m src.import_csv</code> turns them into a file to upload at
+    <a href="https://letterboxd.com/import/" target="_blank" rel="noopener">letterboxd.com/import</a>.
+    Reviews are written by <code>uv run python -m src.reviewing.campaign</code>.
+</p>
+
+<div class="stack">
+<div class="card">
+    <h3>Needs a rating <span class="stat-value">{{ rating_needed | length }}</span></h3>
+    {% if not rating_needed %}
+    <p style="color: var(--ink-dim);">Every watched film is rated.</p>
+    {% endif %}
+    {% for e in rating_needed %}
+    <div class="queue-row" data-uri="{{ e.uri }}">
+        <div class="title">
+            {{ e.name }}{% if e.year %} <span class="meta">({{ e.year }})</span>{% endif %}
+            {% if e.watched %}<span class="meta">watched {{ e.watched }}</span>{% endif %}
+        </div>
+        <input type="number" name="rating" min="0.5" max="5" step="0.5" placeholder="0.5-5" aria-label="Rating for {{ e.name }}">
+        <button type="button" class="btn save-rating">Save</button>
+        <a href="{{ e.uri }}" target="_blank" rel="noopener" class="meta">Open &#8599;</a>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="card">
+    <h3>Needs a review <span class="stat-value">{{ review_needed | length }}</span></h3>
+    {% if not review_needed %}
+    <p style="color: var(--ink-dim);">Every rated film carries a review.</p>
+    {% endif %}
+    {% for e in review_needed[:200] %}
+    <div class="queue-row">
+        <div class="title">
+            {{ e.name }}{% if e.year %} <span class="meta">({{ e.year }})</span>{% endif %}
+            {% if e.watched %}<span class="meta">watched {{ e.watched }}</span>{% endif %}
+        </div>
+        <span class="stat-value">{{ e.rating }}&#9733;</span>
+        <a href="{{ e.uri }}" target="_blank" rel="noopener" class="meta">Open &#8599;</a>
+    </div>
+    {% endfor %}
+    {% if review_needed | length > 200 %}
+    <p class="meta">... and {{ review_needed | length - 200 }} more; <code>python -m src.queue</code> lists them all.</p>
+    {% endif %}
+</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.querySelectorAll('.save-rating').forEach(function (button) {
+        button.addEventListener('click', async function () {
+            const row = button.closest('[data-uri]');
+            const value = parseFloat(row.querySelector('input[name="rating"]').value);
+            if (!(value >= 0.5 && value <= 5)) { return; }
+            button.disabled = true;
+            const saved = await triggerAction('/api/queue/rate', 'POST', { uri: row.dataset.uri, rating: value });
+            if (saved) { row.remove(); } else { button.disabled = false; }
+        });
+    });
+</script>
+{% endblock %}
