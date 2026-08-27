@@ -232,6 +232,18 @@ Uses Letterboxd's public RSS feed — no API key, no login, no scraping. It
 covers roughly the 50 most recent diary entries and is safe to re-run.
 For full history, re-export from https://letterboxd.com/settings/data/.
 
+## Keeping the account fully documented
+
+```bash
+uv run python -m src.queue                # films needing a rating, then a review
+uv run python -m src.web.app              # /queue: the same list, type ratings in
+uv run python -m src.import_csv           # pending ratings -> data/letterboxd-import.csv
+```
+
+Ratings only ever come from you: type them on `/queue`, then upload the CSV at
+https://letterboxd.com/import/ (the file leaves `WatchedDate` blank so no diary
+entries are created). The next export ingest clears the uploaded ones.
+
 ## Sharing the account state
 
 ```bash

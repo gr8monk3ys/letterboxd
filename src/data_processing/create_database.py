@@ -714,6 +714,12 @@ def main():
         try:
             db.import_from_letterboxd_export(importer)
 
+            # Ratings typed into the dashboard that the export now carries
+            # have been uploaded; stop offering them for import.
+            cleared = db.clear_pending_where_rated()
+            if cleared:
+                print(f"Cleared {cleared} pending rating(s) now present on Letterboxd")
+
             counts = db.get_review_count()
             print("\n=== Database Created ===")
             print(f"Database: {db.db_path}")
