@@ -24,6 +24,17 @@ logging.basicConfig(
 )
 
 
+PENDING_RATINGS_DDL = """
+    CREATE TABLE IF NOT EXISTS pending_ratings (
+        letterboxd_uri TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        year INTEGER,
+        rating REAL NOT NULL,
+        entered_at TEXT NOT NULL
+    )
+"""
+
+
 class MovieDatabase:
     def __init__(self, db_path: Path | None = None):
         self.db_path = db_path or (DATA_DIR / "movie_database.db")
@@ -153,6 +164,11 @@ class MovieDatabase:
                     tags TEXT
                 )
             """)
+
+            # Ratings typed into the dashboard's /queue page, waiting to be
+            # uploaded through letterboxd.com/import. Rows leave once the
+            # rating shows up in `ratings` (see clear_pending_where_rated).
+            self.cursor.execute(PENDING_RATINGS_DDL)
 
             self.conn.commit()
             logging.info("Database tables created successfully")
@@ -612,6 +628,57 @@ class MovieDatabase:
         columns = ["letterboxd_uri", "name", "year", "rating"]
         return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
 
+    # -- pending ratings (entered in the dashboard, uploaded by hand) --------
+
+    def _ensure_pending_ratings(self) -> None:
+        # Older databases predate the table and the migration may not have
+        # been run; creating it lazily keeps the dashboard endpoint working.
+        self.cursor.execute(PENDING_RATINGS_DDL)
+
+    def upsert_pending_rating(
+        self, letterboxd_uri: str, name: str, year: int | None, rating: float
+    ) -> None:
+        """Remember a rating the user entered, until Letterboxd has it."""
+        self._ensure_pending_ratings()
+        self.cursor.execute(
+            """
+            INSERT INTO pending_ratings (letterboxd_uri, name, year, rating, entered_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(letterboxd_uri) DO UPDATE SET
+                rating = excluded.rating, entered_at = excluded.entered_at
+            """,
+            (letterboxd_uri, name, year, rating, datetime.now().isoformat()),
+        )
+        self.conn.commit()
+
+    def pending_ratings(self) -> list[dict]:
+        """Ratings entered but not yet seen in the ratings table, oldest first."""
+        self._ensure_pending_ratings()
+        self.cursor.execute(
+            "SELECT letterboxd_uri, name, year, rating, entered_at FROM pending_ratings "
+            "ORDER BY entered_at"
+        )
+        columns = ["letterboxd_uri", "name", "year", "rating", "entered_at"]
+        return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
+
+    def clear_pending_where_rated(self) -> int:
+        """Drop pending rows whose film now carries a rating on Letterboxd.
+
+        Returns how many were cleared.
+        """
+        self._ensure_pending_ratings()
+        self.cursor.execute(
+            """
+            DELETE FROM pending_ratings
+            WHERE letterboxd_uri IN (
+                SELECT letterboxd_uri FROM ratings WHERE rating IS NOT NULL
+            )
+            """
+        )
+        cleared = self.cursor.rowcount
+        self.conn.commit()
+        return cleared
+
     def close(self) -> None:
         """Close the database connection."""
         if self._conn:
@@ -646,6 +713,12 @@ def main():
 
         try:
             db.import_from_letterboxd_export(importer)
+
+            # Ratings typed into the dashboard that the export now carries
+            # have been uploaded; stop offering them for import.
+            cleared = db.clear_pending_where_rated()
+            if cleared:
+                print(f"Cleared {cleared} pending rating(s) now present on Letterboxd")
 
             counts = db.get_review_count()
             print("\n=== Database Created ===")

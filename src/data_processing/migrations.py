@@ -285,6 +285,21 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
             """,
         ],
     ),
+    (
+        10,
+        "Ratings entered in the dashboard queue, pending upload",
+        [
+            """
+            CREATE TABLE IF NOT EXISTS pending_ratings (
+                letterboxd_uri TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                year INTEGER,
+                rating REAL NOT NULL,
+                entered_at TEXT NOT NULL
+            )
+            """,
+        ],
+    ),
 ]
 
 

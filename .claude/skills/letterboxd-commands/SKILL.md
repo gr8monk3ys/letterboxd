@@ -54,13 +54,27 @@ uv run python -m src.stats --rate-limits # Rate limit status
 uv run python -m src.sync --dry-run   # preview recent watches
 uv run python -m src.sync             # merge them into the database
 
+# Worklist: films needing a rating, then rated films needing a review
+uv run python -m src.queue                # --json for tooling; also /queue on the dashboard
+uv run python -m src.import_csv           # ratings typed on /queue -> data/letterboxd-import.csv
+
+# Review campaign: draft N -> digest in data/digests/ -> --apply posts that batch
+uv run python -m src.reviewing.campaign --per-run 5 --tone thoughtful
+uv run python -m src.reviewing.campaign --apply
+
+# Duplicate diary entries the tool once created: list / read live / remove extras
+uv run python -m src.reviewing.dedupe_logs [--inspect | --apply]
+
+# Export the account state for other tools (MOVIES_DIR overrides ~/.movies)
+uv run python -m src.export
+
 # Database migrations
 uv run python -m src.data_processing.migrations           # Run pending migrations
 uv run python -m src.data_processing.migrations --status  # Check migration status
 
 # Web UI dashboard (FastAPI) - binds 127.0.0.1 only, no auth
 uv run python -m src.web.app  # Opens at http://localhost:8000
-# Pages: / (stats), /actions (manual action board), /growth, /films,
+# Pages: / (stats), /actions (manual action board), /queue, /growth, /films,
 #        /analytics, /metrics, /logs
 
 # Linting and formatting

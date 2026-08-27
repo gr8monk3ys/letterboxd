@@ -314,6 +314,88 @@ def api_update_ai_review(payload: dict):
     return JSONResponse({"message": "Draft saved", "letterboxd_uri": uri.strip()})
 
 
+def _load_queue() -> list[dict]:
+    from dataclasses import asdict
+
+    from src.queue import build_queue
+
+    db = MovieDatabase()
+    db.connect()
+    try:
+        return [asdict(e) for e in build_queue(db.conn)]
+    finally:
+        db.close()
+
+
+@app.get("/queue", response_class=HTMLResponse)
+def queue_page(request: Request):
+    """Films needing a rating or a review, with a rating input per row."""
+    try:
+        entries = _load_queue()
+    except Exception as e:
+        logger.error(f"Error loading queue: {e}")
+        entries = []
+    return templates.TemplateResponse(
+        request,
+        "queue.html",
+        {
+            "rating_needed": [e for e in entries if e["needs"] == "rating"],
+            "review_needed": [e for e in entries if e["needs"] == "review"],
+        },
+    )
+
+
+@app.get("/api/queue")
+def api_queue():
+    """The same worklist as `python -m src.queue --json`."""
+    try:
+        entries = _load_queue()
+    except Exception as e:
+        logger.error(f"Error loading queue: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+    return JSONResponse({"queue": entries, "total": len(entries)})
+
+
+@app.post("/api/queue/rate")
+def api_queue_rate(payload: dict):
+    """Store a rating the user typed; it is uploaded later via import_csv.
+
+    The rating is the user's, never inferred: this endpoint only records
+    what was typed, in half-star steps between 0.5 and 5.
+    """
+    uri = payload.get("uri")
+    rating = payload.get("rating")
+    if not isinstance(uri, str) or not uri.strip():
+        return JSONResponse({"error": "uri is required"}, status_code=400)
+    if isinstance(rating, bool) or not isinstance(rating, (int, float)):
+        return JSONResponse({"error": "rating must be a number"}, status_code=400)
+    rating = float(rating)
+    if not 0.5 <= rating <= 5.0 or (rating * 2) != int(rating * 2):
+        return JSONResponse({"error": "rating must be 0.5-5 in half-star steps"}, status_code=400)
+
+    try:
+        db = MovieDatabase()
+        db.connect()
+        try:
+            db.cursor.execute(
+                "SELECT name, year FROM films WHERE letterboxd_uri = ?", (uri.strip(),)
+            )
+            film = db.cursor.fetchone()
+            if film is None:
+                return JSONResponse({"error": "No such film"}, status_code=404)
+            db.upsert_pending_rating(uri.strip(), film[0], film[1], rating)
+            pending = len(db.pending_ratings())
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error storing rating: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+    return JSONResponse(
+        {"message": f"Rated {film[0]} {rating}", "uri": uri.strip(), "pending": pending}
+    )
+
+
 @app.get("/films", response_class=HTMLResponse)
 async def films_page(request: Request):
     """Films management page."""
