@@ -371,6 +371,30 @@ class TestReviewPosterPostReview:
             mock_locator.fill.assert_not_called()
             mock_page.keyboard.press.assert_called_once_with("Escape")
 
+    def test_editing_keeps_the_diary_date(self, poster_with_mocks, mock_page):
+        """The date checkbox is cleared only for a brand-new entry; on an
+        existing one (viewingId set) clearing it erases the diary date."""
+        with patch("src.reviewing.post_review.goto_with_retry", return_value=True):
+            mock_locator = MagicMock()
+            mock_locator.count.return_value = 1
+            mock_locator.input_value.return_value = ""
+            mock_locator.is_visible.return_value = False
+            mock_page.locator.return_value.first = mock_locator
+            mock_page.title.return_value = "Test Film review"
+            mock_page.url = "https://letterboxd.com/film/test-film/"
+
+            film = {
+                "name": "Test Film",
+                "year": 2024,
+                "review": "Great movie!",
+                "letterboxd_uri": "https://letterboxd.com/film/test-film/",
+            }
+            assert poster_with_mocks.post_review(mock_page, film)[0] is True
+            scripts = [c.args[0] for c in mock_page.evaluate.call_args_list]
+            date_script = next(s for s in scripts if "specifiedDate" in s)
+            assert "viewingId" in date_script
+            assert "return;  // editing" in date_script
+
     def test_post_review_form_still_open_is_failure(self, poster_with_mocks, mock_page):
         """A submit that leaves the form open did not land; reporting success
         would set posted_at and hide the review forever."""

@@ -214,14 +214,21 @@ class ReviewPoster:
 
             applied_tags = self.set_tags(page, film.get("tags") or [])
 
-            # Post as a plain review: an unchecked specifiedDate means no
-            # diary date is claimed. The old behavior invented a watch
-            # date, which fabricated diary history.
+            # On a new entry, post as a plain review: an unchecked
+            # specifiedDate means no diary date is claimed (the old
+            # behavior invented a watch date). On an *existing* entry the
+            # box reflects the user's own diary date, and unchecking it
+            # deletes that date from the diary - measured 2026-08-27 on
+            # The Sound of Music, whose 23 Aug entry silently became a
+            # dateless review. So the box is left alone when editing.
             try:
                 page.evaluate(
                     """() => {
-                        const box = document.querySelector(
-                            'form.js-diary-entry-form input[name="specifiedDate"]');
+                        const form = document.querySelector('form.js-diary-entry-form');
+                        if (!form) return;
+                        const id = form.querySelector('input[name="viewingId"]');
+                        if (id && id.value) return;  // editing: keep the diary date
+                        const box = form.querySelector('input[name="specifiedDate"]');
                         if (box && box.checked) box.click();
                     }"""
                 )
