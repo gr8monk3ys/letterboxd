@@ -91,14 +91,29 @@ def _unposted(conn: sqlite3.Connection, uris: list[str]) -> list[str]:
     return keep
 
 
+# A film the model declines (it answers SKIP when it does not know the
+# film) stays at the head of the queue, so a run draws on a few spare
+# candidates rather than stalling on it forever.
+SPARE_CANDIDATES = 3
+
+
 def draft(
-    conn: sqlite3.Connection, films: list[dict], tone: str, provider: str | None
+    conn: sqlite3.Connection,
+    films: list[dict],
+    tone: str,
+    provider: str | None,
+    want: int | None = None,
 ) -> list[dict]:
-    """Generate and save a draft per film, the way write_review does it."""
+    """Generate and save drafts, the way write_review does it, until `want`.
+
+    Films the generator declines are reported and passed over.
+    """
     generator = ReviewGenerator(tone=tone, provider=provider)
     drafts: list[dict] = []
     try:
         for film in films:
+            if want is not None and len(drafts) >= want:
+                break
             review = generator.generate_review(film)
             if not review:
                 print(f"  skipped {film['name']} ({film['year']}): no review generated")
@@ -156,12 +171,12 @@ def main() -> None:
                 print(f"Posting the {len(uris)} unposted draft(s) from {digest.name}")
 
         if not uris:
-            films = select_campaign(conn, args.per_run, args.sample, args.seed)
+            films = select_campaign(conn, args.per_run + SPARE_CANDIDATES, args.sample, args.seed)
             if not films:
                 print("Nothing to draft: every rated film has a review or a draft.")
                 return
-            print(f"Drafting {len(films)} review(s), tone {args.tone}:")
-            drafts = draft(conn, films, args.tone, args.provider)
+            print(f"Drafting {min(args.per_run, len(films))} review(s), tone {args.tone}:")
+            drafts = draft(conn, films, args.tone, args.provider, want=args.per_run)
             if not drafts:
                 print("No drafts produced.")
                 return

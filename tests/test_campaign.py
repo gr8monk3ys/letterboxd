@@ -150,8 +150,12 @@ class FakeGenerator:
         FakeGenerator.instances.append(self)
         self.db = MagicMock()
 
+    declines: set[str] = set()
+
     def generate_review(self, film):
         self.asked.append(film["name"])
+        if film["name"] in FakeGenerator.declines:
+            return None
         return f"Review of {film['name']}."
 
     def close(self):
@@ -162,6 +166,7 @@ class TestMain:
     @pytest.fixture
     def env(self, db_path, monkeypatch, tmp_path):
         FakeGenerator.instances = []
+        FakeGenerator.declines = set()
         monkeypatch.setattr("src.reviewing.campaign.ReviewGenerator", FakeGenerator)
         monkeypatch.setattr("src.reviewing.campaign.DIGEST_DIR", tmp_path / "digests")
         config = MagicMock()
@@ -209,6 +214,24 @@ class TestMain:
         campaign.main()
         assert FakeGenerator.instances[0].asked == ["Alpha"]
         env["poster"].run.assert_called_once_with(limit=1, uris=["u:a"])
+
+    def test_a_declined_film_is_passed_over_not_stalled_on(self, env, monkeypatch, capsys):
+        """The model answers SKIP for films it does not know; that film
+        would otherwise head the queue on every run and block the campaign."""
+        from src.reviewing import campaign
+
+        FakeGenerator.declines = {"Alpha"}
+        monkeypatch.setattr("sys.argv", ["campaign", "--per-run", "1"])
+        campaign.main()
+        assert FakeGenerator.instances[0].asked == ["Alpha", "Beta"]
+        assert "skipped Alpha (2005)" in capsys.readouterr().out
+        conn = sqlite3.connect(env["db"])
+        assert conn.execute(
+            "SELECT COUNT(*) FROM ai_reviews WHERE letterboxd_uri='u:b'"
+        ).fetchone() == (1,)
+        assert conn.execute(
+            "SELECT COUNT(*) FROM ai_reviews WHERE letterboxd_uri='u:a'"
+        ).fetchone() == (0,)
 
     def test_nothing_to_do(self, env, monkeypatch, capsys):
         from src.reviewing import campaign
