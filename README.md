@@ -232,6 +232,16 @@ Uses Letterboxd's public RSS feed — no API key, no login, no scraping. It
 covers roughly the 50 most recent diary entries and is safe to re-run.
 For full history, re-export from https://letterboxd.com/settings/data/.
 
+## Sharing the account state
+
+```bash
+uv run python -m src.export      # ~/.movies/letterboxd.json (MOVIES_DIR overrides)
+```
+
+One versioned JSON file (`schema: letterboxd/1`) with every watched film, its
+rating, whether it carries a review (`"own"`, `"ai"` or `null`), the watchlist
+and coverage counts, so other tools never have to read the database.
+
 ## Web Dashboard
 
 ```bash

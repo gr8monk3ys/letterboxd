@@ -54,6 +54,9 @@ uv run python -m src.stats --rate-limits # Rate limit status
 uv run python -m src.sync --dry-run   # preview recent watches
 uv run python -m src.sync             # merge them into the database
 
+# Export the account state for other tools (MOVIES_DIR overrides ~/.movies)
+uv run python -m src.export
+
 # Database migrations
 uv run python -m src.data_processing.migrations           # Run pending migrations
 uv run python -m src.data_processing.migrations --status  # Check migration status
