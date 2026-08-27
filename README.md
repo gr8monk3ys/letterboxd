@@ -242,6 +242,10 @@ uv run python -m src.reviewing.campaign --per-run 5 --tone thoughtful   # drafts
 uv run python -m src.reviewing.campaign --apply                         # post those drafts
 ```
 
+`uv run python -m src.reviewing.dedupe_logs` lists films where the tool once
+created a second diary entry (`--inspect` reads them live, `--apply` removes the
+extra one, keeping the oldest and never touching a review you wrote).
+
 A campaign drafts reviews only for rated films that have none (your own reviews
 are never touched), writes them to `data/digests/<ts>-reviews.md` for you to
 read, and `--apply` posts exactly that batch by editing each film's existing

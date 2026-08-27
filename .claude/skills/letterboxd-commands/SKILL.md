@@ -62,6 +62,9 @@ uv run python -m src.import_csv           # ratings typed on /queue -> data/lett
 uv run python -m src.reviewing.campaign --per-run 5 --tone thoughtful
 uv run python -m src.reviewing.campaign --apply
 
+# Duplicate diary entries the tool once created: list / read live / remove extras
+uv run python -m src.reviewing.dedupe_logs [--inspect | --apply]
+
 # Export the account state for other tools (MOVIES_DIR overrides ~/.movies)
 uv run python -m src.export
 

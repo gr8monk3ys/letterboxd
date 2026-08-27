@@ -38,6 +38,17 @@ _FIND_DUPLICATE_JS = (
 }}"""
 )
 
+# True when any opener or duplicate button has rendered, so the click
+# below is attempted on a page that has finished drawing its controls.
+_FIND_ANY_BUTTON_JS = (
+    """(labels) => {"""
+    + _NORMALIZE_LABEL_JS
+    + f"""
+    return [...document.querySelectorAll('button')].some(b => b.offsetParent !== null
+        && (labels.includes(norm(b)) || norm(b).includes("{DUPLICATE_BUTTON_PHRASE}")));
+}}"""
+)
+
 _CLICK_BUTTON_JS = (
     """(labels) => {"""
     + _NORMALIZE_LABEL_JS
@@ -104,6 +115,14 @@ class ReviewPoster:
         duplicate an entry every time a review was edited or re-tagged.
         """
         openers = EDIT_BUTTON_LABELS + NEW_ENTRY_BUTTON_LABELS
+        # The action buttons are rendered client-side after the document
+        # loads; a fixed pause after navigation is sometimes too short
+        # (Kwaidan, 2026-08-27: "could not find review button" on a page
+        # that offered "Edit entry or add review…" a moment later).
+        for _ in range(5):
+            if page.evaluate(_FIND_ANY_BUTTON_JS, list(openers)):
+                break
+            page.wait_for_timeout(1500)
         if page.evaluate(_CLICK_BUTTON_JS, list(openers)):
             return True
 
