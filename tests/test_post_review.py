@@ -329,6 +329,7 @@ class TestReviewPosterPostReview:
             # Mock successful element finding; after submit the form closes
             mock_locator = MagicMock()
             mock_locator.count.return_value = 1
+            mock_locator.input_value.return_value = ""
             mock_locator.is_visible.return_value = False
             mock_page.locator.return_value.first = mock_locator
             mock_page.title.return_value = "Test Film review"
@@ -347,12 +348,36 @@ class TestReviewPosterPostReview:
             assert success is True
             assert url == "https://letterboxd.com/testuser/film/test-film/"
 
+    def test_post_review_never_overwrites_a_review_already_on_the_entry(
+        self, poster_with_mocks, mock_page
+    ):
+        """Invariant 2: the edit modal opening with text in it means the
+        user wrote a review after the last export. It stays."""
+        with patch("src.reviewing.post_review.goto_with_retry", return_value=True):
+            mock_locator = MagicMock()
+            mock_locator.count.return_value = 1
+            mock_locator.input_value.return_value = "My own words about this film."
+            mock_page.locator.return_value.first = mock_locator
+            mock_page.evaluate.return_value = "edit or delete review"
+
+            film = {
+                "name": "Test Film",
+                "year": 2024,
+                "review": "Generated text.",
+                "letterboxd_uri": "https://letterboxd.com/film/test-film/",
+            }
+            success, url = poster_with_mocks.post_review(mock_page, film)
+            assert (success, url) == (False, None)
+            mock_locator.fill.assert_not_called()
+            mock_page.keyboard.press.assert_called_once_with("Escape")
+
     def test_post_review_form_still_open_is_failure(self, poster_with_mocks, mock_page):
         """A submit that leaves the form open did not land; reporting success
         would set posted_at and hide the review forever."""
         with patch("src.reviewing.post_review.goto_with_retry", return_value=True):
             mock_locator = MagicMock()
             mock_locator.count.return_value = 1
+            mock_locator.input_value.return_value = ""
             mock_locator.is_visible.return_value = True
             mock_page.locator.return_value.first = mock_locator
             mock_page.title.return_value = "Test Film review"
@@ -373,6 +398,7 @@ class TestReviewPosterPostReview:
         with patch("src.reviewing.post_review.goto_with_retry", return_value=True):
             mock_locator = MagicMock()
             mock_locator.count.return_value = 1
+            mock_locator.input_value.return_value = ""
             mock_locator.is_visible.return_value = False
             mock_page.locator.return_value.first = mock_locator
             mock_page.title.return_value = "Just a moment..."

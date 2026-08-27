@@ -51,6 +51,11 @@ _CLICK_BUTTON_JS = (
 }"""
 )
 
+
+def _squash(text: str) -> str:
+    return " ".join((text or "").split())
+
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -193,6 +198,15 @@ class ReviewPoster:
             review_textarea = page.locator('form.js-diary-entry-form textarea[name="review"]').first
             if review_textarea.count() == 0:
                 logging.warning(f"Could not find review textarea for {name}")
+                return False, None
+
+            # The entry may already carry a review the user wrote (after
+            # the last export, so the reviews table cannot know). Filling
+            # the field would replace it; a human review is never edited.
+            existing = review_textarea.input_value()
+            if existing.strip() and _squash(existing) != _squash(review_text):
+                logging.warning(f"{name} already has a review on this entry; not overwriting it")
+                page.keyboard.press("Escape")
                 return False, None
 
             review_textarea.fill(review_text)
