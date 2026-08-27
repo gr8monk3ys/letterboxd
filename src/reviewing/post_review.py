@@ -287,17 +287,23 @@ class ReviewPoster:
             logging.error(f"Error posting review for {film.get('name')}: {e}")
             return False, None
 
-    def run(self, limit: int | None = None, dry_run: bool = False) -> int:
+    def run(
+        self, limit: int | None = None, dry_run: bool = False, uris: list[str] | None = None
+    ) -> int:
         """Post AI-generated reviews to Letterboxd.
 
         Args:
             limit: Maximum number of reviews to post (None for all)
             dry_run: If True, just show which reviews would be posted
+            uris: Only offer drafts for these film URIs (a campaign's batch)
 
         Returns:
             Number of reviews posted
         """
         reviews = self.get_pending_reviews()
+        if uris is not None:
+            wanted = set(uris)
+            reviews = [r for r in reviews if r["letterboxd_uri"] in wanted]
 
         if not reviews:
             print("No AI reviews found. Generate some first with:")

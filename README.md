@@ -238,7 +238,14 @@ For full history, re-export from https://letterboxd.com/settings/data/.
 uv run python -m src.queue                # films needing a rating, then a review
 uv run python -m src.web.app              # /queue: the same list, type ratings in
 uv run python -m src.import_csv           # pending ratings -> data/letterboxd-import.csv
+uv run python -m src.reviewing.campaign --per-run 5 --tone thoughtful   # drafts + digest
+uv run python -m src.reviewing.campaign --apply                         # post those drafts
 ```
+
+A campaign drafts reviews only for rated films that have none (your own reviews
+are never touched), writes them to `data/digests/<ts>-reviews.md` for you to
+read, and `--apply` posts exactly that batch by editing each film's existing
+diary entry.
 
 Ratings only ever come from you: type them on `/queue`, then upload the CSV at
 https://letterboxd.com/import/ (the file leaves `WatchedDate` blank so no diary

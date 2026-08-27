@@ -58,6 +58,10 @@ uv run python -m src.sync             # merge them into the database
 uv run python -m src.queue                # --json for tooling; also /queue on the dashboard
 uv run python -m src.import_csv           # ratings typed on /queue -> data/letterboxd-import.csv
 
+# Review campaign: draft N -> digest in data/digests/ -> --apply posts that batch
+uv run python -m src.reviewing.campaign --per-run 5 --tone thoughtful
+uv run python -m src.reviewing.campaign --apply
+
 # Export the account state for other tools (MOVIES_DIR overrides ~/.movies)
 uv run python -m src.export
 
