@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 
 from src.action_board import build_action_board
 from src.config import LOGS_DIR, get_config
-from src.data_processing.create_database import MovieDatabase
+from src.data_processing.create_database import AI_REVIEW_STATUSES, MovieDatabase
 from src.rate_limiter import RateLimiter
 from src.setup_status import describe_setup
 
@@ -311,7 +311,44 @@ def api_update_ai_review(payload: dict):
         logger.error(f"Error saving draft: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
-    return JSONResponse({"message": "Draft saved", "letterboxd_uri": uri.strip()})
+    return JSONResponse(
+        {"message": "Draft saved, back to pending approval", "letterboxd_uri": uri.strip()}
+    )
+
+
+@app.post("/api/reviews/ai/status")
+def api_set_ai_review_status(payload: dict):
+    """Approve or reject a draft.
+
+    This is the gate the posting paths read: only 'approved' reviews are
+    ever offered to Letterboxd, so this endpoint is where the human
+    decision actually enters the system.
+    """
+    uri = payload.get("letterboxd_uri")
+    status = payload.get("status")
+
+    if not isinstance(uri, str) or not uri.strip() or not isinstance(status, str):
+        return JSONResponse({"error": "letterboxd_uri and status are required"}, status_code=400)
+    if status not in AI_REVIEW_STATUSES:
+        return JSONResponse(
+            {"error": f"status must be one of {', '.join(AI_REVIEW_STATUSES)}"}, status_code=400
+        )
+
+    try:
+        db = MovieDatabase()
+        db.connect()
+        try:
+            if not db.set_ai_review_status(uri.strip(), status):
+                return JSONResponse({"error": "No pending draft for that film"}, status_code=404)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error setting draft status: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+    return JSONResponse(
+        {"message": f"Draft {status}", "letterboxd_uri": uri.strip(), "status": status}
+    )
 
 
 def _load_queue() -> list[dict]:
@@ -876,7 +913,12 @@ def update_engagement():
             result = scraper.update_all_engagement(db)
         finally:
             db.close()
-        return JSONResponse({"message": f"Updated {result['updated']} reviews", **result})
+        message = f"Updated {result['updated']} reviews"
+        if result.get("error"):
+            # Otherwise a blocked run reads on the page as "0 reviews had
+            # any engagement", which is a different and much worse claim.
+            message = f"Collected nothing; Letterboxd blocked the run: {result['error']}"
+        return JSONResponse({"message": message, **result})
     except Exception as e:
         logger.error(f"Error updating engagement: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)

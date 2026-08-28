@@ -300,6 +300,21 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
             """,
         ],
     ),
+    (
+        11,
+        "Approval status for AI review drafts",
+        [
+            # A draft is never posted until someone approves it. Rows
+            # already carrying posted_at are live on Letterboxd, so the
+            # decision was made: they backfill to 'approved'.
+            """
+            ALTER TABLE ai_reviews ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'
+            """,
+            """
+            UPDATE ai_reviews SET status = 'approved' WHERE posted_at IS NOT NULL
+            """,
+        ],
+    ),
 ]
 
 

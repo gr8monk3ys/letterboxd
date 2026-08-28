@@ -27,9 +27,11 @@ uv run python -m src.reviewing.write_review --year 2024 -n 10      # Filter by y
 uv run python -m src.reviewing.write_review --year-range 2020-2024 # Year range
 uv run python -m src.reviewing.write_review --min-rating 4.0       # Min rating filter
 
-# Post reviews to Letterboxd (interactive, confirms each)
+# Post reviews to Letterboxd (interactive, confirms each).
+# ONLY drafts approved on the dashboard's /drafts page are ever offered:
+# ai_reviews.status must be 'approved'. An unapproved draft is never posted.
 uv run python -m src.reviewing.post_review --dry-run   # Preview what would be posted
-uv run python -m src.reviewing.post_review -n 5        # Post up to 5 reviews
+uv run python -m src.reviewing.post_review -n 5        # Post up to 5 approved reviews
 
 # Follow users from various sources
 uv run python -m src.following.follow_users --fans-of "Parasite"     # Fans of a film
@@ -58,9 +60,16 @@ uv run python -m src.sync             # merge them into the database
 uv run python -m src.queue                # --json for tooling; also /queue on the dashboard
 uv run python -m src.import_csv           # ratings typed on /queue -> data/letterboxd-import.csv
 
-# Review campaign: draft N -> digest in data/digests/ -> --apply posts that batch
+# Review campaign: draft N -> digest in data/digests/ -> approve on /drafts
+# -> --apply posts the approved ones from that batch
 uv run python -m src.reviewing.campaign --per-run 5 --tone thoughtful
 uv run python -m src.reviewing.campaign --apply
+
+# Engagement on the posted reviews (read-only scrape of your own profile).
+# Bare invocation collects; reviews are due 24h after posting and re-checked daily.
+uv run python -m src.review_metrics --dry-run       # list what would be checked
+uv run python -m src.review_metrics --limit 5       # collect for 5 of them
+uv run python -m src.review_metrics stats           # totals, once rows exist
 
 # Duplicate diary entries the tool once created: list / read live / remove extras
 uv run python -m src.reviewing.dedupe_logs [--inspect | --apply]

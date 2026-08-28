@@ -95,12 +95,13 @@ class ReviewPoster:
         return login(page, self.config)
 
     def get_pending_reviews(self) -> list[dict]:
-        """Get AI reviews that haven't been posted yet.
+        """The reviews this run may post: unposted *and* approved.
 
-        Delegates so the CLI and the dashboard's /drafts page share one
-        definition of "pending draft".
+        The approval gate lives here, in the one place every posting path
+        goes through - the CLI and the campaign both call run(). A draft
+        nobody has approved is not postable, however it was selected.
         """
-        return self.db.get_ai_review_drafts()
+        return self.db.get_approved_ai_reviews()
 
     def open_review_form(self, page: Page, name: str) -> bool:
         """Open the diary-entry modal from whichever button this page has.
@@ -346,7 +347,9 @@ class ReviewPoster:
             reviews = [r for r in reviews if r["letterboxd_uri"] in wanted]
 
         if not reviews:
-            print("No AI reviews found. Generate some first with:")
+            print("No approved reviews to post.")
+            print("Approve drafts on the dashboard's /drafts page (uv run python -m src.web.app),")
+            print("or generate some first with:")
             print("  uv run python -m src.reviewing.write_review -n 10")
             return 0
 

@@ -48,8 +48,8 @@ class TestReviewPoster:
         )
         cursor.execute(
             """INSERT INTO ai_reviews
-               (letterboxd_uri, name, year, ai_review, generated_at)
-               VALUES (?, ?, ?, ?, ?)""",
+               (letterboxd_uri, name, year, ai_review, generated_at, status)
+               VALUES (?, ?, ?, ?, ?, 'approved')""",
             (
                 "https://letterboxd.com/film/test-film/",
                 "Test Film",
@@ -200,7 +200,7 @@ class TestReviewPoster:
         assert result == 0
 
         captured = capsys.readouterr()
-        assert "No AI reviews found" in captured.out
+        assert "No approved reviews to post" in captured.out
 
     def test_close(self, poster):
         """Test closing database connections."""
