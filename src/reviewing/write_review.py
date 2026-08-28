@@ -94,6 +94,7 @@ def distinctive_phrases(text: str, length: int = 4) -> set[str]:
     runs = {" ".join(words[i : i + length]) for i in range(len(words) - length + 1)}
     return {run for run in runs if run not in _ORDINARY}
 
+
 TONE_PRESETS = {
     "casual": {
         "name": "Casual",
@@ -417,13 +418,17 @@ Never copy their phrases, jokes, structure, or opinions; every word
 must be mine. When the film deserves it, go longer and deeper than my
 usual."""
 
+            # Both already start with their own newline, so joining them
+            # here keeps the rendered prompt byte-identical.
+            guidance = f"{length_line}{avoid_block}"
+
             prompt = f"""Write a Letterboxd review for "{title}" ({year}).
 {rating_context}{context_line}
 
 Guidelines:
 {tone_preset["guidelines"]}
 - My real reviews are usually 1-3 sentences; never pad — a one-line reaction is fine
-- Match how seriously the examples take their films; that is my register at this rating{length_line}{avoid_block}
+- Match how seriously the examples take their films; that is my register at this rating{guidance}
 {HUMANIZER_GUIDELINES}
 - If you don't confidently know this exact film, reply with exactly SKIP; never guess or invent
 - Write only the review text, no title or rating
@@ -519,9 +524,7 @@ Now write a review for "{title}" ({year}):"""
                 if review:
                     borrowed = find_borrowed_phrases(review)
                     if borrowed:
-                        logging.info(
-                            f"Stock wording {borrowed} in '{film['name']}'; asking again"
-                        )
+                        logging.info(f"Stock wording {borrowed} in '{film['name']}'; asking again")
                         retry = self.generate_review(film, avoid=used | set(borrowed))
                         if retry and not find_borrowed_phrases(retry):
                             review = retry
