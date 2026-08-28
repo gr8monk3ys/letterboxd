@@ -5,6 +5,7 @@ import csv
 import json
 import logging
 import random
+import statistics
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -106,6 +107,49 @@ TONE_PRESETS = {
 # Valid tone names for CLI validation
 VALID_TONES = list(TONE_PRESETS.keys())
 
+# Only used when the reviews table is empty, i.e. before an export has been
+# imported. Deliberately a spread rather than one number, so even a
+# distribution-less run does not write the same length every time. Any real
+# database replaces these with measured lengths.
+FALLBACK_LENGTH_TARGETS = (25, 60, 110, 180, 300)
+
+# Below this many reviews at a similar rating, the rating-matched pool is
+# too small to be a distribution and the whole history is used instead.
+MIN_RATING_MATCHED_REVIEWS = 20
+
+
+class LengthSampler:
+    """Draws a review length from the lengths the user actually writes.
+
+    Empirical, not parametric: a target is one of the observed lengths,
+    resampled. That keeps the real shape - a long tail of paragraphs over
+    a floor of ten-character jokes - which no mean or fixed target can.
+    Fitting a curve here would be inventing a distribution; there is a
+    measured one in the database.
+    """
+
+    def __init__(self, lengths: list[int] | tuple[int, ...]):
+        measured = [n for n in lengths if n > 0]
+        self.lengths: list[int] = measured or list(FALLBACK_LENGTH_TARGETS)
+
+    @classmethod
+    def from_reviews(cls, reviews: list[dict]) -> "LengthSampler":
+        """Measure the character lengths of the user's own reviews."""
+        return cls([len(r["review"]) for r in reviews if r.get("review")])
+
+    def sample(self, rng: random.Random | None = None) -> int:
+        return (rng or random).choice(self.lengths)
+
+    def describe(self) -> dict:
+        """The measured shape, for logs and for reporting what was used."""
+        ordered = sorted(self.lengths)
+        return {
+            "count": len(ordered),
+            "min": ordered[0],
+            "median": int(statistics.median(ordered)),
+            "max": ordered[-1],
+        }
+
 
 class ReviewGenerator:
     # Which env var holds the key for each vendor. The provider classes fall
@@ -148,6 +192,7 @@ class ReviewGenerator:
         self.db = MovieDatabase(db_path=self.config.database_file)
         self.db.connect()
         self._style_examples: list[dict] | None = None
+        self._all_reviews: list[dict] | None = None
 
         # Set tone from parameter, env var, or default
         self.tone = tone or self.config.review_tone
@@ -212,6 +257,29 @@ class ReviewGenerator:
 
         return prompt
 
+    def _length_sampler(self, rating: float | None = None) -> LengthSampler:
+        """The length distribution to draw this review's target from.
+
+        Measured from the `reviews` table at runtime - the user's real
+        history, one-liners included - rather than from the style-example
+        pool, which is trimmed for prompting and would clip both tails.
+        When enough of their reviews sit near this rating, that subset is
+        used: how long they write tracks how seriously they took the film.
+        """
+        if self._all_reviews is None:
+            self._all_reviews = self.db.get_user_reviews()
+
+        reviews = self._all_reviews
+        if rating is not None:
+            near = [
+                r
+                for r in reviews
+                if r.get("rating") is not None and abs(float(r["rating"]) - rating) <= 1.0
+            ]
+            if len(near) >= MIN_RATING_MATCHED_REVIEWS:
+                reviews = near
+        return LengthSampler.from_reviews(reviews)
+
     def generate_review(self, film: dict) -> str | None:
         """Generate a review for a single movie matching user's style."""
         try:
@@ -243,18 +311,19 @@ class ReviewGenerator:
             tone_preset = self.get_tone_preset()
 
             # Each call is independent, so without a concrete target the
-            # model writes the same medium-length review every time.
-            # Sampling a length from the user's real reviews (at this
-            # rating) reproduces their natural spread of one-liners and
-            # paragraphs across a batch.
-            length_pool = self._get_style_examples(15, rating=target_rating)
-            length_line = ""
-            if length_pool:
-                target_len = len(random.choice(length_pool)["review"])
-                length_line = (
-                    f"\n- Aim for about {target_len} characters, "
-                    "the length of one of my typical reviews"
-                )
+            # model writes the same medium-length review every time - the
+            # drafts on this account ran 103 to 683 characters while the
+            # user's own run 10 to 2,636. The target is therefore drawn
+            # per review from the measured distribution, and it overrides
+            # the tone preset's own length guidance, which is a fixed
+            # band and would otherwise pull every review back to the middle.
+            target_len = self._length_sampler(target_rating).sample()
+            length_line = (
+                f"\n- Length: aim for about {target_len} characters. That is a real "
+                "length from my own reviews, and it overrides any length in the "
+                "guidelines above.\n- If that is short, write one line and stop. A good "
+                "one-liner beats a padded paragraph; never pad to reach a length"
+            )
 
             # Build prompt with optional TMDB context
             context_line = f"\nFilm info: {film_context}" if film_context else ""
