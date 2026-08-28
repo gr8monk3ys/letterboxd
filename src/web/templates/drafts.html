@@ -12,13 +12,25 @@
     }
     .draft-actions { display: flex; align-items: center; gap: var(--s3); }
     .draft-actions .open-link { margin-left: auto; color: var(--ink-dim); }
+    .status-pill {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 2px 8px;
+        border-radius: 10px;
+        border: 1px solid var(--ink-dim);
+        color: var(--ink-dim);
+    }
+    .status-pill[data-status="approved"] { color: #4caf50; border-color: #4caf50; }
+    .status-pill[data-status="rejected"] { color: #e0605e; border-color: #e0605e; }
 </style>
 {% endblock %}
 
 {% block content %}
 <h1>Review drafts</h1>
 <p class="lede">
-    Edit these before posting. Nothing here is on Letterboxd until you post it by hand.
+    Edit these, then approve the ones worth posting. Only approved drafts are
+    ever offered to Letterboxd; posting still happens by hand.
 </p>
 
 {% if not drafts %}
@@ -36,6 +48,10 @@
         <span>Drafts</span>
         <span class="stat-value">{{ drafts | length }}</span>
     </div>
+    <div class="stat">
+        <span>Approved, waiting to post</span>
+        <span class="stat-value">{{ drafts | selectattr("status", "equalto", "approved") | list | length }}</span>
+    </div>
 </div>
 
 {% for d in drafts %}
@@ -44,9 +60,12 @@
         {{ d.name }}{% if d.year %} <span style="color: var(--ink-dim);">({{ d.year }})</span>{% endif %}
         {% if d.rating %}<span class="stat-value" style="float: right;">{{ d.rating }}&#9733;</span>{% endif %}
     </h3>
+    <span class="status-pill" data-status="{{ d.status }}">{{ d.status }}</span>
     <textarea class="draft-text" rows="5" aria-label="Review draft for {{ d.name }}">{{ d.review }}</textarea>
     <div class="draft-actions">
         <button type="button" class="btn save-draft">Save</button>
+        <button type="button" class="btn approve-draft">Approve</button>
+        <button type="button" class="btn reject-draft">Reject</button>
         <a href="{{ d.letterboxd_uri }}" target="_blank" rel="noopener" class="open-link">
             Open on Letterboxd &#8599;
         </a>
@@ -61,6 +80,11 @@
 <script>
     // triggerAction's toast carries the outcome, including the server's
     // actual error message - a second inline status channel would drift.
+    function setPill(card, status) {
+        const pill = card.querySelector('.status-pill');
+        if (pill) { pill.dataset.status = status; pill.textContent = status; }
+    }
+
     document.querySelectorAll('.save-draft').forEach(function (button) {
         button.addEventListener('click', async function () {
             const card = button.closest('[data-uri]');
@@ -70,7 +94,25 @@
                 letterboxd_uri: card.dataset.uri,
                 review: card.querySelector('.draft-text').value,
             });
+            // Saving rewrites the text an approval was given for, so the
+            // server sends it back to 'draft'; the pill must say so.
+            setPill(card, 'draft');
             button.disabled = false;
+        });
+    });
+
+    [['.approve-draft', 'approved'], ['.reject-draft', 'rejected']].forEach(function (pair) {
+        document.querySelectorAll(pair[0]).forEach(function (button) {
+            button.addEventListener('click', async function () {
+                const card = button.closest('[data-uri]');
+                button.disabled = true;
+                await triggerAction('/api/reviews/ai/status', 'POST', {
+                    letterboxd_uri: card.dataset.uri,
+                    status: pair[1],
+                });
+                setPill(card, pair[1]);
+                button.disabled = false;
+            });
         });
     });
 </script>

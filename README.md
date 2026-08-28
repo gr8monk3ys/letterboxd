@@ -73,9 +73,13 @@ uv run python -m src.reviewing.write_review --list-tones
 uv run python -m src.reviewing.write_review --export csv
 uv run python -m src.reviewing.write_review --export json
 
+# Approve drafts first: the dashboard's /drafts page has Approve/Reject.
+# Only approved drafts are ever offered for posting.
+uv run python -m src.web.app                           # then open /drafts
+
 # Post reviews to Letterboxd (interactive, confirms each)
 uv run python -m src.reviewing.post_review --dry-run   # Preview first
-uv run python -m src.reviewing.post_review -n 5        # Post up to 5
+uv run python -m src.reviewing.post_review -n 5        # Post up to 5 approved
 ```
 
 ### 4. Follow/Unfollow Management

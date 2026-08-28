@@ -58,6 +58,17 @@ def build_db(path):
     return conn
 
 
+def approve(path, *uris):
+    """Record the human decision the gate requires."""
+    conn = sqlite3.connect(path)
+    conn.executemany(
+        "UPDATE ai_reviews SET status = 'approved' WHERE letterboxd_uri = ?",
+        [(u,) for u in uris],
+    )
+    conn.commit()
+    conn.close()
+
+
 @pytest.fixture
 def db_path(tmp_path):
     path = tmp_path / "movie_database.db"
@@ -188,18 +199,20 @@ class TestMain:
         digests = list(env["digests"].iterdir())
         assert len(digests) == 1
         assert "Review of Alpha." in digests[0].read_text()
-        assert "Post with: uv run python -m src.reviewing.campaign --apply" in out
+        assert "approve on /drafts" in out
+        assert "uv run python -m src.reviewing.campaign --apply" in out
         env["poster"].run.assert_not_called()
         # Drafts are saved so --apply can post exactly what was reviewed.
         conn = sqlite3.connect(env["db"])
         saved = conn.execute("SELECT letterboxd_uri FROM ai_reviews ORDER BY 1").fetchall()
         assert saved == [("u:a",), ("u:b",), ("u:drafted",)]
 
-    def test_apply_posts_the_drafts_named_in_the_latest_digest(self, env, monkeypatch):
+    def test_apply_posts_the_approved_drafts_named_in_the_latest_digest(self, env, monkeypatch):
         from src.reviewing import campaign
 
         monkeypatch.setattr("sys.argv", ["campaign", "--per-run", "2"])
         campaign.main()
+        approve(env["db"], "u:a", "u:b")
         monkeypatch.setattr("sys.argv", ["campaign", "--per-run", "2", "--apply"])
         campaign.main()
 
@@ -207,13 +220,40 @@ class TestMain:
         assert len(FakeGenerator.instances) == 1
         env["poster"].run.assert_called_once_with(limit=2, uris=["u:a", "u:b"])
 
-    def test_apply_with_no_reviewed_digest_drafts_then_posts(self, env, monkeypatch):
+    def test_apply_posts_only_the_approved_half_of_the_digest(self, env, monkeypatch):
+        from src.reviewing import campaign
+
+        monkeypatch.setattr("sys.argv", ["campaign", "--per-run", "2"])
+        campaign.main()
+        approve(env["db"], "u:b")
+        monkeypatch.setattr("sys.argv", ["campaign", "--per-run", "2", "--apply"])
+        campaign.main()
+        env["poster"].run.assert_called_once_with(limit=2, uris=["u:b"])
+
+    def test_apply_with_nothing_approved_posts_nothing_and_says_so(self, env, monkeypatch, capsys):
+        """The gate: drafts exist and a digest names them, but no human has
+        approved any, so no browser is opened and nothing is posted."""
+        from src.reviewing import campaign
+
+        monkeypatch.setattr("sys.argv", ["campaign", "--per-run", "2"])
+        campaign.main()
+        capsys.readouterr()
+        monkeypatch.setattr("sys.argv", ["campaign", "--per-run", "2", "--apply"])
+        campaign.main()
+
+        assert "No approved drafts to post" in capsys.readouterr().out
+        env["poster"].run.assert_not_called()
+
+    def test_apply_with_no_digest_drafts_but_never_posts_them(self, env, monkeypatch, capsys):
+        """Freshly drafted reviews are unapproved by construction, so an
+        --apply run that had to draft them still stops at the gate."""
         from src.reviewing import campaign
 
         monkeypatch.setattr("sys.argv", ["campaign", "--per-run", "1", "--apply"])
         campaign.main()
         assert FakeGenerator.instances[0].asked == ["Alpha"]
-        env["poster"].run.assert_called_once_with(limit=1, uris=["u:a"])
+        assert "No approved drafts to post" in capsys.readouterr().out
+        env["poster"].run.assert_not_called()
 
     def test_a_declined_film_is_passed_over_not_stalled_on(self, env, monkeypatch, capsys):
         """The model answers SKIP for films it does not know; that film
@@ -259,6 +299,8 @@ class TestPosterUriFilter:
         poster = ReviewPoster()
         poster.db.save_ai_review("u:a", "Alpha", 2005, "A.")
         poster.db.save_ai_review("u:b", "Beta", 2006, "B.")
+        poster.db.set_ai_review_status("u:a", "approved")
+        poster.db.set_ai_review_status("u:b", "approved")
         return poster
 
     def test_run_only_offers_the_given_uris(self, poster, capsys):

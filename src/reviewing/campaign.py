@@ -9,7 +9,8 @@ review nor a posted AI one) that have no draft yet, so a human review is
 never touched (invariant 2) and no unrated film is written about
 (invariant 3). Drafts go through the same generator ``write_review`` uses,
 one film at a time. The dry run stops after the digest; ``--apply`` posts
-the drafts the latest digest names, through ``ReviewPoster`` - which edits
+the drafts the latest digest names **and a human has approved** (status
+``approved``, set on the dashboard's /drafts page), through ``ReviewPoster`` - which edits
 the film's existing diary entry and never clicks "log again" (invariant 1).
 Rate limits and ``posted_reviews`` bookkeeping are the poster's, unchanged.
 """
@@ -79,14 +80,18 @@ def latest_digest(directory: Path) -> Path | None:
     return files[-1] if files else None
 
 
-def _unposted(conn: sqlite3.Connection, uris: list[str]) -> list[str]:
-    """Those of `uris` whose draft is still waiting to be posted."""
+def _approved_unposted(conn: sqlite3.Connection, uris: list[str]) -> list[str]:
+    """Those of `uris` still waiting to be posted *and* approved by a human.
+
+    A digest names what was drafted, not what was agreed to. Approval is
+    recorded in ai_reviews.status by the dashboard's /drafts page.
+    """
     keep = []
     for uri in uris:
         row = conn.execute(
-            "SELECT posted_at FROM ai_reviews WHERE letterboxd_uri = ?", (uri,)
+            "SELECT posted_at, status FROM ai_reviews WHERE letterboxd_uri = ?", (uri,)
         ).fetchone()
-        if row is not None and row[0] is None:
+        if row is not None and row[0] is None and row[1] == "approved":
             keep.append(uri)
     return keep
 
@@ -166,26 +171,36 @@ def main() -> None:
         uris: list[str] = []
         digest = latest_digest(DIGEST_DIR)
         if args.apply and digest is not None:
-            uris = _unposted(conn, digest_uris(digest))[: args.per_run]
+            uris = _approved_unposted(conn, digest_uris(digest))[: args.per_run]
             if uris:
-                print(f"Posting the {len(uris)} unposted draft(s) from {digest.name}")
+                print(f"Posting the {len(uris)} approved draft(s) from {digest.name}")
 
         if not uris:
             films = select_campaign(conn, args.per_run + SPARE_CANDIDATES, args.sample, args.seed)
             if not films:
                 print("Nothing to draft: every rated film has a review or a draft.")
-                return
-            print(f"Drafting {min(args.per_run, len(films))} review(s), tone {args.tone}:")
-            drafts = draft(conn, films, args.tone, args.provider, want=args.per_run)
-            if not drafts:
-                print("No drafts produced.")
-                return
-            path = write_digest(DIGEST_DIR, drafts, args.tone, datetime.now(UTC).isoformat())
-            print(f"\nDigest: {path}")
-            uris = [d["letterboxd_uri"] for d in drafts]
-            if not args.apply:
-                print("Read it, then\nPost with: uv run python -m src.reviewing.campaign --apply")
-                return
+            else:
+                print(f"Drafting {min(args.per_run, len(films))} review(s), tone {args.tone}:")
+                drafts = draft(conn, films, args.tone, args.provider, want=args.per_run)
+                if not drafts:
+                    print("No drafts produced.")
+                else:
+                    path = write_digest(
+                        DIGEST_DIR, drafts, args.tone, datetime.now(UTC).isoformat()
+                    )
+                    print(f"\nDigest: {path}")
+            # A draft this run just wrote has been approved by nobody, so
+            # --apply never posts it. Reaching Letterboxd always takes a
+            # separate human decision on the /drafts page first.
+            if args.apply:
+                print(
+                    "\nNo approved drafts to post. Approve them on the dashboard's "
+                    "/drafts page\n(uv run python -m src.web.app), then re-run with --apply."
+                )
+            else:
+                print("Read it, then approve on /drafts and post with:")
+                print("  uv run python -m src.reviewing.campaign --apply")
+            return
     finally:
         conn.close()
 
