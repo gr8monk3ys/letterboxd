@@ -7,13 +7,13 @@ license = {text = "GPL-3.0"}
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "playwright>=1.40.0",
-    "anthropic>=0.121.0",
+    "playwright>=1.62.0",
+    "anthropic>=0.122.0",
     "python-dotenv>=1.2.2",
     "tqdm>=4.70.0",
     "httpx>=0.28.1",
-    "fastapi>=0.128.0",
-    "uvicorn[standard]>=0.40.0",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.52.3",
     "jinja2>=3.1.6",
     "beautifulsoup4>=4.15.0",
     "lxml>=6.1.1",
@@ -24,8 +24,8 @@ dependencies = [
 # default because it is the only one the core code has always needed; the
 # other two are opt-in so nobody installs three SDKs to use one.
 [project.optional-dependencies]
-openai = ["openai>=1.60.0"]
-gemini = ["google-genai>=1.0.0"]
+openai = ["openai>=3.1.0"]
+gemini = ["google-genai>=2.18.1"]
 
 # Dev dependencies live in [dependency-groups] below, which is what
 # `uv sync --dev` and CI actually install.
@@ -49,12 +49,12 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "mypy>=1.19.1",
-    "pre-commit>=4.6.1",
-    "pytest>=8.0.0",
+    "mypy>=2.3.1",
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "ruff>=0.16.2",
+    "ruff>=0.16.3",
 ]
 
 [tool.pytest.ini_options]
