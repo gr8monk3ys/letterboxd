@@ -5,6 +5,7 @@ import csv
 import json
 import logging
 import random
+import re
 import statistics
 import time
 from collections.abc import Callable
@@ -34,13 +35,65 @@ logging.basicConfig(
 # Writing tells that read as AI-generated (per Wikipedia's "Signs of AI
 # writing"); the examples show the voice, these ban the patterns the
 # model drifts into anyway.
-HUMANIZER_GUIDELINES = """\
+# Stock Letterboxd wording the model falls back on. Each of these was
+# measured against the real corpus: across 227 of his own reviews they
+# appear zero times, while across 25 generated drafts they turned up in
+# eight. Style examples alone never stopped it, because the phrases are
+# what a generic film-account voice sounds like rather than what any one
+# person writes.
+BORROWED_PHRASES = (
+    "rent free",
+    "really said",
+    "in the best way",
+    "wrecked me",
+    "broke something in me",
+    "lives in my head",
+    "hits different",
+    "did not come to play",
+    "understood the assignment",
+    "no notes",
+    "ate and left no crumbs",
+    "the way i",
+    "i wasn't ready for",
+)
+
+HUMANIZER_GUIDELINES = f"""\
 - Never use an em dash; use a comma, a period, or nothing
 - No "isn't just X, it's Y", "not only X but Y", or "X, not Y" parallelisms
 - Don't group ideas in threes; it reads as a formula
 - No aphorisms or polished one-line wisdom; react, don't write epigraphs
 - Skip critic phrases like "masterclass", "gut punch", "a meditation on"
-- Not every review needs a punchline ending; it's fine to just stop"""
+- Not every review needs a punchline ending; it's fine to just stop
+- Never use this stock film-account wording, I have never written any of
+  it: {", ".join(f'"{p}"' for p in BORROWED_PHRASES)}"""
+
+# Wording so ordinary that two reviews sharing it means nothing.
+_ORDINARY = {
+    "one of the best",
+    "the fact that",
+    "at the same time",
+    "one of the most",
+    "the way it is",
+    "i have ever seen",
+    "for the first time",
+    "at the end of",
+    "the end of the",
+    "a lot of the",
+}
+
+
+def find_borrowed_phrases(text: str) -> list[str]:
+    """Stock phrases present in a draft, in the order they are listed."""
+    lowered = (text or "").lower()
+    return [phrase for phrase in BORROWED_PHRASES if phrase in lowered]
+
+
+def distinctive_phrases(text: str, length: int = 4) -> set[str]:
+    """Word runs specific enough that repeating one is a tell."""
+    words = re.findall(r"[a-z']+", (text or "").lower())
+    runs = {" ".join(words[i : i + length]) for i in range(len(words) - length + 1)}
+    return {run for run in runs if run not in _ORDINARY}
+
 
 TONE_PRESETS = {
     "casual": {
@@ -280,8 +333,13 @@ class ReviewGenerator:
                 reviews = near
         return LengthSampler.from_reviews(reviews)
 
-    def generate_review(self, film: dict) -> str | None:
-        """Generate a review for a single movie matching user's style."""
+    def generate_review(self, film: dict, avoid: set[str] | None = None) -> str | None:
+        """Generate a review for a single movie matching user's style.
+
+        `avoid` carries the wording earlier reviews in this batch already
+        used. Each call is otherwise independent, so the model has no way
+        of knowing it just wrote "wrecked me" three films ago.
+        """
         try:
             title = film.get("name", "Unknown")
             year = film.get("year", "Unknown")
@@ -328,6 +386,17 @@ class ReviewGenerator:
             # Build prompt with optional TMDB context
             context_line = f"\nFilm info: {film_context}" if film_context else ""
 
+            avoid_block = ""
+            if avoid:
+                # Cap it: the list grows with every film and a prompt full
+                # of banned wording starts crowding out the examples.
+                sample_avoid = sorted(avoid)[:40]
+                quoted = "; ".join(f'"{p}"' for p in sample_avoid)
+                avoid_block = (
+                    f"\n- I already used this wording in other reviews today, "
+                    f"find different words: {quoted}"
+                )
+
             # Most-liked substantive reviews of this film, as influence
             popular_block = ""
             if self.popular_fetcher is not None:
@@ -349,13 +418,17 @@ Never copy their phrases, jokes, structure, or opinions; every word
 must be mine. When the film deserves it, go longer and deeper than my
 usual."""
 
+            # Both already start with their own newline, so joining them
+            # here keeps the rendered prompt byte-identical.
+            guidance = f"{length_line}{avoid_block}"
+
             prompt = f"""Write a Letterboxd review for "{title}" ({year}).
 {rating_context}{context_line}
 
 Guidelines:
 {tone_preset["guidelines"]}
 - My real reviews are usually 1-3 sentences; never pad — a one-line reaction is fine
-- Match how seriously the examples take their films; that is my register at this rating{length_line}
+- Match how seriously the examples take their films; that is my register at this rating{guidance}
 {HUMANIZER_GUIDELINES}
 - If you don't confidently know this exact film, reply with exactly SKIP; never guess or invent
 - Write only the review text, no title or rating
@@ -441,10 +514,22 @@ Now write a review for "{title}" ({year}):"""
             logging.info(f"Using {style_count} of your reviews for style matching")
 
             generated = 0
+            # What this batch has already said. Reviews are generated one
+            # call at a time, so nothing else stops the model writing the
+            # same construction into a dozen films in a row.
+            used: set[str] = set()
             for film in tqdm(films, desc="Generating reviews"):
-                review = self.generate_review(film)
+                review = self.generate_review(film, avoid=used)
 
                 if review:
+                    borrowed = find_borrowed_phrases(review)
+                    if borrowed:
+                        logging.info(f"Stock wording {borrowed} in '{film['name']}'; asking again")
+                        retry = self.generate_review(film, avoid=used | set(borrowed))
+                        if retry and not find_borrowed_phrases(retry):
+                            review = retry
+
+                    used |= distinctive_phrases(review)
                     self.db.save_ai_review(
                         letterboxd_uri=film["letterboxd_uri"],
                         name=film["name"],
