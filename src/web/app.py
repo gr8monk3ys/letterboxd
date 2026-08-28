@@ -913,7 +913,12 @@ def update_engagement():
             result = scraper.update_all_engagement(db)
         finally:
             db.close()
-        return JSONResponse({"message": f"Updated {result['updated']} reviews", **result})
+        message = f"Updated {result['updated']} reviews"
+        if result.get("error"):
+            # Otherwise a blocked run reads on the page as "0 reviews had
+            # any engagement", which is a different and much worse claim.
+            message = f"Collected nothing; Letterboxd blocked the run: {result['error']}"
+        return JSONResponse({"message": message, **result})
     except Exception as e:
         logger.error(f"Error updating engagement: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)

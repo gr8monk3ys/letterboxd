@@ -65,6 +65,12 @@ uv run python -m src.import_csv           # ratings typed on /queue -> data/lett
 uv run python -m src.reviewing.campaign --per-run 5 --tone thoughtful
 uv run python -m src.reviewing.campaign --apply
 
+# Engagement on the posted reviews (read-only scrape of your own profile).
+# Bare invocation collects; reviews are due 24h after posting and re-checked daily.
+uv run python -m src.review_metrics --dry-run       # list what would be checked
+uv run python -m src.review_metrics --limit 5       # collect for 5 of them
+uv run python -m src.review_metrics stats           # totals, once rows exist
+
 # Duplicate diary entries the tool once created: list / read live / remove extras
 uv run python -m src.reviewing.dedupe_logs [--inspect | --apply]
 
