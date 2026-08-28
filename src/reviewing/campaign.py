@@ -8,9 +8,10 @@ Candidates are the queue's review tier (rated films with neither an own
 review nor a posted AI one) that have no draft yet, so a human review is
 never touched (invariant 2) and no unrated film is written about
 (invariant 3). Drafts go through the same generator ``write_review`` uses,
-one film at a time. The dry run stops after the digest; ``--apply`` posts
-the drafts the latest digest names **and a human has approved** (status
-``approved``, set on the dashboard's /drafts page), through ``ReviewPoster`` - which edits
+one film at a time. A run without ``--apply`` only drafts; ``--apply``
+only posts, and only what a human approved on the dashboard's /drafts
+page (``ai_reviews.status = 'approved'``), preferring the latest
+digest's batch. Posting goes through ``ReviewPoster`` - which edits
 the film's existing diary entry and never clicks "log again" (invariant 1).
 Rate limits and ``posted_reviews`` bookkeeping are the poster's, unchanged.
 """
@@ -80,20 +81,23 @@ def latest_digest(directory: Path) -> Path | None:
     return files[-1] if files else None
 
 
-def _approved_unposted(conn: sqlite3.Connection, uris: list[str]) -> list[str]:
-    """Those of `uris` still waiting to be posted *and* approved by a human.
+def _approved_unposted(conn: sqlite3.Connection, uris: list[str] | None = None) -> list[str]:
+    """Drafts still waiting to be posted *and* approved by a human.
 
     A digest names what was drafted, not what was agreed to. Approval is
-    recorded in ai_reviews.status by the dashboard's /drafts page.
+    recorded in ai_reviews.status by the dashboard's /drafts page. With no
+    `uris`, every approved draft is a candidate, so --apply still works
+    when the digest has been cleaned up.
     """
-    keep = []
-    for uri in uris:
-        row = conn.execute(
-            "SELECT posted_at, status FROM ai_reviews WHERE letterboxd_uri = ?", (uri,)
-        ).fetchone()
-        if row is not None and row[0] is None and row[1] == "approved":
-            keep.append(uri)
-    return keep
+    approved = {
+        uri
+        for (uri,) in conn.execute(
+            "SELECT letterboxd_uri FROM ai_reviews WHERE posted_at IS NULL AND status = 'approved'"
+        )
+    }
+    if uris is None:
+        return sorted(approved)
+    return [uri for uri in uris if uri in approved]
 
 
 # A film the model declines (it answers SKIP when it does not know the
@@ -156,7 +160,7 @@ def main() -> None:
     parser.add_argument(
         "--apply",
         action="store_true",
-        help="post the drafts named in the latest digest (drafting first if there is none)",
+        help="post the approved drafts (never generates; approve on /drafts first)",
     )
     args = parser.parse_args()
 
@@ -170,10 +174,20 @@ def main() -> None:
     try:
         uris: list[str] = []
         digest = latest_digest(DIGEST_DIR)
-        if args.apply and digest is not None:
-            uris = _approved_unposted(conn, digest_uris(digest))[: args.per_run]
-            if uris:
-                print(f"Posting the {len(uris)} approved draft(s) from {digest.name}")
+        if args.apply:
+            # --apply posts and does not write: a draft it generated itself
+            # could not have been approved by anyone, so drafting here would
+            # only pile up work while posting nothing.
+            named = digest_uris(digest) if digest is not None else None
+            uris = _approved_unposted(conn, named)[: args.per_run]
+            if not uris:
+                print(
+                    "No approved drafts to post. Approve them on the dashboard's "
+                    "/drafts page\n(uv run python -m src.web.app), then re-run with --apply."
+                )
+                return
+            where = f" from {digest.name}" if digest is not None else ""
+            print(f"Posting the {len(uris)} approved draft(s){where}")
 
         if not uris:
             films = select_campaign(conn, args.per_run + SPARE_CANDIDATES, args.sample, args.seed)
@@ -189,17 +203,8 @@ def main() -> None:
                         DIGEST_DIR, drafts, args.tone, datetime.now(UTC).isoformat()
                     )
                     print(f"\nDigest: {path}")
-            # A draft this run just wrote has been approved by nobody, so
-            # --apply never posts it. Reaching Letterboxd always takes a
-            # separate human decision on the /drafts page first.
-            if args.apply:
-                print(
-                    "\nNo approved drafts to post. Approve them on the dashboard's "
-                    "/drafts page\n(uv run python -m src.web.app), then re-run with --apply."
-                )
-            else:
-                print("Read it, then approve on /drafts and post with:")
-                print("  uv run python -m src.reviewing.campaign --apply")
+            print("Read it, then approve on /drafts and post with:")
+            print("  uv run python -m src.reviewing.campaign --apply")
             return
     finally:
         conn.close()

@@ -244,16 +244,30 @@ class TestMain:
         assert "No approved drafts to post" in capsys.readouterr().out
         env["poster"].run.assert_not_called()
 
-    def test_apply_with_no_digest_drafts_but_never_posts_them(self, env, monkeypatch, capsys):
-        """Freshly drafted reviews are unapproved by construction, so an
-        --apply run that had to draft them still stops at the gate."""
+    def test_apply_never_drafts(self, env, monkeypatch, capsys):
+        """--apply posts and does not write. A draft it generated itself
+        could not have been approved by anyone, so drafting under --apply
+        would only pile up work while posting nothing."""
         from src.reviewing import campaign
 
         monkeypatch.setattr("sys.argv", ["campaign", "--per-run", "1", "--apply"])
         campaign.main()
-        assert FakeGenerator.instances[0].asked == ["Alpha"]
+        assert FakeGenerator.instances == []
         assert "No approved drafts to post" in capsys.readouterr().out
         env["poster"].run.assert_not_called()
+
+    def test_apply_posts_approved_drafts_even_with_no_digest(self, env, monkeypatch):
+        """The digest is a reading aid, not the record of the decision."""
+        from src.reviewing import campaign
+
+        monkeypatch.setattr("sys.argv", ["campaign", "--per-run", "2"])
+        campaign.main()
+        for f in env["digests"].iterdir():
+            f.unlink()
+        approve(env["db"], "u:a")
+        monkeypatch.setattr("sys.argv", ["campaign", "--per-run", "2", "--apply"])
+        campaign.main()
+        env["poster"].run.assert_called_once_with(limit=2, uris=["u:a"])
 
     def test_a_declined_film_is_passed_over_not_stalled_on(self, env, monkeypatch, capsys):
         """The model answers SKIP for films it does not know; that film
