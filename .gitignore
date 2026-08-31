@@ -77,3 +77,6 @@ htmlcov/
 
 # Ruff
 .ruff_cache/
+
+# Review campaign digests (generated text, one file per run)
+data/digests/

@@ -38,6 +38,17 @@ _FIND_DUPLICATE_JS = (
 }}"""
 )
 
+# True when any opener or duplicate button has rendered, so the click
+# below is attempted on a page that has finished drawing its controls.
+_FIND_ANY_BUTTON_JS = (
+    """(labels) => {"""
+    + _NORMALIZE_LABEL_JS
+    + f"""
+    return [...document.querySelectorAll('button')].some(b => b.offsetParent !== null
+        && (labels.includes(norm(b)) || norm(b).includes("{DUPLICATE_BUTTON_PHRASE}")));
+}}"""
+)
+
 _CLICK_BUTTON_JS = (
     """(labels) => {"""
     + _NORMALIZE_LABEL_JS
@@ -50,6 +61,11 @@ _CLICK_BUTTON_JS = (
     return null;
 }"""
 )
+
+
+def _squash(text: str) -> str:
+    return " ".join((text or "").split())
+
 
 # Set up logging
 logging.basicConfig(
@@ -79,12 +95,13 @@ class ReviewPoster:
         return login(page, self.config)
 
     def get_pending_reviews(self) -> list[dict]:
-        """Get AI reviews that haven't been posted yet.
+        """The reviews this run may post: unposted *and* approved.
 
-        Delegates so the CLI and the dashboard's /drafts page share one
-        definition of "pending draft".
+        The approval gate lives here, in the one place every posting path
+        goes through - the CLI and the campaign both call run(). A draft
+        nobody has approved is not postable, however it was selected.
         """
-        return self.db.get_ai_review_drafts()
+        return self.db.get_approved_ai_reviews()
 
     def open_review_form(self, page: Page, name: str) -> bool:
         """Open the diary-entry modal from whichever button this page has.
@@ -99,6 +116,14 @@ class ReviewPoster:
         duplicate an entry every time a review was edited or re-tagged.
         """
         openers = EDIT_BUTTON_LABELS + NEW_ENTRY_BUTTON_LABELS
+        # The action buttons are rendered client-side after the document
+        # loads; a fixed pause after navigation is sometimes too short
+        # (Kwaidan, 2026-08-27: "could not find review button" on a page
+        # that offered "Edit entry or add review…" a moment later).
+        for _ in range(5):
+            if page.evaluate(_FIND_ANY_BUTTON_JS, list(openers)):
+                break
+            page.wait_for_timeout(1500)
         if page.evaluate(_CLICK_BUTTON_JS, list(openers)):
             return True
 
@@ -195,19 +220,35 @@ class ReviewPoster:
                 logging.warning(f"Could not find review textarea for {name}")
                 return False, None
 
+            # The entry may already carry a review the user wrote (after
+            # the last export, so the reviews table cannot know). Filling
+            # the field would replace it; a human review is never edited.
+            existing = review_textarea.input_value()
+            if existing.strip() and _squash(existing) != _squash(review_text):
+                logging.warning(f"{name} already has a review on this entry; not overwriting it")
+                page.keyboard.press("Escape")
+                return False, None
+
             review_textarea.fill(review_text)
             page.wait_for_timeout(500)
 
             applied_tags = self.set_tags(page, film.get("tags") or [])
 
-            # Post as a plain review: an unchecked specifiedDate means no
-            # diary date is claimed. The old behavior invented a watch
-            # date, which fabricated diary history.
+            # On a new entry, post as a plain review: an unchecked
+            # specifiedDate means no diary date is claimed (the old
+            # behavior invented a watch date). On an *existing* entry the
+            # box reflects the user's own diary date, and unchecking it
+            # deletes that date from the diary - measured 2026-08-27 on
+            # The Sound of Music, whose 23 Aug entry silently became a
+            # dateless review. So the box is left alone when editing.
             try:
                 page.evaluate(
                     """() => {
-                        const box = document.querySelector(
-                            'form.js-diary-entry-form input[name="specifiedDate"]');
+                        const form = document.querySelector('form.js-diary-entry-form');
+                        if (!form) return;
+                        const id = form.querySelector('input[name="viewingId"]');
+                        if (id && id.value) return;  // editing: keep the diary date
+                        const box = form.querySelector('input[name="specifiedDate"]');
                         if (box && box.checked) box.click();
                     }"""
                 )
@@ -287,20 +328,28 @@ class ReviewPoster:
             logging.error(f"Error posting review for {film.get('name')}: {e}")
             return False, None
 
-    def run(self, limit: int | None = None, dry_run: bool = False) -> int:
+    def run(
+        self, limit: int | None = None, dry_run: bool = False, uris: list[str] | None = None
+    ) -> int:
         """Post AI-generated reviews to Letterboxd.
 
         Args:
             limit: Maximum number of reviews to post (None for all)
             dry_run: If True, just show which reviews would be posted
+            uris: Only offer drafts for these film URIs (a campaign's batch)
 
         Returns:
             Number of reviews posted
         """
         reviews = self.get_pending_reviews()
+        if uris is not None:
+            wanted = set(uris)
+            reviews = [r for r in reviews if r["letterboxd_uri"] in wanted]
 
         if not reviews:
-            print("No AI reviews found. Generate some first with:")
+            print("No approved reviews to post.")
+            print("Approve drafts on the dashboard's /drafts page (uv run python -m src.web.app),")
+            print("or generate some first with:")
             print("  uv run python -m src.reviewing.write_review -n 10")
             return 0
 

@@ -24,6 +24,22 @@ logging.basicConfig(
 )
 
 
+# An AI review's approval state. A draft is never posted; only 'approved'
+# rows reach Letterboxd, and rejection is recorded rather than implied by
+# a row sitting untouched forever.
+AI_REVIEW_STATUSES = ("draft", "approved", "rejected")
+
+PENDING_RATINGS_DDL = """
+    CREATE TABLE IF NOT EXISTS pending_ratings (
+        letterboxd_uri TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        year INTEGER,
+        rating REAL NOT NULL,
+        entered_at TEXT NOT NULL
+    )
+"""
+
+
 class MovieDatabase:
     def __init__(self, db_path: Path | None = None):
         self.db_path = db_path or (DATA_DIR / "movie_database.db")
@@ -150,9 +166,15 @@ class MovieDatabase:
                     generated_at TEXT,
                     posted_at TEXT,
                     posted_url TEXT,
-                    tags TEXT
+                    tags TEXT,
+                    status TEXT NOT NULL DEFAULT 'draft'
                 )
             """)
+
+            # Ratings typed into the dashboard's /queue page, waiting to be
+            # uploaded through letterboxd.com/import. Rows leave once the
+            # rating shows up in `ratings` (see clear_pending_where_rated).
+            self.cursor.execute(PENDING_RATINGS_DDL)
 
             self.conn.commit()
             logging.info("Database tables created successfully")
@@ -412,7 +434,9 @@ class MovieDatabase:
                 name = excluded.name,
                 year = excluded.year,
                 ai_review = excluded.ai_review,
-                generated_at = excluded.generated_at
+                generated_at = excluded.generated_at,
+                status = CASE WHEN ai_reviews.posted_at IS NULL
+                              THEN 'draft' ELSE ai_reviews.status END
             """,
             (letterboxd_uri, name, year, review, datetime.now().isoformat()),
         )
@@ -463,7 +487,12 @@ class MovieDatabase:
         columns = ["letterboxd_uri", "name", "year", "review", "rating"]
         return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
 
-    def get_ai_reviews(self, pending_only: bool = False, limit: int | None = None) -> list[dict]:
+    def get_ai_reviews(
+        self,
+        pending_only: bool = False,
+        limit: int | None = None,
+        status: str | None = None,
+    ) -> list[dict]:
         """The one query over ai_reviews, shared by the dashboard pages, the
         posting CLI and the exporter, so they cannot drift.
 
@@ -491,11 +520,13 @@ class MovieDatabase:
                 else ""
             )
             where = f"WHERE ar.posted_at IS NULL {posted_filter}"
+        if status is not None:
+            where = f"{where} AND ar.status = ?" if where else "WHERE ar.status = ?"
         self.cursor.execute(
             f"""
             SELECT ar.letterboxd_uri, ar.name, ar.year, ar.ai_review,
                    COALESCE(rt.rating, f.rating) AS rating,
-                   ar.generated_at, ar.posted_at, ar.posted_url
+                   ar.generated_at, ar.posted_at, ar.posted_url, ar.status
             FROM ai_reviews ar
             LEFT JOIN films f ON ar.letterboxd_uri = f.letterboxd_uri
             LEFT JOIN ratings rt ON ar.letterboxd_uri = rt.letterboxd_uri
@@ -503,7 +534,7 @@ class MovieDatabase:
             ORDER BY ar.generated_at DESC
             {"LIMIT ?" if limit is not None else ""}
             """,
-            (limit,) if limit is not None else (),
+            ([status] if status is not None else []) + ([limit] if limit is not None else []),
         )
         columns = [
             "letterboxd_uri",
@@ -514,12 +545,48 @@ class MovieDatabase:
             "generated_at",
             "posted_at",
             "posted_url",
+            "status",
         ]
         return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
 
     def get_ai_review_drafts(self) -> list[dict]:
-        """Get AI reviews that have not been posted yet, newest first."""
+        """Every unposted AI review, newest first, whatever its status.
+
+        This is the drafts *page's* list: a rejected review still has to be
+        visible, or the decision cannot be seen or undone. Posting reads
+        get_approved_ai_reviews instead.
+        """
         return self.get_ai_reviews(pending_only=True)
+
+    def get_approved_ai_reviews(self) -> list[dict]:
+        """The unposted reviews a human has approved - the only postable set."""
+        return self.get_ai_reviews(pending_only=True, status="approved")
+
+    def get_ai_review_status(self, letterboxd_uri: str) -> str | None:
+        """The approval status recorded for a film, or None if it has no review."""
+        self.cursor.execute(
+            "SELECT status FROM ai_reviews WHERE letterboxd_uri = ?", (letterboxd_uri,)
+        )
+        row = self.cursor.fetchone()
+        return str(row[0]) if row else None
+
+    def set_ai_review_status(self, letterboxd_uri: str, status: str) -> bool:
+        """Record an approve/reject decision on an unposted draft.
+
+        Posted reviews are excluded: their status is history, and flipping
+        it would make the postable set disagree with what is on Letterboxd.
+
+        Returns:
+            True if a pending draft was updated.
+        """
+        if status not in AI_REVIEW_STATUSES:
+            raise ValueError(f"Unknown status {status!r}; expected one of {AI_REVIEW_STATUSES}")
+        self.cursor.execute(
+            "UPDATE ai_reviews SET status = ? WHERE letterboxd_uri = ? AND posted_at IS NULL",
+            (status, letterboxd_uri),
+        )
+        self.conn.commit()
+        return self.cursor.rowcount > 0
 
     def clear_ai_review_posted(self, letterboxd_uri: str) -> bool:
         """Reopen a posted review as a pending draft.
@@ -559,7 +626,8 @@ class MovieDatabase:
         what is live on Letterboxd.
         """
         self.cursor.execute(
-            "UPDATE ai_reviews SET ai_review = ? WHERE letterboxd_uri = ? AND posted_at IS NULL",
+            "UPDATE ai_reviews SET ai_review = ?, status = 'draft' "
+            "WHERE letterboxd_uri = ? AND posted_at IS NULL",
             (review, letterboxd_uri),
         )
         self.conn.commit()
@@ -612,6 +680,57 @@ class MovieDatabase:
         columns = ["letterboxd_uri", "name", "year", "rating"]
         return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
 
+    # -- pending ratings (entered in the dashboard, uploaded by hand) --------
+
+    def _ensure_pending_ratings(self) -> None:
+        # Older databases predate the table and the migration may not have
+        # been run; creating it lazily keeps the dashboard endpoint working.
+        self.cursor.execute(PENDING_RATINGS_DDL)
+
+    def upsert_pending_rating(
+        self, letterboxd_uri: str, name: str, year: int | None, rating: float
+    ) -> None:
+        """Remember a rating the user entered, until Letterboxd has it."""
+        self._ensure_pending_ratings()
+        self.cursor.execute(
+            """
+            INSERT INTO pending_ratings (letterboxd_uri, name, year, rating, entered_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(letterboxd_uri) DO UPDATE SET
+                rating = excluded.rating, entered_at = excluded.entered_at
+            """,
+            (letterboxd_uri, name, year, rating, datetime.now().isoformat()),
+        )
+        self.conn.commit()
+
+    def pending_ratings(self) -> list[dict]:
+        """Ratings entered but not yet seen in the ratings table, oldest first."""
+        self._ensure_pending_ratings()
+        self.cursor.execute(
+            "SELECT letterboxd_uri, name, year, rating, entered_at FROM pending_ratings "
+            "ORDER BY entered_at"
+        )
+        columns = ["letterboxd_uri", "name", "year", "rating", "entered_at"]
+        return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
+
+    def clear_pending_where_rated(self) -> int:
+        """Drop pending rows whose film now carries a rating on Letterboxd.
+
+        Returns how many were cleared.
+        """
+        self._ensure_pending_ratings()
+        self.cursor.execute(
+            """
+            DELETE FROM pending_ratings
+            WHERE letterboxd_uri IN (
+                SELECT letterboxd_uri FROM ratings WHERE rating IS NOT NULL
+            )
+            """
+        )
+        cleared = self.cursor.rowcount
+        self.conn.commit()
+        return cleared
+
     def close(self) -> None:
         """Close the database connection."""
         if self._conn:
@@ -646,6 +765,12 @@ def main():
 
         try:
             db.import_from_letterboxd_export(importer)
+
+            # Ratings typed into the dashboard that the export now carries
+            # have been uploaded; stop offering them for import.
+            cleared = db.clear_pending_where_rated()
+            if cleared:
+                print(f"Cleared {cleared} pending rating(s) now present on Letterboxd")
 
             counts = db.get_review_count()
             print("\n=== Database Created ===")

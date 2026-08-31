@@ -508,7 +508,7 @@ class TestEngagementBatching:
         result = EngagementScraper().update_all_engagement(db)
 
         assert len(launches) == 1
-        assert result == {"checked": 3, "updated": 3, "failed": 0}
+        assert result == {"checked": 3, "updated": 3, "failed": 0, "error": None}
 
 
 class TestEngagementChallengeDetection:
@@ -551,3 +551,126 @@ class TestEngagementCounts:
 
     def test_empty_text(self):
         assert EngagementScraper._count_from(self._page(None), ".x") == 0
+
+
+class TestEngagementEntryPoint:
+    """`python -m src.review_metrics` runs the collection.
+
+    Before this, update_all_engagement was reachable only by clicking a
+    dashboard button, so review_engagement held 0 rows while 34 reviews
+    were live: "are these reviews working?" was unanswerable by
+    construction.
+    """
+
+    @pytest.fixture
+    def db_path(self, tmp_path):
+        db_path = tmp_path / "metrics.db"
+        db = ReviewMetricsDB(db_path=db_path)
+        db.connect()
+        old = (datetime.now() - timedelta(hours=48)).isoformat()
+        for i in range(3):
+            db.cursor.execute(
+                """INSERT INTO posted_reviews
+                   (letterboxd_uri, film_name, film_year, review_text, tone_preset,
+                    posted_at, letterboxd_review_url)
+                   VALUES (?, ?, 2020, 'r', 'casual', ?, ?)""",
+                (f"uri{i}", f"Film {i}", old, f"https://letterboxd.com/u/film/f{i}/"),
+            )
+        db.conn.commit()
+        db.close()
+        # main() owns the connection it is given and closes it, so each
+        # assertion opens its own.
+        yield db_path
+
+    @staticmethod
+    def rows(db_path):
+        db = ReviewMetricsDB(db_path=db_path)
+        db.connect()
+        try:
+            return db.cursor.execute("SELECT COUNT(*) FROM review_engagement").fetchone()[0]
+        finally:
+            db.close()
+
+    @staticmethod
+    def connected(db_path):
+        db = ReviewMetricsDB(db_path=db_path)
+        db.connect()
+        return db
+
+    @pytest.fixture
+    def scraper(self, monkeypatch):
+        """One fake browser page reporting 7 likes and no comments."""
+        page = MagicMock()
+        page.title.return_value = "A review"
+        page.locator.return_value.count.return_value = 0
+        page.locator.return_value.first.count.return_value = 1
+        page.locator.return_value.first.text_content.return_value = "7 likes"
+        monkeypatch.setattr(
+            "src.review_metrics.open_browser", lambda playwright, config: (MagicMock(), page)
+        )
+        monkeypatch.setattr("src.review_metrics.sync_playwright", MagicMock())
+        return page
+
+    def test_bare_invocation_collects_and_reports_rows_written(
+        self, db_path, scraper, monkeypatch, capsys
+    ):
+        from src import review_metrics
+
+        monkeypatch.setattr("src.review_metrics.ReviewMetricsDB", lambda: self.connected(db_path))
+        monkeypatch.setattr("sys.argv", ["review_metrics"])
+        review_metrics.main()
+
+        out = capsys.readouterr().out
+        assert "Rows written: 3" in out
+        assert self.rows(db_path) == 3
+
+    def test_limit_bounds_the_run(self, db_path, scraper, monkeypatch, capsys):
+        from src import review_metrics
+
+        monkeypatch.setattr("src.review_metrics.ReviewMetricsDB", lambda: self.connected(db_path))
+        monkeypatch.setattr("sys.argv", ["review_metrics", "--limit", "1"])
+        review_metrics.main()
+
+        assert "Rows written: 1" in capsys.readouterr().out
+        assert self.rows(db_path) == 1
+
+    def test_dry_run_names_the_targets_and_writes_nothing(self, db_path, monkeypatch, capsys):
+        from src import review_metrics
+
+        def no_browser(*a, **kw):  # pragma: no cover - must never be called
+            raise AssertionError("a dry run must not open a browser")
+
+        monkeypatch.setattr("src.review_metrics.open_browser", no_browser)
+        monkeypatch.setattr("src.review_metrics.ReviewMetricsDB", lambda: self.connected(db_path))
+        monkeypatch.setattr("sys.argv", ["review_metrics", "--dry-run"])
+        review_metrics.main()
+
+        out = capsys.readouterr().out
+        assert "Film 0" in out and "would check 3" in out.lower()
+        assert self.rows(db_path) == 0
+
+    def test_a_blocked_scrape_is_reported_not_swallowed(self, db_path, monkeypatch, capsys):
+        """Letterboxd sits behind Cloudflare and this repo has a history of
+        403s; a run that collected nothing must say so, not print zeros."""
+        from src import review_metrics
+
+        monkeypatch.setattr(
+            "src.review_metrics.open_browser",
+            lambda playwright, config: (_ for _ in ()).throw(RuntimeError("403 Just a moment")),
+        )
+        monkeypatch.setattr("src.review_metrics.sync_playwright", MagicMock())
+        monkeypatch.setattr("src.review_metrics.ReviewMetricsDB", lambda: self.connected(db_path))
+        monkeypatch.setattr("sys.argv", ["review_metrics"])
+
+        review_metrics.main()
+        out = capsys.readouterr().out
+        assert "Rows written: 0" in out
+        assert "403" in out or "could not" in out.lower()
+
+    def test_the_update_subcommand_still_works(self, db_path, scraper, monkeypatch, capsys):
+        from src import review_metrics
+
+        monkeypatch.setattr("src.review_metrics.ReviewMetricsDB", lambda: self.connected(db_path))
+        monkeypatch.setattr("sys.argv", ["review_metrics", "update", "--limit", "2"])
+        review_metrics.main()
+        assert "Rows written: 2" in capsys.readouterr().out

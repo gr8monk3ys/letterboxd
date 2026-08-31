@@ -639,7 +639,7 @@ class EngagementScraper:
             "comments_count": comments_count,
         }
 
-    def update_all_engagement(self, db: ReviewMetricsDB) -> dict:
+    def update_all_engagement(self, db: ReviewMetricsDB, limit: int | None = None) -> dict:
         """Update engagement for all reviews that need checking.
 
         Opens one browser for the whole batch: a launch per review costs
@@ -648,49 +648,63 @@ class EngagementScraper:
 
         Args:
             db: ReviewMetricsDB instance
+            limit: Check at most this many reviews (None for all)
 
         Returns:
-            Summary of updates
+            Summary of updates. `error` is set when the batch never got a
+            browser at all - Cloudflare refuses this account's scrapes
+            often enough that "0 updated" must be distinguishable from
+            "0 collected because we were blocked".
         """
         reviews = db.get_reviews_needing_check()
         targets = [r for r in reviews if r.get("letterboxd_review_url")]
+        if limit is not None:
+            targets = targets[:limit]
         updated = 0
         failed = 0
+        error: str | None = None
 
         if targets:
-            with sync_playwright() as p:
-                context, page = open_browser(p, self.config)
-                try:
-                    for review in targets:
-                        try:
-                            engagement = self._read_engagement(
-                                page, review["letterboxd_review_url"]
+            try:
+                with sync_playwright() as p:
+                    context, page = open_browser(p, self.config)
+                    try:
+                        for review in targets:
+                            try:
+                                engagement = self._read_engagement(
+                                    page, review["letterboxd_review_url"]
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Error scraping engagement from "
+                                    f"{review['letterboxd_review_url']}: {e}"
+                                )
+                                failed += 1
+                                continue
+                            db.save_engagement(
+                                posted_review_id=review["id"],
+                                likes_count=engagement["likes_count"],
+                                comments_count=engagement["comments_count"],
                             )
-                        except Exception as e:
-                            logger.error(
-                                f"Error scraping engagement from "
-                                f"{review['letterboxd_review_url']}: {e}"
+                            updated += 1
+                            logger.info(
+                                f"Updated engagement for {review['film_name']}: "
+                                f"{engagement['likes_count']} likes, "
+                                f"{engagement['comments_count']} comments"
                             )
-                            failed += 1
-                            continue
-                        db.save_engagement(
-                            posted_review_id=review["id"],
-                            likes_count=engagement["likes_count"],
-                            comments_count=engagement["comments_count"],
-                        )
-                        updated += 1
-                        logger.info(
-                            f"Updated engagement for {review['film_name']}: "
-                            f"{engagement['likes_count']} likes, "
-                            f"{engagement['comments_count']} comments"
-                        )
-                finally:
-                    context.close()
+                    finally:
+                        context.close()
+            except Exception as e:
+                # Launching or clearing Cloudflare failed, so nothing was
+                # read at all. Reported, never rendered as zero engagement.
+                error = str(e)
+                logger.error(f"Could not collect engagement: {e}")
 
         return {
-            "checked": len(reviews),
+            "checked": len(targets),
             "updated": updated,
             "failed": failed,
+            "error": error,
         }
 
 
@@ -747,11 +761,62 @@ def get_tone_suggestions(db: ReviewMetricsDB) -> list[str]:
     return suggestions
 
 
+def run_engagement_collection(
+    db: ReviewMetricsDB, limit: int | None = None, dry_run: bool = False
+) -> int:
+    """Collect engagement for the posted reviews due a check; report rows.
+
+    Returns:
+        The number of review_engagement rows written (0 for a dry run).
+    """
+    due = [r for r in db.get_reviews_needing_check() if r.get("letterboxd_review_url")]
+    if limit is not None:
+        due = due[:limit]
+
+    if not due:
+        print("No posted reviews are due a check.")
+        return 0
+
+    if dry_run:
+        print(f"Would check {len(due)} review(s):")
+        for review in due:
+            print(f"  {review['film_name']} ({review['film_year']})")
+            print(f"    {review['letterboxd_review_url']}")
+        print("\nRows written: 0 (dry run)")
+        return 0
+
+    print(f"Checking {len(due)} review(s)...")
+    result = EngagementScraper().update_all_engagement(db, limit=limit)
+    print(f"Checked: {result['checked']}")
+    print(f"Failed: {result['failed']}")
+    if result.get("error"):
+        # Letterboxd is behind Cloudflare and refuses automated clients
+        # often; a blocked run must read as blocked, not as zero engagement.
+        print(f"Could not open a browser session: {result['error']}")
+    print(f"Rows written: {result['updated']}")
+    return int(result["updated"])
+
+
 def main():
-    """CLI for review metrics."""
+    """CLI for review metrics.
+
+    With no subcommand this collects engagement for the live reviews:
+
+        uv run python -m src.review_metrics --limit 5 --dry-run
+
+    That is the whole point of the module having an entry point. The
+    collection used to be reachable only from a dashboard button, and so
+    review_engagement sat at 0 rows while 34 reviews were live.
+    """
     import argparse
 
-    parser = argparse.ArgumentParser(description="Review quality metrics")
+    parser = argparse.ArgumentParser(
+        description="Review quality metrics; with no subcommand, collect engagement"
+    )
+    parser.add_argument("--limit", type=int, default=None, help="Check at most this many reviews")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="List what would be checked, scrape nothing"
+    )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # Stats command
@@ -761,8 +826,10 @@ def main():
     perf_parser = subparsers.add_parser("performance", help="Show tone performance")
     perf_parser.add_argument("--days", type=int, default=30, help="Days to analyze (default: 30)")
 
-    # Update command
-    subparsers.add_parser("update", help="Update engagement metrics")
+    # Update command (the same collection as a bare invocation)
+    update_parser = subparsers.add_parser("update", help="Update engagement metrics")
+    update_parser.add_argument("--limit", type=int, default=None, help="Check at most this many")
+    update_parser.add_argument("--dry-run", action="store_true", help="Scrape nothing")
 
     # Suggestions command
     subparsers.add_parser("suggest", help="Get tone suggestions")
@@ -805,13 +872,8 @@ def main():
                     print(f"  Engagement score: {p.engagement_score}")
                     print()
 
-        elif args.command == "update":
-            print("Updating engagement metrics...")
-            scraper = EngagementScraper()
-            result = scraper.update_all_engagement(db)
-            print(f"Checked: {result['checked']}")
-            print(f"Updated: {result['updated']}")
-            print(f"Failed: {result['failed']}")
+        elif args.command in (None, "update"):
+            run_engagement_collection(db, limit=args.limit, dry_run=args.dry_run)
 
         elif args.command == "suggest":
             suggestions = get_tone_suggestions(db)

@@ -285,6 +285,36 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
             """,
         ],
     ),
+    (
+        10,
+        "Ratings entered in the dashboard queue, pending upload",
+        [
+            """
+            CREATE TABLE IF NOT EXISTS pending_ratings (
+                letterboxd_uri TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                year INTEGER,
+                rating REAL NOT NULL,
+                entered_at TEXT NOT NULL
+            )
+            """,
+        ],
+    ),
+    (
+        11,
+        "Approval status for AI review drafts",
+        [
+            # A draft is never posted until someone approves it. Rows
+            # already carrying posted_at are live on Letterboxd, so the
+            # decision was made: they backfill to 'approved'.
+            """
+            ALTER TABLE ai_reviews ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'
+            """,
+            """
+            UPDATE ai_reviews SET status = 'approved' WHERE posted_at IS NOT NULL
+            """,
+        ],
+    ),
 ]
 
 

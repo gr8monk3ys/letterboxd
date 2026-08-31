@@ -672,6 +672,63 @@ class TestDraftsPage:
         assert "No drafts yet" in body
         assert "write_review" in body
 
+    def test_page_offers_approve_and_reject_for_a_draft(self, client):
+        body = client.get("/drafts").text
+        assert "approve-draft" in body and "reject-draft" in body
+        # The pending state is visible, so "has anyone decided?" is answerable
+        # from the page rather than from the database.
+        assert "draft" in body.lower()
+
+    def test_approving_records_the_decision_and_the_page_shows_it(self, client):
+        response = client.post(
+            "/api/reviews/ai/status", json={"letterboxd_uri": "uri1", "status": "approved"}
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "approved"
+        assert "approved" in client.get("/drafts").text.lower()
+
+    def test_rejecting_records_the_decision(self, client):
+        client.post(
+            "/api/reviews/ai/status", json={"letterboxd_uri": "uri1", "status": "rejected"}
+        )
+        from src.data_processing.create_database import MovieDatabase
+
+        db = MovieDatabase()
+        db.connect()
+        try:
+            assert db.get_ai_review_status("uri1") == "rejected"
+            assert db.get_approved_ai_reviews() == []
+        finally:
+            db.close()
+
+    def test_editing_an_approved_draft_sends_it_back_for_approval(self, client):
+        client.post(
+            "/api/reviews/ai/status", json={"letterboxd_uri": "uri1", "status": "approved"}
+        )
+        client.post(
+            "/api/reviews/ai/update", json={"letterboxd_uri": "uri1", "review": "Rewritten."}
+        )
+        from src.data_processing.create_database import MovieDatabase
+
+        db = MovieDatabase()
+        db.connect()
+        try:
+            assert db.get_ai_review_status("uri1") == "draft"
+        finally:
+            db.close()
+
+    def test_an_invalid_status_is_a_400_not_a_500(self, client):
+        response = client.post(
+            "/api/reviews/ai/status", json={"letterboxd_uri": "uri1", "status": "posted"}
+        )
+        assert response.status_code == 400
+
+    def test_status_for_an_unknown_film_is_404(self, client):
+        response = client.post(
+            "/api/reviews/ai/status", json={"letterboxd_uri": "nope", "status": "approved"}
+        )
+        assert response.status_code == 404
+
     def test_api_ai_reviews_uses_the_shared_query(self, client):
         """The endpoint's rating must come from the ratings table (films.rating
         is NULL in a real export), proving it goes through get_ai_reviews."""
