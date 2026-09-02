@@ -1,12 +1,31 @@
 name: org-gitleaks
 
+# Secret scan.
+#
+#   pull_request -> the reusable workflow scans only the commits this PR adds
+#                   (base.sha..head.sha), so old fixture keys already in
+#                   history do not fail unrelated PRs.
+#   schedule / workflow_dispatch -> full-history scan, as before.
+#
+# The concurrency group is keyed on github.ref so a PR run (refs/pull/N/merge)
+# never cancels a scheduled full-history run on the default branch.
+
 on:
+  pull_request:
   workflow_dispatch:
   schedule:
     - cron: "23 11 18 * *"  # monthly (minute-safe policy)
 
+concurrency:
+  group: org-gitleaks-${{ github.ref }}
+  cancel-in-progress: true
+
+# read-all, not a narrower list: the reusable workflow declares
+# `permissions: read-all` itself, and GitHub refuses at startup when a
+# called workflow asks for more than its caller grants. read-all covers
+# the two it actually uses (contents:read, pull-requests:read).
 permissions: read-all
 
 jobs:
   gitleaks:
-    uses: gr8monk3ys/org-workflows/.github/workflows/reusable-gitleaks.yml@2659a9a32c4e6e3858f69a2f502210941a886d5a
+    uses: gr8monk3ys/org-workflows/.github/workflows/reusable-gitleaks.yml@0504f6c879fbb5523a3def286cccf0cc44969443
