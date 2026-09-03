@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.config import DATA_DIR
-from src.data_processing.db import connect_raw
+from src.data_processing.db import SqliteBacked
 from src.data_processing.import_letterboxd_export import LetterboxdImporter
 from src.film_identity import film_key
 from src.utils.logs import configure
@@ -32,18 +32,17 @@ PENDING_RATINGS_DDL = """
 """
 
 
-class MovieDatabase:
-    def __init__(self, db_path: Path | None = None):
-        self.db_path = db_path or (DATA_DIR / "movie_database.db")
-        self._conn: sqlite3.Connection | None = None
-        self._cursor: sqlite3.Cursor | None = None
+class MovieDatabase(SqliteBacked):
+    """The films, ratings, reviews and AI drafts read from the export."""
 
-    @property
-    def conn(self) -> sqlite3.Connection:
-        """Get the database connection, raising if not connected."""
-        if self._conn is None:
-            raise RuntimeError("Database not connected. Call connect() first.")
-        return self._conn
+    # Builds the database rather than reading one -- `create_tables` is here.
+    # A missing file is expected at this one class and nowhere else.
+    requires_existing_database = False
+
+    def __init__(self, db_path: Path | str | None = None):
+        """Initialize with the database to build or read."""
+        super().__init__(db_path)
+        self._cursor: sqlite3.Cursor | None = None
 
     @property
     def cursor(self) -> sqlite3.Cursor:
@@ -52,15 +51,10 @@ class MovieDatabase:
             raise RuntimeError("Database not connected. Call connect() first.")
         return self._cursor
 
-    def connect(self) -> None:
-        """Connect to the SQLite database."""
-        try:
-            self._conn = connect_raw(self.db_path)
-            self._cursor = self._conn.cursor()
-            logging.info(f"Connected to database: {self.db_path}")
-        except Exception as e:
-            logging.error(f"Error connecting to database: {e}")
-            raise
+    def _after_connect(self) -> None:
+        """Open the cursor this class hands to its query methods."""
+        self._cursor = self.conn.cursor()
+        logging.info(f"Connected to database: {self.db_path}")
 
     def create_tables(self) -> None:
         """Create the necessary database tables."""
@@ -736,11 +730,11 @@ class MovieDatabase:
         return cleared
 
     def close(self) -> None:
-        """Close the database connection."""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
-            self._cursor = None
+        """Close the connection and drop the cursor with it."""
+        was_open = self._conn is not None
+        super().close()
+        self._cursor = None
+        if was_open:
             logging.info("Database connection closed")
 
 

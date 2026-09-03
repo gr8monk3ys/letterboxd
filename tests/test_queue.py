@@ -160,7 +160,7 @@ class TestMain:
 class TestQueuePage:
     @pytest.fixture
     def client(self, db_path, monkeypatch):
-        monkeypatch.setattr("src.data_processing.create_database.DATA_DIR", db_path.parent)
+        monkeypatch.setenv("DATABASE_FILE", str(db_path.parent / "movie_database.db"))
         monkeypatch.setattr("src.web.app.LOGS_DIR", db_path.parent)
         monkeypatch.setattr("src.web.app.get_config", lambda: MagicMock())
         from src.web.app import app

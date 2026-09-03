@@ -1,5 +1,6 @@
 """Tests for src/data_processing/create_database.py - Database operations."""
 
+import os
 from unittest.mock import patch
 
 import pytest
@@ -12,7 +13,7 @@ class TestMovieDatabase:
         """Test that connect creates a database file."""
         db_path = temp_dir / "test.db"
 
-        with patch("src.data_processing.create_database.DATA_DIR", temp_dir):
+        with patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}):
             from src.data_processing.create_database import MovieDatabase
 
             db = MovieDatabase(db_path)
@@ -28,7 +29,7 @@ class TestMovieDatabase:
         """Test that create_tables creates all required tables."""
         db_path = temp_dir / "test.db"
 
-        with patch("src.data_processing.create_database.DATA_DIR", temp_dir):
+        with patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}):
             from src.data_processing.create_database import MovieDatabase
 
             db = MovieDatabase(db_path)
@@ -57,7 +58,7 @@ class TestMovieDatabase:
         db_path = temp_dir / "test.db"
 
         with (
-            patch("src.data_processing.create_database.DATA_DIR", temp_dir),
+            patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}),
             patch("src.data_processing.import_letterboxd_export.DATA_DIR", temp_dir),
         ):
             from src.data_processing.create_database import MovieDatabase
@@ -87,7 +88,7 @@ class TestMovieDatabase:
         db_path = temp_dir / "test.db"
 
         with (
-            patch("src.data_processing.create_database.DATA_DIR", temp_dir),
+            patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}),
             patch("src.data_processing.import_letterboxd_export.DATA_DIR", temp_dir),
         ):
             from src.data_processing.create_database import MovieDatabase
@@ -114,7 +115,7 @@ class TestMovieDatabase:
         db_path = temp_dir / "test.db"
 
         with (
-            patch("src.data_processing.create_database.DATA_DIR", temp_dir),
+            patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}),
             patch("src.data_processing.import_letterboxd_export.DATA_DIR", temp_dir),
         ):
             from src.data_processing.create_database import MovieDatabase
@@ -140,7 +141,7 @@ class TestMovieDatabase:
         db_path = temp_dir / "test.db"
 
         with (
-            patch("src.data_processing.create_database.DATA_DIR", temp_dir),
+            patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}),
             patch("src.data_processing.import_letterboxd_export.DATA_DIR", temp_dir),
         ):
             from src.data_processing.create_database import MovieDatabase
@@ -164,7 +165,7 @@ class TestMovieDatabase:
         """Test saving an AI-generated review."""
         db_path = temp_dir / "test.db"
 
-        with patch("src.data_processing.create_database.DATA_DIR", temp_dir):
+        with patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}):
             from src.data_processing.create_database import MovieDatabase
 
             db = MovieDatabase(db_path)
@@ -192,7 +193,7 @@ class TestMovieDatabase:
         db_path = temp_dir / "test.db"
 
         with (
-            patch("src.data_processing.create_database.DATA_DIR", temp_dir),
+            patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}),
             patch("src.data_processing.import_letterboxd_export.DATA_DIR", temp_dir),
         ):
             from src.data_processing.create_database import MovieDatabase
@@ -226,7 +227,7 @@ class TestMovieDatabase:
         """Test closing database connection."""
         db_path = temp_dir / "test.db"
 
-        with patch("src.data_processing.create_database.DATA_DIR", temp_dir):
+        with patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}):
             from src.data_processing.create_database import MovieDatabase
 
             db = MovieDatabase(db_path)

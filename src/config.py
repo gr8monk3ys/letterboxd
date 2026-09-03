@@ -86,7 +86,14 @@ class Config:
 
     # File paths
     connections_file: Path = field(default_factory=lambda: DATA_DIR / "connections.csv")
-    database_file: Path = field(default_factory=lambda: DATA_DIR / "movie_database.db")
+    # Honours DATABASE_FILE like every other setting here. It did not until
+    # now, which made `default_db_path`'s "so DATABASE_FILE actually takes
+    # effect" a phantom -- there was no such variable to take effect.
+    database_file: Path = field(
+        default_factory=lambda: Path(
+            os.getenv("DATABASE_FILE", "") or DATA_DIR / "movie_database.db"
+        )
+    )
 
     def __post_init__(self):
         """Validate configuration after initialization."""

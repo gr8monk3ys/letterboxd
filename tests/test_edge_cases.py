@@ -3,6 +3,8 @@
 Tests scenarios like empty databases, malformed data, and boundary conditions.
 """
 
+import os
+import sqlite3
 import zipfile
 from unittest.mock import MagicMock, patch
 
@@ -155,13 +157,14 @@ class TestBoundaryConditions:
     def test_rate_limiter_at_exact_limit(self, temp_dir):
         """Test rate limiter behavior at exact limit."""
         with (
-            patch("src.rate_limiter.DATA_DIR", temp_dir),
+            patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}),
             patch("src.rate_limiter.get_config") as mock_config,
         ):
             mock_config.return_value = MagicMock(hourly_rate_limit=5, daily_rate_limit=10)
 
             from src.rate_limiter import RateLimiter
 
+            sqlite3.connect(temp_dir / "test.db").close()
             limiter = RateLimiter(db_path=temp_dir / "test.db")
             limiter.connect()
 
@@ -179,13 +182,14 @@ class TestBoundaryConditions:
     def test_rate_limiter_one_below_limit(self, temp_dir):
         """Test rate limiter behavior one below limit."""
         with (
-            patch("src.rate_limiter.DATA_DIR", temp_dir),
+            patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}),
             patch("src.rate_limiter.get_config") as mock_config,
         ):
             mock_config.return_value = MagicMock(hourly_rate_limit=5, daily_rate_limit=10)
 
             from src.rate_limiter import RateLimiter
 
+            sqlite3.connect(temp_dir / "test.db").close()
             limiter = RateLimiter(db_path=temp_dir / "test.db")
             limiter.connect()
 

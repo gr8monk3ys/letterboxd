@@ -14,17 +14,11 @@ from fastapi.testclient import TestClient
 def client(monkeypatch, tmp_path):
     cfg = type("Cfg", (), {"hourly_rate_limit": 30, "daily_rate_limit": 100, "headless": True})()
     monkeypatch.setattr("src.web.app.get_config", lambda: cfg)
-    # The pages read DATA_DIR/movie_database.db at request time, so on a
-    # machine whose real data/ holds follow activity the empty state never
-    # renders. Point every backing module at an empty temp dir instead.
-    for mod in (
-        "src.analytics",
-        "src.review_metrics",
-        "src.growth.dashboard",
-        "src.growth.attribution",
-        "src.growth.campaigns",
-    ):
-        monkeypatch.setattr(f"{mod}.DATA_DIR", tmp_path)
+    # The pages read the configured database at request time, so on a machine
+    # whose real data/ holds follow activity the empty state never renders.
+    # One setting now points every backing module at an empty temp dir; this
+    # used to need DATA_DIR patched in five separate modules.
+    monkeypatch.setenv("DATABASE_FILE", str(tmp_path / "movie_database.db"))
     from src.web.app import app
 
     return TestClient(app)

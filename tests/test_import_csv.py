@@ -87,7 +87,7 @@ class TestIngestClearsPending:
         """After a fresh export is ingested, a pending rating that now
         appears in `ratings` is dropped; one that has not is kept."""
         data_dir = sample_letterboxd_zip.parent
-        monkeypatch.setattr("src.data_processing.create_database.DATA_DIR", data_dir)
+        monkeypatch.setenv("DATABASE_FILE", str(data_dir / "movie_database.db"))
         monkeypatch.setattr("src.data_processing.import_letterboxd_export.DATA_DIR", data_dir)
         db_path = data_dir / "movie_database.db"
         db = MovieDatabase(db_path=db_path)

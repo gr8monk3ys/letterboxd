@@ -78,7 +78,7 @@ class TestReviewPoster:
         monkeypatch.setattr("src.reviewing.post_review.get_config", lambda: mock_config)
 
         # Patch DATA_DIR in create_database module to use our temp db path
-        monkeypatch.setattr("src.data_processing.create_database.DATA_DIR", mock_db.parent)
+        monkeypatch.setenv("DATABASE_FILE", str(mock_db.parent / "movie_database.db"))
 
         # Mock ReviewMetricsDB
         mock_metrics = MagicMock()

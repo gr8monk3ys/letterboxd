@@ -32,7 +32,7 @@ class TestHelperFunctions:
         conn.commit()
         conn.close()
 
-        monkeypatch.setattr("src.data_processing.create_database.DATA_DIR", tmp_path)
+        monkeypatch.setenv("DATABASE_FILE", str(tmp_path / "movie_database.db"))
 
         from src.web.app import get_database_stats
 
@@ -199,7 +199,7 @@ class TestAPIEndpoints:
         conn.commit()
         conn.close()
 
-        monkeypatch.setattr("src.data_processing.create_database.DATA_DIR", tmp_path)
+        monkeypatch.setenv("DATABASE_FILE", str(tmp_path / "movie_database.db"))
         monkeypatch.setattr("src.web.app.LOGS_DIR", tmp_path)
 
         # Mock config
@@ -620,7 +620,7 @@ class TestDraftsPage:
         conn.commit()
         conn.close()
 
-        monkeypatch.setattr("src.data_processing.create_database.DATA_DIR", tmp_path)
+        monkeypatch.setenv("DATABASE_FILE", str(tmp_path / "movie_database.db"))
         monkeypatch.setattr("src.web.app.LOGS_DIR", tmp_path)
         monkeypatch.setattr("src.web.app.get_config", lambda: MagicMock())
 

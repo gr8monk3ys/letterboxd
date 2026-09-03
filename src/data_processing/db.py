@@ -18,6 +18,7 @@ Both helpers here close on every path. That is the whole point: the
 obligation belongs to the seam, not to each of twenty-odd callers.
 """
 
+import logging
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -29,6 +30,8 @@ from src.utils.errors import DatabaseError
 
 # Opening a locked database should wait briefly rather than fail instantly:
 # the dashboard reads while a follow or post run writes.
+logger = logging.getLogger(__name__)
+
 BUSY_TIMEOUT_SECONDS = 5.0
 
 T = TypeVar("T")
@@ -135,3 +138,74 @@ def connected(factory: Callable[..., T], *args: Any, **kwargs: Any) -> Iterator[
         yield instance
     finally:
         instance.close()  # type: ignore[attr-defined]
+
+
+class SqliteBacked:
+    """The connection lifecycle ten classes were each writing out by hand.
+
+    `__init__(db_path)` / `_conn` / `conn` / `connect()` / `close()` appeared
+    identically in analytics, rate_limiter, review_metrics, the five growth
+    classes, MovieDatabase and MigrationManager -- and they did not agree.
+    Seven returned `bool` from `connect()`, three returned `None`, so a
+    caller could not tell from the call site whether the return mattered.
+    `connected()` reads that return to detect a missing database, which means
+    it silently failed to detect one for the three that returned `None`: it
+    handed back a healthy-looking object wired to a **brand new empty file**,
+    and the failure surfaced later as `no such table: films`.
+
+    That is not hypothetical. It is how a four-table `movie_database.db`
+    containing only `posted_reviews`, `rate_limits`, `review_engagement` and
+    `tone_ab_tests` -- no films, no schema_version -- comes into existence:
+    two classes creating schema as a side effect of connecting to a database
+    nobody had built yet.
+
+    So `connect()` returns `bool` everywhere, and refuses a missing file
+    unless the subclass is one of the two that legitimately builds one.
+    """
+
+    #: Subclasses that create the database rather than read it set this False.
+    #: Only MovieDatabase (via create_tables) and MigrationManager qualify;
+    #: everything else adds tables to a database the import already made.
+    requires_existing_database: bool = True
+
+    def __init__(self, db_path: Path | str | None = None):
+        self.db_path = Path(db_path) if db_path is not None else default_db_path()
+        self._conn: sqlite3.Connection | None = None
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """The open connection, or a clear error naming what was skipped."""
+        if self._conn is None:
+            raise RuntimeError("Database not connected. Call connect() first.")
+        return self._conn
+
+    def connect(self) -> bool:
+        """Open the database. False when it is missing and this class needs it."""
+        if self.requires_existing_database and not self.db_path.exists():
+            logger.error(f"Database not found: {self.db_path}")
+            return False
+        self._conn = connect_raw(self.db_path)
+        self._after_connect()
+        return True
+
+    def _after_connect(self) -> None:
+        """Hook for pragmas or lazily-created tables. Default: nothing."""
+
+    def close(self) -> None:
+        """Close the connection if one is open."""
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+    @classmethod
+    def on(cls, conn: sqlite3.Connection, **kwargs: Any) -> "SqliteBacked":
+        """Build against a connection that is already open.
+
+        Lets a test drive the real queries against `":memory:"` with no file
+        and no `connect()` call, which is what the path-only constructor made
+        impossible -- and why the growth classes sat at 11-33% coverage.
+        The caller owns the connection's lifetime.
+        """
+        instance = cls(**kwargs)
+        instance._conn = conn
+        return instance

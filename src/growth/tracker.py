@@ -10,12 +10,11 @@ Usage:
 """
 
 import logging
-import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from src.config import DATA_DIR, get_config
-from src.data_processing.db import connect_raw
+from src.config import get_config
+from src.data_processing.db import SqliteBacked
 from src.scraper import LetterboxdScraper
 from src.utils.logs import configure
 
@@ -35,46 +34,14 @@ TIERS = [
 ]
 
 
-class FollowerTracker:
+class FollowerTracker(SqliteBacked):
     """Track follower counts and growth over time."""
 
-    def __init__(self, db_path: Path | None = None):
-        """Initialize the follower tracker.
-
-        Args:
-            db_path: Path to the SQLite database. Defaults to movie_database.db.
-        """
-        self.db_path = db_path or (DATA_DIR / "movie_database.db")
+    def __init__(self, db_path: Path | str | None = None):
+        """Initialize with the database it reads and the scraper it uses."""
+        super().__init__(db_path)
         self.config = get_config()
         self.scraper = LetterboxdScraper()
-        self._conn: sqlite3.Connection | None = None
-
-    def connect(self) -> bool:
-        """Connect to the database.
-
-        Returns:
-            True if connection successful.
-        """
-        if not self.db_path.exists():
-            logger.error(f"Database not found: {self.db_path}")
-            return False
-
-        self._conn = connect_raw(self.db_path)
-        self._conn.row_factory = sqlite3.Row
-        return True
-
-    @property
-    def conn(self) -> sqlite3.Connection:
-        """Get the database connection."""
-        if self._conn is None:
-            raise RuntimeError("Database not connected. Call connect() first.")
-        return self._conn
-
-    def close(self) -> None:
-        """Close the database connection."""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
 
     def take_snapshot(self) -> dict | None:
         """Fetch current follower count and save to database.

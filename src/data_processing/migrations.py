@@ -14,10 +14,8 @@ Usage:
 
 import logging
 import sqlite3
-from pathlib import Path
 
-from src.config import DATA_DIR
-from src.data_processing.db import connect_raw
+from src.data_processing.db import SqliteBacked
 from src.utils.logs import configure
 
 # Migration definitions: (version, description, statements)
@@ -315,40 +313,24 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
 ]
 
 
-class MigrationManager:
+class MigrationManager(SqliteBacked):
     """Manages database schema migrations."""
 
-    def __init__(self, db_path: Path | None = None):
-        """Initialize the migration manager.
-
-        Args:
-            db_path: Path to the SQLite database. Defaults to the standard
-                     movie_database.db in the data directory.
-        """
-        self.db_path = db_path or (DATA_DIR / "movie_database.db")
-        self._conn: sqlite3.Connection | None = None
-
-    @property
-    def conn(self) -> sqlite3.Connection:
-        """Get the database connection, raising if not connected."""
-        if self._conn is None:
-            raise RuntimeError("Database not connected. Call connect() first.")
-        return self._conn
+    # Migrations run against a database create_database already built, so
+    # the base's existence check is exactly right here.
 
     def is_connected(self) -> bool:
         """Check if database is connected."""
         return self._conn is not None
 
-    def connect(self) -> None:
-        """Connect to the database."""
-        if not self.db_path.exists():
-            logging.warning(f"Database does not exist: {self.db_path}")
-            logging.info("Run create_database.py first to create the database.")
-            return
+    def _after_connect(self) -> None:
+        """Autocommit plus the version table every migration reads.
 
-        # autocommit mode: transactions are managed explicitly with
-        # BEGIN/COMMIT so a failed migration rolls back completely
-        self._conn = connect_raw(self.db_path, autocommit=True)
+        Autocommit (isolation_level=None) is what lets `apply_migration`
+        drive BEGIN IMMEDIATE itself, so a failed migration rolls back
+        completely rather than leaving half a schema behind.
+        """
+        self.conn.isolation_level = None
         self._ensure_version_table()
 
     def _ensure_version_table(self) -> None:
@@ -493,12 +475,6 @@ class MigrationManager:
             print("\nApplied migrations:")
             for version, description, applied_at in applied:
                 print(f"  {version}: {description} (applied {applied_at[:10]})")
-
-    def close(self) -> None:
-        """Close the database connection."""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
 
 
 def main() -> None:
