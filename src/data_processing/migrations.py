@@ -310,6 +310,24 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
             """,
         ],
     ),
+    (
+        12,
+        "The tone a draft was actually written in",
+        [
+            # Without this the A/B test measures nothing. The winner was
+            # computed from posted_reviews.tone_preset, which is filled from
+            # whatever --tone the *posting* run happened to carry -- a
+            # post-time CLI flag unrelated to the tone the draft was
+            # generated in. Both arms were therefore labelled the same and a
+            # winner was still declared.
+            #
+            # Existing rows have no recoverable tone, so they stay NULL and
+            # are excluded from comparisons rather than guessed at.
+            """
+            ALTER TABLE ai_reviews ADD COLUMN tone TEXT
+            """,
+        ],
+    ),
 ]
 
 

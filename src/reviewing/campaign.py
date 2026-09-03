@@ -111,7 +111,7 @@ SPARE_CANDIDATES = 3
 def draft(
     db: MovieDatabase,
     films: list[dict],
-    tone: str,
+    tone: str | None,
     provider: str | None,
     want: int | None = None,
 ) -> list[dict]:
@@ -139,8 +139,9 @@ def draft(
                 name=film["name"],
                 year=film["year"],
                 review=review,
+                tone=generator.tone,
             )
-            drafts.append({**film, "review": review})
+            drafts.append({**film, "review": review, "tone": generator.tone})
             print(f"  drafted {film['name']} ({film['year']}) [{film['rating']}]")
             # Breaking here, rather than testing at the top, stops the
             # generator before it drafts the film after the last one wanted.
@@ -155,7 +156,10 @@ def draft(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Draft, read, then post a few reviews")
     parser.add_argument("--per-run", type=int, default=5, help="films per run (default 5)")
-    parser.add_argument("--tone", choices=VALID_TONES, default="thoughtful")
+    # No default: an explicit --tone wins, but leaving it unset lets an
+    # active A/B test assign the tone. A default here meant the workflow the
+    # docs call primary never participated in a test at all.
+    parser.add_argument("--tone", choices=VALID_TONES, default=None)
     parser.add_argument("--sample", type=float, default=None, help="keep this fraction")
     parser.add_argument("--seed", type=int, default=None, help="makes --sample repeatable")
     parser.add_argument("--provider", choices=VALID_PROVIDERS, default=None)
@@ -195,21 +199,26 @@ def main() -> None:
             if not films:
                 print("Nothing to draft: every rated film has a review or a draft.")
             else:
-                print(f"Drafting {min(args.per_run, len(films))} review(s), tone {args.tone}:")
+                print(f"Drafting {min(args.per_run, len(films))} review(s):")
                 with connected(MovieDatabase, db_path=db_path) as db:
                     drafts = draft(db, films, args.tone, args.provider, want=args.per_run)
                 if not drafts:
                     print("No drafts produced.")
                 else:
                     path = write_digest(
-                        DIGEST_DIR, drafts, args.tone, datetime.now(UTC).isoformat()
+                        DIGEST_DIR,
+                        drafts,
+                        # The tone actually used, which an A/B test may have
+                        # chosen rather than the flag.
+                        drafts[0].get("tone") or args.tone or "casual",
+                        datetime.now(UTC).isoformat(),
                     )
                     print(f"\nDigest: {path}")
             print("Read it, then approve on /drafts and post with:")
             print("  uv run python -m src.reviewing.campaign --apply")
             return
 
-    poster = ReviewPoster(tone=args.tone)
+    poster = ReviewPoster(tone=args.tone or "casual")
     try:
         posted = poster.run(limit=args.per_run, uris=uris)
     finally:

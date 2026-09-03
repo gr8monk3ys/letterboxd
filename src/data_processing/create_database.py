@@ -153,7 +153,8 @@ class MovieDatabase(SqliteBacked):
                     posted_at TEXT,
                     posted_url TEXT,
                     tags TEXT,
-                    status TEXT NOT NULL DEFAULT 'draft'
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    tone TEXT
                 )
             """)
 
@@ -418,25 +419,34 @@ class MovieDatabase(SqliteBacked):
             "unreviewed": total_films - user_reviewed - ai_reviewed,
         }
 
-    def save_ai_review(self, letterboxd_uri: str, name: str, year: int, review: str) -> None:
-        """Save an AI-generated review to the database."""
+    def save_ai_review(
+        self, letterboxd_uri: str, name: str, year: int, review: str, tone: str | None = None
+    ) -> None:
+        """Save an AI-generated review to the database.
+
+        `tone` records what the draft was actually written in. Without it the
+        A/B test compares two arms that were both labelled with whatever
+        --tone the *posting* run carried, which is unrelated to the tone the
+        generator used.
+        """
         # Upsert rather than INSERT OR REPLACE: REPLACE deletes the row first,
         # which would drop posted_at/posted_url and let a posted review be
         # offered for posting a second time.
         self.cursor.execute(
             """
             INSERT INTO ai_reviews
-            (letterboxd_uri, name, year, ai_review, generated_at)
-            VALUES (?, ?, ?, ?, ?)
+            (letterboxd_uri, name, year, ai_review, generated_at, tone)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(letterboxd_uri) DO UPDATE SET
                 name = excluded.name,
                 year = excluded.year,
                 ai_review = excluded.ai_review,
                 generated_at = excluded.generated_at,
+                tone = excluded.tone,
                 status = CASE WHEN ai_reviews.posted_at IS NULL
                               THEN 'draft' ELSE ai_reviews.status END
             """,
-            (letterboxd_uri, name, year, review, datetime.now().isoformat()),
+            (letterboxd_uri, name, year, review, datetime.now().isoformat(), tone),
         )
         self.conn.commit()
 
@@ -524,7 +534,7 @@ class MovieDatabase(SqliteBacked):
             f"""
             SELECT ar.letterboxd_uri, ar.name, ar.year, ar.ai_review,
                    COALESCE(rt.rating, f.rating) AS rating,
-                   ar.generated_at, ar.posted_at, ar.posted_url, ar.status
+                   ar.generated_at, ar.posted_at, ar.posted_url, ar.status, ar.tone
             FROM ai_reviews ar
             LEFT JOIN films f ON ar.letterboxd_uri = f.letterboxd_uri
             LEFT JOIN ratings rt ON ar.letterboxd_uri = rt.letterboxd_uri
@@ -544,6 +554,7 @@ class MovieDatabase(SqliteBacked):
             "posted_at",
             "posted_url",
             "status",
+            "tone",
         ]
         return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
 

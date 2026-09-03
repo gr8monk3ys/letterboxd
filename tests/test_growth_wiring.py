@@ -5,6 +5,7 @@ nothing asked for, so the dashboard reported on permanently empty data.
 The tests below are the adapters: they fail if the wiring is removed.
 """
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -136,3 +137,80 @@ class TestAbTestStartValidation:
             json={"name": "good", "tone_a": "snarky", "tone_b": "casual"},
         )
         assert response.status_code == 200
+
+
+class TestAbTestMeasuresTheToneItVaried:
+    """Assignment was wired in #99, but measurement was not.
+
+    `ai_reviews` had no tone column, so the winner was computed from
+    `posted_reviews.tone_preset` -- filled from whatever --tone the *posting*
+    run carried, a flag unrelated to the tone the draft was written in. Both
+    arms were labelled the same and a winner was still declared.
+    """
+
+    def test_a_draft_records_the_tone_it_was_written_in(self, db):
+        from src.data_processing.create_database import MovieDatabase
+
+        store = MovieDatabase(db_path=db)
+        store.connect()
+        try:
+            store.save_ai_review("u:1", "Stalker", 1979, "A review.", tone="snarky")
+            rows = store.get_ai_reviews()
+        finally:
+            store.close()
+
+        assert rows[0]["tone"] == "snarky"
+
+    def test_regenerating_updates_the_recorded_tone(self, db):
+        """An A/B test can reassign between runs; the row must follow."""
+        from src.data_processing.create_database import MovieDatabase
+
+        store = MovieDatabase(db_path=db)
+        store.connect()
+        try:
+            store.save_ai_review("u:1", "Stalker", 1979, "First.", tone="casual")
+            store.save_ai_review("u:1", "Stalker", 1979, "Second.", tone="analytical")
+            rows = store.get_ai_reviews()
+        finally:
+            store.close()
+
+        assert rows[0]["tone"] == "analytical"
+
+    def test_the_poster_records_the_drafts_tone_not_its_own(self, monkeypatch, tmp_path):
+        """`tone_preset` is what end_ab_test groups by, so it has to be the
+        tone the draft was generated in."""
+        import src.reviewing.post_review as pr
+
+        recorded = {}
+        metrics = MagicMock()
+        metrics.save_posted_review.side_effect = lambda **kw: recorded.update(kw) or 1
+        monkeypatch.setattr(pr, "ReviewMetricsDB", lambda *a, **k: metrics)
+        monkeypatch.setattr(pr, "get_config", lambda: MagicMock(database_file=tmp_path / "x.db"))
+        monkeypatch.setattr(pr.MovieDatabase, "connect", lambda self: True)
+
+        poster = pr.ReviewPoster(tone="casual")
+        poster.db = MagicMock()
+        poster._record_attribution = MagicMock()
+        poster.post_review = MagicMock(return_value=(True, None))
+        poster.get_pending_reviews = lambda: [
+            {
+                "letterboxd_uri": "u:1",
+                "name": "Stalker",
+                "year": 1979,
+                "review": "A review.",
+                "rating": 4.5,
+                "tone": "snarky",
+            }
+        ]
+
+        @contextmanager
+        def session(config, **kwargs):
+            yield MagicMock()
+
+        monkeypatch.setattr(pr, "letterboxd_session", session)
+        monkeypatch.setattr(pr.time, "sleep", lambda _: None)
+        poster.run(confirm=lambda film: "y")
+
+        assert recorded["tone_preset"] == "snarky", (
+            "recorded the posting flag, not the draft's tone"
+        )
