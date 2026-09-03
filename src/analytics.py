@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.config import DATA_DIR
+from src.data_processing.db import connect_raw
 
 
 class ConnectionAnalytics:
@@ -29,7 +30,7 @@ class ConnectionAnalytics:
 
     def connect(self) -> None:
         """Connect to the database."""
-        self._conn = sqlite3.connect(self.db_path, timeout=30.0)
+        self._conn = connect_raw(self.db_path)
         self._conn.row_factory = sqlite3.Row
 
     def close(self) -> None:

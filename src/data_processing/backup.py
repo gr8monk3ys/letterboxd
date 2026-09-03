@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from src.config import DATA_DIR, OUTPUT_DIR
+from src.data_processing.db import open_db
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,28 @@ def get_table_schema(cursor: sqlite3.Cursor, table_name: str) -> list[dict]:
     return columns
 
 
+def _export_tables(cursor: Any, tables: list[str], backup_data: dict[str, Any]) -> None:
+    """Read each table into the backup document, skipping ones that are absent."""
+    for table_name in tables:
+        try:
+            # Get schema
+            schema = get_table_schema(cursor, table_name)
+
+            # Get data
+            cursor.execute(f"SELECT * FROM {table_name}")  # noqa: S608
+            rows = [dict(row) for row in cursor.fetchall()]
+
+            backup_data["tables"][table_name] = {
+                "schema": schema,
+                "row_count": len(rows),
+                "data": rows,
+            }
+            logger.info(f"Exported {len(rows)} rows from {table_name}")
+
+        except sqlite3.OperationalError as e:
+            logger.warning(f"Could not export table {table_name}: {e}")
+
+
 def export_database(
     db_path: Path | None = None,
     output_path: Path | None = None,
@@ -77,10 +100,6 @@ def export_database(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = output_path or (OUTPUT_DIR / f"backup_{timestamp}.json")
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
     backup_data: dict[str, Any] = {
         "metadata": {
             "version": "1.0",
@@ -94,26 +113,9 @@ def export_database(
     if not include_rate_limits:
         tables_to_backup = [t for t in tables_to_backup if t != "rate_limits"]
 
-    for table_name in tables_to_backup:
-        try:
-            # Get schema
-            schema = get_table_schema(cursor, table_name)
-
-            # Get data
-            cursor.execute(f"SELECT * FROM {table_name}")  # noqa: S608
-            rows = [dict(row) for row in cursor.fetchall()]
-
-            backup_data["tables"][table_name] = {
-                "schema": schema,
-                "row_count": len(rows),
-                "data": rows,
-            }
-            logger.info(f"Exported {len(rows)} rows from {table_name}")
-
-        except sqlite3.OperationalError as e:
-            logger.warning(f"Could not export table {table_name}: {e}")
-
-    conn.close()
+    with open_db(db_path) as conn:
+        cursor = conn.cursor()
+        _export_tables(cursor, tables_to_backup, backup_data)
 
     # Write to JSON
     OUTPUT_DIR.mkdir(exist_ok=True)
@@ -158,69 +160,66 @@ def restore_database(
         shutil.copy(db_path, backup_existing)
         logger.info(f"Created backup of existing database: {backup_existing}")
 
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    # must_exist=False: a restore legitimately targets a database that is
+    # not there yet, which is the one case where creating the file is right.
+    with open_db(db_path, must_exist=False) as conn:
+        cursor = conn.cursor()
+        try:
+            for table_name, table_data in backup_data.get("tables", {}).items():
+                if table_name not in BACKUP_TABLES:
+                    logger.warning(f"Skipping unknown table: {table_name}")
+                    continue
 
-    try:
-        for table_name, table_data in backup_data.get("tables", {}).items():
-            if table_name not in BACKUP_TABLES:
-                logger.warning(f"Skipping unknown table: {table_name}")
-                continue
+                rows = table_data.get("data", [])
+                if not rows:
+                    continue
 
-            rows = table_data.get("data", [])
-            if not rows:
-                continue
+                # Validate column names against the live schema before they
+                # reach the SQL string. Stacked statements cannot execute, but
+                # an unrecognized name otherwise fails every row insert while
+                # the restore still reports the table as restored.
+                valid_columns = {col["name"] for col in get_table_schema(cursor, table_name)}
+                columns = [col for col in rows[0].keys() if col in valid_columns]
+                rejected = [col for col in rows[0].keys() if col not in valid_columns]
+                if rejected:
+                    logger.warning(f"{table_name}: ignoring unknown columns {rejected}")
+                if not columns:
+                    logger.error(f"{table_name}: no recognized columns, skipping table")
+                    stats["tables_skipped"] = stats.get("tables_skipped", 0) + 1
+                    continue
+                placeholders = ", ".join(["?" for _ in columns])
+                column_names = ", ".join(columns)
 
-            # Validate column names against the live schema before they
-            # reach the SQL string. Stacked statements cannot execute, but
-            # an unrecognized name otherwise fails every row insert while
-            # the restore still reports the table as restored.
-            valid_columns = {col["name"] for col in get_table_schema(cursor, table_name)}
-            columns = [col for col in rows[0].keys() if col in valid_columns]
-            rejected = [col for col in rows[0].keys() if col not in valid_columns]
-            if rejected:
-                logger.warning(f"{table_name}: ignoring unknown columns {rejected}")
-            if not columns:
-                logger.error(f"{table_name}: no recognized columns, skipping table")
-                stats["tables_skipped"] = stats.get("tables_skipped", 0) + 1
-                continue
-            placeholders = ", ".join(["?" for _ in columns])
-            column_names = ", ".join(columns)
+                if merge:
+                    # Use INSERT OR REPLACE for merge
+                    verb = "INSERT OR REPLACE INTO"
+                    sql = f"{verb} {table_name} ({column_names}) VALUES ({placeholders})"  # noqa: S608
+                else:
+                    # Clear table first for full restore
+                    cursor.execute(f"DELETE FROM {table_name}")  # noqa: S608
+                    sql = f"INSERT INTO {table_name} ({column_names}) VALUES ({placeholders})"  # noqa: S608
 
-            if merge:
-                # Use INSERT OR REPLACE for merge
-                sql = (
-                    f"INSERT OR REPLACE INTO {table_name} ({column_names}) VALUES ({placeholders})"  # noqa: S608
-                )
-            else:
-                # Clear table first for full restore
-                cursor.execute(f"DELETE FROM {table_name}")  # noqa: S608
-                sql = f"INSERT INTO {table_name} ({column_names}) VALUES ({placeholders})"  # noqa: S608
+                # Insert rows
+                for row in rows:
+                    values = [row.get(col) for col in columns]
+                    try:
+                        cursor.execute(sql, values)
+                        if merge:
+                            stats["rows_merged"] += 1
+                        else:
+                            stats["rows_restored"] += 1
+                    except sqlite3.Error as e:
+                        logger.warning(f"Error inserting row into {table_name}: {e}")
 
-            # Insert rows
-            for row in rows:
-                values = [row.get(col) for col in columns]
-                try:
-                    cursor.execute(sql, values)
-                    if merge:
-                        stats["rows_merged"] += 1
-                    else:
-                        stats["rows_restored"] += 1
-                except sqlite3.Error as e:
-                    logger.warning(f"Error inserting row into {table_name}: {e}")
+                stats["tables_restored"] += 1
+                logger.info(f"Restored {len(rows)} rows to {table_name}")
 
-            stats["tables_restored"] += 1
-            logger.info(f"Restored {len(rows)} rows to {table_name}")
-
-        conn.commit()
-        logger.info(f"Database restore complete: {stats}")
-
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Restore failed: {e}")
-        raise
-    finally:
-        conn.close()
+            conn.commit()
+            logger.info(f"Database restore complete: {stats}")
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Restore failed: {e}")
+            raise
 
     return stats
 

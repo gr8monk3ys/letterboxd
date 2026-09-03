@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from src.config import DATA_DIR, get_config
+from src.data_processing.db import open_db
 from src.providers.base import VALID_PROVIDERS
 from src.queue import build_queue
 from src.reviewing.post_review import ReviewPoster
@@ -170,8 +171,7 @@ def main() -> None:
             f"Database not found: {db_path}\n"
             "Build it first with: uv run python -m src.data_processing.create_database"
         )
-    conn = sqlite3.connect(db_path)
-    try:
+    with open_db(db_path) as conn:
         uris: list[str] = []
         digest = latest_digest(DIGEST_DIR)
         if args.apply:
@@ -206,8 +206,6 @@ def main() -> None:
             print("Read it, then approve on /drafts and post with:")
             print("  uv run python -m src.reviewing.campaign --apply")
             return
-    finally:
-        conn.close()
 
     poster = ReviewPoster(tone=args.tone)
     try:

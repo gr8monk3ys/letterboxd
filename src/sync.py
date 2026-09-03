@@ -25,7 +25,9 @@ from pathlib import Path
 import httpx
 
 from src.config import DATA_DIR, get_config
+from src.data_processing.db import open_db
 from src.film_identity import film_key
+from src.utils.errors import DatabaseError
 
 logger = logging.getLogger(__name__)
 
@@ -164,15 +166,16 @@ def sync_watches(db_path: Path | None, watches: list[Watch]) -> SyncResult:
     if not path.exists():
         return SyncResult(error=f"Database not found: {path}")
 
-    conn = sqlite3.connect(path)
     try:
-        return _sync(conn, watches)
-    except sqlite3.Error as e:
-        conn.rollback()
-        logger.error(f"Sync failed: {e}")
+        with open_db(path) as conn:
+            try:
+                return _sync(conn, watches)
+            except sqlite3.Error as e:
+                conn.rollback()
+                logger.error(f"Sync failed: {e}")
+                return SyncResult(error=str(e))
+    except DatabaseError as e:
         return SyncResult(error=str(e))
-    finally:
-        conn.close()
 
 
 def _sync(conn: sqlite3.Connection, watches: list[Watch]) -> SyncResult:

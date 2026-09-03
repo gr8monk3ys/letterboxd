@@ -17,6 +17,7 @@ import sqlite3
 from pathlib import Path
 
 from src.config import DATA_DIR, get_log_path
+from src.data_processing.db import connect_raw
 
 # Set up logging
 logging.basicConfig(
@@ -356,7 +357,7 @@ class MigrationManager:
 
         # autocommit mode: transactions are managed explicitly with
         # BEGIN/COMMIT so a failed migration rolls back completely
-        self._conn = sqlite3.connect(self.db_path, isolation_level=None)
+        self._conn = connect_raw(self.db_path, autocommit=True)
         self._ensure_version_table()
 
     def _ensure_version_table(self) -> None:

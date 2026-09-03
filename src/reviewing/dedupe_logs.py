@@ -46,6 +46,7 @@ from pathlib import Path
 from playwright.sync_api import Dialog, Page, sync_playwright
 
 from src.config import get_config
+from src.data_processing.db import open_db
 from src.film_identity import film_key
 from src.reviewing.post_review import _CLICK_BUTTON_JS, EDIT_BUTTON_LABELS, ReviewPoster
 from src.utils.auth import login, open_browser, raise_if_challenged
@@ -245,8 +246,7 @@ def main() -> None:
     if not db_path.exists():
         print(f"Database not found: {db_path}", file=sys.stderr)
         sys.exit(2)
-    conn = sqlite3.connect(db_path)
-    try:
+    with open_db(db_path) as conn:
         dups = find_duplicates(conn)
         if not dups:
             print("No duplicate entries found.")
@@ -309,8 +309,6 @@ def main() -> None:
                 context.close()
         if args.apply:
             print(f"\nRemoved {removed_total} entries. Now run: uv run python -m src.sync")
-    finally:
-        conn.close()
 
 
 if __name__ == "__main__":

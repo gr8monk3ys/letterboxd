@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from src.config import DATA_DIR
+from src.data_processing.db import open_db
+from src.utils.errors import DatabaseError
 
 logger = logging.getLogger(__name__)
 
@@ -92,14 +94,12 @@ def analyze_taste(db_path: Path | None = None) -> TasteAnalysis:
     if not path.exists():
         return TasteAnalysis()
 
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
-        return _analyze(conn)
-    except sqlite3.Error as e:
+        with open_db(path, readonly=True) as conn:
+            return _analyze(conn)
+    except (sqlite3.Error, DatabaseError) as e:
         logger.warning(f"Could not analyze taste from {path}: {e}")
         return TasteAnalysis()
-    finally:
-        conn.close()
 
 
 def _analyze(conn: sqlite3.Connection) -> TasteAnalysis:
