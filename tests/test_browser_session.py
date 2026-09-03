@@ -112,3 +112,40 @@ class TestBlockedUnfollowIsNotReportedAsZero:
 
         with pytest.raises(BotChallengeError):
             unfollower.scrape_user_list(nav, "following")
+
+
+class TestTheSeamIsNotOptional:
+    """The navigator used to delegate everything through `__getattr__ -> Any`.
+
+    That had two costs: it opted the whole Page surface out of mypy in a repo
+    that gates CI on it, and it left `.goto` reachable, so the safe path
+    stayed optional and callers kept navigating with no challenge check.
+    """
+
+    def test_goto_is_not_reachable(self):
+        """If `.goto` works, `.open()` is advice rather than a seam."""
+        nav = LetterboxdPage(_page())
+        assert not hasattr(nav, "goto"), "raw navigation is still reachable"
+
+    def test_the_page_itself_is_private(self):
+        nav = LetterboxdPage(_page())
+        assert not hasattr(nav, "page"), "callers can still reach around the seam"
+
+    def test_an_unknown_method_raises_rather_than_delegating(self):
+        """`__getattr__` used to answer anything, so a typo reached runtime."""
+        nav = LetterboxdPage(_page())
+        with pytest.raises(AttributeError):
+            nav.wait_for_timeoutt(500)
+
+    def test_the_surface_it_does_expose_still_works(self, monkeypatch):
+        page = _page()
+        page.query_selector_all.return_value = ["a", "b"]
+        nav = LetterboxdPage(page)
+        assert nav.query_selector_all(".person-summary a.name") == ["a", "b"]
+        assert nav.title() == "A film page"
+
+    def test_a_challenge_can_be_re_checked_without_navigating(self, monkeypatch):
+        """Needed after an in-page action, e.g. confirming a form saved."""
+        nav = LetterboxdPage(_page("Just a moment..."))
+        with pytest.raises(BotChallengeError):
+            nav.raise_if_challenged()

@@ -9,7 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from playwright.sync_api import BrowserContext, Page, Playwright
+from playwright.sync_api import BrowserContext, ElementHandle, Keyboard, Locator, Page, Playwright
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
@@ -19,7 +19,6 @@ from src.utils.errors import (
     ErrorCategory,
     LoginRequired,
     format_login_error,
-    format_navigation_error,
     log_error_with_suggestions,
 )
 from src.utils.retry import retry, with_retry
@@ -90,7 +89,7 @@ def has_session_cookie(context: BrowserContext) -> bool:
     return any(cookie["name"] == SESSION_COOKIE for cookie in context.cookies())
 
 
-def session_is_live(page: PageLike) -> bool:
+def session_is_live(page: Page) -> bool:
     """Confirm the saved session is still accepted by Letterboxd.
 
     The cookie outliving the server-side session is the dangerous case: the
@@ -111,7 +110,7 @@ def session_is_live(page: PageLike) -> bool:
     return page.locator("body.logged-in").count() > 0
 
 
-def raise_if_challenged(page: PageLike) -> None:
+def raise_if_challenged(page: Page) -> None:
     """Raise BotChallengeError if the page is a Cloudflare interstitial.
 
     Args:
@@ -125,7 +124,7 @@ def raise_if_challenged(page: PageLike) -> None:
         raise BotChallengeError()
 
 
-def goto_with_retry(page: PageLike, url: str, timeout: int = 30000) -> bool:
+def goto_with_retry(page: Page, url: str, timeout: int = 30000) -> bool:
     """Navigate to a URL with retry logic.
 
     Args:
@@ -148,7 +147,7 @@ def goto_with_retry(page: PageLike, url: str, timeout: int = 30000) -> bool:
 
 
 @retry(max_attempts=3, delay=2.0, exceptions=(PlaywrightTimeout, ConnectionError))
-def perform_login(page: PageLike, username: str, password: str) -> bool:
+def perform_login(page: Page, username: str, password: str) -> bool:
     """Perform the Letterboxd login sequence with retry support.
 
     Args:
@@ -198,7 +197,7 @@ def perform_login(page: PageLike, username: str, password: str) -> bool:
     return True
 
 
-def wait_for_manual_login(page: PageLike, timeout_seconds: int = 180) -> bool:
+def wait_for_manual_login(page: Page, timeout_seconds: int = 180) -> bool:
     """Wait for the user to sign in by hand in the open browser window.
 
     Cloudflare challenges scripted sign-ins, but a human completing the form
@@ -245,7 +244,7 @@ def wait_for_manual_login(page: PageLike, timeout_seconds: int = 180) -> bool:
     return False
 
 
-def login(page: PageLike, config: Config) -> bool:
+def login(page: Page, config: Config) -> bool:
     """Log in to Letterboxd account with error handling.
 
     Falls back to a manual sign-in prompt when the browser is visible, which is
@@ -282,40 +281,6 @@ def login(page: PageLike, config: Config) -> bool:
         return False
 
 
-def login_and_navigate(page: PageLike, config: Config, target_url: str) -> bool:
-    """Log in to Letterboxd and navigate to a target page.
-
-    Args:
-        page: Playwright page object
-        config: Config object with username/password
-        target_url: URL to navigate to after login
-
-    Returns:
-        True if login and navigation succeeded, False otherwise
-    """
-    # Delegate rather than repeat the sequence, so this path also gets the
-    # saved-session short-circuit and the manual sign-in fallback.
-    if not login(page, config):
-        return False
-
-    try:
-        logging.info(f"Navigating to {target_url}")
-        if not goto_with_retry(page, target_url):
-            log_error_with_suggestions(
-                f"Failed to load target page: {target_url}",
-                ErrorCategory.NETWORK,
-            )
-            return False
-
-        page.wait_for_selector(".person-summary", timeout=10000)
-        logging.info("Successfully loaded target page")
-        return True
-
-    except Exception as e:
-        log_error_with_suggestions(format_navigation_error(target_url, e), ErrorCategory.NETWORK, e)
-        return False
-
-
 class LetterboxdPage:
     """A page that knows the three things every Cloudflare-facing caller forgot.
 
@@ -329,13 +294,22 @@ class LetterboxdPage:
     a blocked run reported "Following: 0 / Followers: 0 / Non-followers: 0"
     and exited 0.
 
-    `.page` is still available for everything else a caller does with a page;
-    only navigation is taken over, because navigation is where the challenge
-    appears.
+    Navigation is taken over because navigation is where the challenge
+    appears; the rest of the Page surface this project uses is re-declared
+    below as typed methods rather than delegated blindly.
+
+    The page itself is deliberately private. An earlier version exposed
+    `.page` and delegated everything through `__getattr__` returning `Any`,
+    which had two costs. It opted the whole Page surface out of mypy in a
+    repo that gates CI on it -- a typo'd method name type-checked clean --
+    and it left `.goto` reachable, so the safe path stayed optional and
+    callers kept navigating without a challenge check.
     """
 
     def __init__(self, page: Page):
-        self.page = page
+        self._page = page
+
+    # -- navigation, the reason this class exists ----------------------
 
     def open(self, url: str, timeout: int = 30000) -> bool:
         """Navigate, retrying transient failures, and refuse to return a challenge.
@@ -348,25 +322,74 @@ class LetterboxdPage:
                 not retried -- a challenge is not transient, and retrying it
                 only turns a 13s failure into a 45s one.
         """
-        if not goto_with_retry(self.page, url, timeout=timeout):
+        if not goto_with_retry(self._page, url, timeout=timeout):
             return False
-        raise_if_challenged(self.page)
+        raise_if_challenged(self._page)
         return True
 
-    def __getattr__(self, name: str) -> Any:
-        """Delegate the rest of the Page surface, so callers keep what they had.
+    def raise_if_challenged(self) -> None:
+        """Re-check for an interstitial without navigating.
 
-        Returns Any deliberately: this stands in for a Playwright Page, whose
-        surface is far too large to restate, and every caller here was already
-        working against that untyped-in-practice surface.
+        `open()` covers navigation; this is for the checks that happen after
+        an in-page action, such as confirming a form actually saved.
+
+        Raises:
+            BotChallengeError: Cloudflare served an interstitial.
         """
-        return getattr(self.page, name)
+        raise_if_challenged(self._page)
 
+    # -- the Page surface this project actually uses -------------------
+    #
+    # Re-declared rather than delegated, so a typo is a type error again.
+    # Add a method here when a caller needs one; that is a smaller cost than
+    # a silent hole in the type checker.
 
-# Anything the browser entry points navigate with. A LetterboxdPage delegates
-# the whole Page surface, so functions that only drive a page accept either;
-# only code calling `.open()` needs the navigator specifically.
-PageLike = Page | LetterboxdPage
+    @property
+    def url(self) -> str:
+        return self._page.url
+
+    @property
+    def keyboard(self) -> Keyboard:
+        return self._page.keyboard
+
+    @property
+    def context(self) -> BrowserContext:
+        return self._page.context
+
+    def title(self) -> str:
+        return self._page.title()
+
+    def content(self) -> str:
+        return self._page.content()
+
+    def locator(self, selector: str) -> Locator:
+        return self._page.locator(selector)
+
+    def evaluate(self, expression: str, arg: Any = None) -> Any:
+        return self._page.evaluate(expression, arg)
+
+    def query_selector(self, selector: str) -> ElementHandle | None:
+        return self._page.query_selector(selector)
+
+    def query_selector_all(self, selector: str) -> list[ElementHandle]:
+        return self._page.query_selector_all(selector)
+
+    def wait_for_timeout(self, timeout: float) -> None:
+        self._page.wait_for_timeout(timeout)
+
+    def wait_for_selector(
+        self, selector: str, timeout: float | None = None
+    ) -> ElementHandle | None:
+        return self._page.wait_for_selector(selector, timeout=timeout)
+
+    def on(self, event: str, handler: Any) -> None:
+        # Playwright types `on` with a per-event overload; this project uses
+        # it only for "dialog", and restating fifteen overloads to say so
+        # would cost more than it catches.
+        self._page.on(event, handler)  # type: ignore[call-overload]
+
+    def remove_listener(self, event: str, handler: Any) -> None:
+        self._page.remove_listener(event, handler)
 
 
 @contextmanager

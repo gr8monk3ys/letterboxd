@@ -13,7 +13,7 @@ from typing import Any
 
 from src.config import DATA_DIR, get_config
 from src.data_processing.db import connect_raw
-from src.utils.auth import letterboxd_session, raise_if_challenged
+from src.utils.auth import LetterboxdPage, letterboxd_session
 from src.utils.engagement_selectors import (
     COMMENT_COUNT_SELECTORS,
     COMMENT_ELEMENT_SELECTORS,
@@ -609,13 +609,16 @@ class EngagementScraper:
             return 0
         return parse_count(element.text_content())
 
-    def _read_engagement(self, page, review_url: str) -> dict:
-        """Read the like and comment counts off an open review page."""
-        page.goto(review_url, timeout=self.config.page_load_timeout)
+    def _read_engagement(self, page: LetterboxdPage, review_url: str) -> dict:
+        """Read the like and comment counts off an open review page.
+
+        Through the navigator, which retries and raises on an interstitial.
+        An interstitial matches no count selectors and would otherwise be
+        recorded as genuine likes=0/comments=0 over real history.
+        """
+        if not page.open(review_url, timeout=self.config.page_load_timeout):
+            raise RuntimeError(f"Could not open {review_url}")
         page.wait_for_timeout(2000)
-        # An interstitial matches no count selectors and would be recorded as
-        # genuine likes=0/comments=0 over real history.
-        raise_if_challenged(page)
 
         comments_count = self._count_from(page, COMMENT_COUNT_SELECTORS)
         if comments_count == 0:

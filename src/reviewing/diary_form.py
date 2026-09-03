@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 
 from src.tagging.taxonomy import validate_tags
-from src.utils.auth import PageLike, raise_if_challenged
+from src.utils.auth import LetterboxdPage
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ class DiaryForm:
     same form and disagree only about why.
     """
 
-    def __init__(self, page: PageLike, username: str = ""):
+    def __init__(self, page: LetterboxdPage, username: str = ""):
         self.page = page
         # Only needed to build the user's own entry URL, which `open` uses
         # when a film is already logged and `entry_url` reports afterwards.
@@ -154,7 +154,9 @@ class DiaryForm:
             slug = self.page.url.split("/film/")[-1].strip("/").split("/")[0]
             entry_url = f"https://letterboxd.com/{self.username}/film/{slug}/"
             logger.info(f"{name} is already logged; editing the existing entry")
-            self.page.goto(entry_url, wait_until="domcontentloaded")
+            if not self.page.open(entry_url):
+                logger.warning(f"Could not open the existing entry for {name}")
+                return False
             self.page.wait_for_timeout(2000)
             if self.page.evaluate(_CLICK_BUTTON_JS, list(EDIT_BUTTON_LABELS)):
                 return True
@@ -292,7 +294,7 @@ class DiaryForm:
         Raises:
             BotChallengeError: Cloudflare served an interstitial.
         """
-        raise_if_challenged(self.page)
+        self.page.raise_if_challenged()
         still_open = self._textarea()
         return not (still_open.count() > 0 and still_open.is_visible())
 

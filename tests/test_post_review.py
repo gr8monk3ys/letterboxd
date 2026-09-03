@@ -2,12 +2,13 @@
 
 import sqlite3
 from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from src.data_processing.create_database import MovieDatabase
 from src.data_processing.migrations import MIGRATIONS, MigrationManager
+from src.utils.errors import BotChallengeError
 
 
 def _build_schema(db_path):
@@ -294,156 +295,159 @@ class TestReviewPosterPostReview:
 
     def test_post_review_navigation_failure(self, poster_with_mocks, mock_page):
         """Test post_review when navigation fails."""
-        with patch("src.reviewing.post_review.goto_with_retry", return_value=False):
-            film = {
-                "name": "Test Film",
-                "year": 2024,
-                "review": "Great movie!",
-                "letterboxd_uri": "https://letterboxd.com/film/test-film/",
-            }
+        mock_page.open.return_value = False
+        film = {
+            "name": "Test Film",
+            "year": 2024,
+            "review": "Great movie!",
+            "letterboxd_uri": "https://letterboxd.com/film/test-film/",
+        }
 
-            success, url = poster_with_mocks.post_review(mock_page, film)
-            assert success is False
-            assert url is None
+        success, url = poster_with_mocks.post_review(mock_page, film)
+        assert success is False
+        assert url is None
 
     def test_post_review_no_review_button(self, poster_with_mocks, mock_page):
         """Test post_review when review button is not found."""
-        with patch("src.reviewing.post_review.goto_with_retry", return_value=True):
-            mock_locator = MagicMock()
-            mock_locator.count.return_value = 0
-            mock_page.locator.return_value.first = mock_locator
+        mock_page.open.return_value = True
+        mock_locator = MagicMock()
+        mock_locator.count.return_value = 0
+        mock_page.locator.return_value.first = mock_locator
 
-            film = {
-                "name": "Test Film",
-                "year": 2024,
-                "review": "Great movie!",
-                "letterboxd_uri": "https://letterboxd.com/film/test-film/",
-            }
+        film = {
+            "name": "Test Film",
+            "year": 2024,
+            "review": "Great movie!",
+            "letterboxd_uri": "https://letterboxd.com/film/test-film/",
+        }
 
-            success, url = poster_with_mocks.post_review(mock_page, film)
-            assert success is False
-            assert url is None
+        success, url = poster_with_mocks.post_review(mock_page, film)
+        assert success is False
+        assert url is None
 
     def test_post_review_success(self, poster_with_mocks, mock_page):
         """Test successful review posting."""
-        with patch("src.reviewing.post_review.goto_with_retry", return_value=True):
-            # Mock successful element finding; after submit the form closes
-            mock_locator = MagicMock()
-            mock_locator.count.return_value = 1
-            mock_locator.input_value.return_value = ""
-            mock_locator.is_visible.return_value = False
-            mock_page.locator.return_value.first = mock_locator
-            mock_page.title.return_value = "Test Film review"
-            # The AJAX save leaves the browser on the film page; the
-            # entry URL is constructed from the username and film slug.
-            mock_page.url = "https://letterboxd.com/film/test-film/"
+        mock_page.open.return_value = True
+        # Mock successful element finding; after submit the form closes
+        mock_locator = MagicMock()
+        mock_locator.count.return_value = 1
+        mock_locator.input_value.return_value = ""
+        mock_locator.is_visible.return_value = False
+        mock_page.locator.return_value.first = mock_locator
+        mock_page.title.return_value = "Test Film review"
+        # The AJAX save leaves the browser on the film page; the
+        # entry URL is constructed from the username and film slug.
+        mock_page.url = "https://letterboxd.com/film/test-film/"
 
-            film = {
-                "name": "Test Film",
-                "year": 2024,
-                "review": "Great movie!",
-                "letterboxd_uri": "https://letterboxd.com/film/test-film/",
-            }
+        film = {
+            "name": "Test Film",
+            "year": 2024,
+            "review": "Great movie!",
+            "letterboxd_uri": "https://letterboxd.com/film/test-film/",
+        }
 
-            success, url = poster_with_mocks.post_review(mock_page, film)
-            assert success is True
-            assert url == "https://letterboxd.com/testuser/film/test-film/"
+        success, url = poster_with_mocks.post_review(mock_page, film)
+        assert success is True
+        assert url == "https://letterboxd.com/testuser/film/test-film/"
 
     def test_post_review_never_overwrites_a_review_already_on_the_entry(
         self, poster_with_mocks, mock_page
     ):
         """Invariant 2: the edit modal opening with text in it means the
         user wrote a review after the last export. It stays."""
-        with patch("src.reviewing.post_review.goto_with_retry", return_value=True):
-            mock_locator = MagicMock()
-            mock_locator.count.return_value = 1
-            mock_locator.input_value.return_value = "My own words about this film."
-            mock_page.locator.return_value.first = mock_locator
-            mock_page.evaluate.return_value = "edit or delete review"
+        mock_page.open.return_value = True
+        mock_locator = MagicMock()
+        mock_locator.count.return_value = 1
+        mock_locator.input_value.return_value = "My own words about this film."
+        mock_page.locator.return_value.first = mock_locator
+        mock_page.evaluate.return_value = "edit or delete review"
 
-            film = {
-                "name": "Test Film",
-                "year": 2024,
-                "review": "Generated text.",
-                "letterboxd_uri": "https://letterboxd.com/film/test-film/",
-            }
-            success, url = poster_with_mocks.post_review(mock_page, film)
-            assert (success, url) == (False, None)
-            mock_locator.fill.assert_not_called()
-            mock_page.keyboard.press.assert_called_once_with("Escape")
+        film = {
+            "name": "Test Film",
+            "year": 2024,
+            "review": "Generated text.",
+            "letterboxd_uri": "https://letterboxd.com/film/test-film/",
+        }
+        success, url = poster_with_mocks.post_review(mock_page, film)
+        assert (success, url) == (False, None)
+        mock_locator.fill.assert_not_called()
+        mock_page.keyboard.press.assert_called_once_with("Escape")
 
     def test_editing_keeps_the_diary_date(self, poster_with_mocks, mock_page):
         """The date checkbox is cleared only for a brand-new entry; on an
         existing one (viewingId set) clearing it erases the diary date."""
-        with patch("src.reviewing.post_review.goto_with_retry", return_value=True):
-            mock_locator = MagicMock()
-            mock_locator.count.return_value = 1
-            mock_locator.input_value.return_value = ""
-            mock_locator.is_visible.return_value = False
-            mock_page.locator.return_value.first = mock_locator
-            mock_page.title.return_value = "Test Film review"
-            mock_page.url = "https://letterboxd.com/film/test-film/"
+        mock_page.open.return_value = True
+        mock_locator = MagicMock()
+        mock_locator.count.return_value = 1
+        mock_locator.input_value.return_value = ""
+        mock_locator.is_visible.return_value = False
+        mock_page.locator.return_value.first = mock_locator
+        mock_page.title.return_value = "Test Film review"
+        mock_page.url = "https://letterboxd.com/film/test-film/"
 
-            film = {
-                "name": "Test Film",
-                "year": 2024,
-                "review": "Great movie!",
-                "letterboxd_uri": "https://letterboxd.com/film/test-film/",
-            }
-            assert poster_with_mocks.post_review(mock_page, film)[0] is True
-            scripts = [c.args[0] for c in mock_page.evaluate.call_args_list]
-            date_script = next(s for s in scripts if "specifiedDate" in s)
-            assert "viewingId" in date_script
-            assert "return;  // editing" in date_script
+        film = {
+            "name": "Test Film",
+            "year": 2024,
+            "review": "Great movie!",
+            "letterboxd_uri": "https://letterboxd.com/film/test-film/",
+        }
+        assert poster_with_mocks.post_review(mock_page, film)[0] is True
+        scripts = [c.args[0] for c in mock_page.evaluate.call_args_list]
+        date_script = next(s for s in scripts if "specifiedDate" in s)
+        assert "viewingId" in date_script
+        assert "return;  // editing" in date_script
 
     def test_post_review_form_still_open_is_failure(self, poster_with_mocks, mock_page):
         """A submit that leaves the form open did not land; reporting success
         would set posted_at and hide the review forever."""
-        with patch("src.reviewing.post_review.goto_with_retry", return_value=True):
-            mock_locator = MagicMock()
-            mock_locator.count.return_value = 1
-            mock_locator.input_value.return_value = ""
-            mock_locator.is_visible.return_value = True
-            mock_page.locator.return_value.first = mock_locator
-            mock_page.title.return_value = "Test Film review"
+        mock_page.open.return_value = True
+        mock_locator = MagicMock()
+        mock_locator.count.return_value = 1
+        mock_locator.input_value.return_value = ""
+        mock_locator.is_visible.return_value = True
+        mock_page.locator.return_value.first = mock_locator
+        mock_page.title.return_value = "Test Film review"
 
-            film = {
-                "name": "Test Film",
-                "year": 2024,
-                "review": "Great movie!",
-                "letterboxd_uri": "https://letterboxd.com/film/test-film/",
-            }
+        film = {
+            "name": "Test Film",
+            "year": 2024,
+            "review": "Great movie!",
+            "letterboxd_uri": "https://letterboxd.com/film/test-film/",
+        }
 
-            success, url = poster_with_mocks.post_review(mock_page, film)
-            assert success is False
-            assert url is None
+        success, url = poster_with_mocks.post_review(mock_page, film)
+        assert success is False
+        assert url is None
 
     def test_post_review_challenge_after_submit_is_failure(self, poster_with_mocks, mock_page):
-        """A Cloudflare interstitial after submit means nothing was posted."""
-        with patch("src.reviewing.post_review.goto_with_retry", return_value=True):
-            mock_locator = MagicMock()
-            mock_locator.count.return_value = 1
-            mock_locator.input_value.return_value = ""
-            mock_locator.is_visible.return_value = False
-            mock_page.locator.return_value.first = mock_locator
-            mock_page.title.return_value = "Just a moment..."
+        """A Cloudflare interstitial after submit means nothing was posted.
 
-            film = {
-                "name": "Test Film",
-                "year": 2024,
-                "review": "Great movie!",
-                "letterboxd_uri": "https://letterboxd.com/film/test-film/",
-            }
+        The check now lives on the navigator (`page.raise_if_challenged()`),
+        which is exercised for real in tests/test_browser_session.py; here we
+        only need it to fire.
+        """
+        mock_page.open.return_value = True
+        mock_locator = MagicMock()
+        mock_locator.count.return_value = 1
+        mock_locator.input_value.return_value = ""
+        mock_locator.is_visible.return_value = False
+        mock_page.locator.return_value.first = mock_locator
+        mock_page.raise_if_challenged.side_effect = BotChallengeError()
 
-            success, url = poster_with_mocks.post_review(mock_page, film)
-            assert success is False
+        film = {
+            "name": "Test Film",
+            "year": 2024,
+            "review": "Great movie!",
+            "letterboxd_uri": "https://letterboxd.com/film/test-film/",
+        }
+
+        success, url = poster_with_mocks.post_review(mock_page, film)
+        assert success is False
 
     def test_post_review_exception_handling(self, poster_with_mocks, mock_page):
         """Test that exceptions are handled gracefully."""
-        with patch(
-            "src.reviewing.post_review.goto_with_retry",
-            side_effect=Exception("Network error"),
-        ):
+        mock_page.open.side_effect = Exception("Network error")
+        if True:
             film = {
                 "name": "Test Film",
                 "year": 2024,

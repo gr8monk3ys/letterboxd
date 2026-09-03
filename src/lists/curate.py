@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from src.tagging.taxonomy import MAX_TAGS, normalize_tag, validate_tags
-from src.utils.auth import PageLike, letterboxd_session
+from src.utils.auth import LetterboxdPage, letterboxd_session
 from src.utils.logs import configure
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ class ListCurator:
     def __init__(self, username: str):
         self.username = username
 
-    def _read_state(self, page: PageLike) -> dict:
+    def _read_state(self, page: LetterboxdPage) -> dict:
         tags = page.evaluate(
             "() => [...document.querySelectorAll('#current-tags input[name=tag]')]"
             ".map(i => i.value)"
@@ -59,7 +59,7 @@ class ListCurator:
 
     def curate(
         self,
-        page: PageLike,
+        page: LetterboxdPage,
         slug: str,
         tags: list[str] | None = None,
         description: str | None = None,
@@ -71,10 +71,9 @@ class ListCurator:
         ad-hoc tags for vocabulary ones. A description is only written
         when given, so a tag-only run cannot blank existing prose.
         """
-        page.goto(
-            f"https://letterboxd.com/{self.username}/list/{slug}/edit/",
-            wait_until="domcontentloaded",
-        )
+        if not page.open(f"https://letterboxd.com/{self.username}/list/{slug}/edit/"):
+            logging.warning(f"Could not open the edit page for {slug}")
+            return {"slug": slug, "tags": [], "description": "", "changed": False}
         page.wait_for_timeout(1200)
 
         before = self._read_state(page)
@@ -139,7 +138,7 @@ class ListCurator:
         page.wait_for_timeout(3000)
         return result
 
-    def run(self, page: PageLike, plan: dict[str, dict], dry_run: bool = False) -> int:
+    def run(self, page: LetterboxdPage, plan: dict[str, dict], dry_run: bool = False) -> int:
         """Curate every list in the plan, returning how many changed."""
         changed = 0
         for slug, entry in plan.items():

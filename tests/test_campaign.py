@@ -355,13 +355,14 @@ class TestInvariant1EditNeverRelog:
             assert url == "https://letterboxd.com/testuser/film/alpha/"
             labels.clear()
             labels.add("edit or delete review")
+            return True
 
         page.evaluate.side_effect = evaluate
-        page.goto.side_effect = goto
+        page.open.side_effect = goto
 
         assert DiaryForm(page, "testuser").open("Alpha") is True
         assert clicked == ["edit or delete review"]
         for call in page.evaluate.call_args_list:
             if len(call.args) > 1:
                 assert not any("log again" in lbl for lbl in call.args[1])
-        page.goto.assert_called_once()
+        page.open.assert_called_once()

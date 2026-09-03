@@ -11,7 +11,7 @@ from pathlib import Path
 
 from src.config import DATA_DIR, get_config
 from src.rate_limiter import RateLimiter
-from src.utils.auth import LetterboxdPage, PageLike, letterboxd_session, login
+from src.utils.auth import LetterboxdPage, letterboxd_session
 from src.utils.errors import BotChallengeError, handle_exception
 from src.utils.logs import configure
 
@@ -60,13 +60,6 @@ class LetterboxdUnfollower:
         """Add random delay between actions to simulate human behavior."""
         delay = random.uniform(self.config.min_delay * min_mult, self.config.max_delay * max_mult)
         time.sleep(delay)
-
-    def do_login(self, page: PageLike) -> bool:
-        """Log in to Letterboxd account."""
-        result = login(page, self.config)
-        if result:
-            self.random_delay()
-        return result
 
     def scrape_user_list(self, page: LetterboxdPage, list_type: str) -> set[str]:
         """Scrape usernames from following or followers list.
@@ -147,7 +140,7 @@ class LetterboxdUnfollower:
 
         return self.non_followers
 
-    def unfollow_user(self, page: PageLike, username: str) -> bool:
+    def unfollow_user(self, page: LetterboxdPage, username: str) -> bool:
         """Unfollow a specific user.
 
         Args:
@@ -158,9 +151,13 @@ class LetterboxdUnfollower:
             True if successful, False otherwise
         """
         try:
-            # Go to user's profile
-            page.goto(f"https://letterboxd.com/{username}/")
-            page.wait_for_load_state("networkidle")
+            # Through the navigator: this is the unfollow *action* path, and
+            # it used to use a bare goto plus `networkidle` -- the one wait
+            # CLAUDE.md says times out -- with no challenge check, because
+            # the widened annotation made `.open()` a type error.
+            if not page.open(f"https://letterboxd.com/{username}/"):
+                logging.warning(f"Could not open {username}'s profile")
+                return False
 
             # Find the unfollow/following button
             # When following someone, button shows "Following" and clicking unfollows
@@ -198,7 +195,7 @@ class LetterboxdUnfollower:
             writer.writerow([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), username])
 
     def unfollow_non_followers(
-        self, page: PageLike, limit: int | None = None, dry_run: bool = False
+        self, page: LetterboxdPage, limit: int | None = None, dry_run: bool = False
     ) -> int:
         """Unfollow users who don't follow back.
 

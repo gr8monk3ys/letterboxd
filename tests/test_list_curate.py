@@ -79,7 +79,7 @@ class TestListCurator:
     def test_navigates_to_the_edit_page_for_the_slug(self):
         curator, page = self._curator()
         curator.curate(page, "my-list", tags=["ranked"])
-        assert page.goto.call_args[0][0] == "https://letterboxd.com/testuser/list/my-list/edit/"
+        assert page.open.call_args[0][0] == "https://letterboxd.com/testuser/list/my-list/edit/"
 
     def test_leaves_an_existing_description_alone_when_none_is_given(self):
         """Curating tags must not blank a description that is already
