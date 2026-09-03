@@ -19,7 +19,7 @@ from src.growth.campaigns import CampaignManager, record_campaign_action
 def db(tmp_path):
     """A real, fully migrated database — the growth tables come from migrations."""
     path = tmp_path / "movie_database.db"
-    base = MovieDatabase(db_path=path)
+    base = MovieDatabase(db_path=path, create=True)
     base.connect()
     base.create_tables()
     base.close()

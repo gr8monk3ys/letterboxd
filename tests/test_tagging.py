@@ -131,7 +131,7 @@ class TestTagPersistence:
         from src.data_processing.migrations import MigrationManager
 
         path = tmp_path / "movie_database.db"
-        database = MovieDatabase(db_path=path)
+        database = MovieDatabase(db_path=path, create=True)
         database.connect()
         database.create_tables()
         database.close()

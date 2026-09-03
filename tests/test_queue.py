@@ -12,7 +12,7 @@ from src.data_processing.migrations import MigrationManager
 
 
 def build_db(path):
-    db = MovieDatabase(db_path=path)
+    db = MovieDatabase(db_path=path, create=True)
     db.connect()
     db.create_tables()
     db.close()

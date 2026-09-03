@@ -35,13 +35,17 @@ PENDING_RATINGS_DDL = """
 class MovieDatabase(SqliteBacked):
     """The films, ratings, reviews and AI drafts read from the export."""
 
-    # Builds the database rather than reading one -- `create_tables` is here.
-    # A missing file is expected at this one class and nowhere else.
-    requires_existing_database = False
+    def __init__(self, db_path: Path | str | None = None, *, create: bool = False):
+        """Initialize with the database to read, or to build.
 
-    def __init__(self, db_path: Path | str | None = None):
-        """Initialize with the database to build or read."""
+        `create=True` is for the import path, which is the only caller that
+        should bring a database into existence -- it runs `create_tables`
+        immediately afterwards. Every other caller reads, and a missing file
+        there means "run the import first": letting SQLite make an empty one
+        turns that into `no such table: films` from somewhere far away.
+        """
         super().__init__(db_path)
+        self.requires_existing_database = not create
         self._cursor: sqlite3.Cursor | None = None
 
     @property
@@ -756,7 +760,7 @@ def main():
 
     if importer.import_data():
         # Initialize database and import
-        db = MovieDatabase()
+        db = MovieDatabase(create=True)
         db.connect()
 
         # Drop only export-derived tables: the import replaces their contents

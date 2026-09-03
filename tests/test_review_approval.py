@@ -104,7 +104,7 @@ class TestMigration11:
 
 @pytest.fixture
 def db(tmp_path):
-    db = MovieDatabase(db_path=tmp_path / "movie_database.db")
+    db = MovieDatabase(db_path=tmp_path / "movie_database.db", create=True)
     db.connect()
     db.create_tables()
     db.save_ai_review("u:a", "Alpha", 2005, "Alpha draft.")
@@ -158,7 +158,7 @@ class TestPosterPostsOnlyApproved:
         config.username = "testuser"
         monkeypatch.setattr("src.reviewing.post_review.get_config", lambda: config)
         monkeypatch.setattr("src.reviewing.post_review.ReviewMetricsDB", MagicMock)
-        db = MovieDatabase(db_path=config.database_file)
+        db = MovieDatabase(db_path=config.database_file, create=True)
         db.connect()
         db.create_tables()
         db.close()

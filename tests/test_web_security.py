@@ -126,3 +126,32 @@ class TestLogWhitelist:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestErrorEnvelope:
+    """The dashboard is unauthenticated and can drive a real account, so a
+    failure must not hand back exception internals -- and a missing database
+    must say what to do rather than leaking SQL."""
+
+    @pytest.fixture
+    def client(self, monkeypatch, tmp_path):
+        # Point at a database that does not exist.
+        monkeypatch.setenv("DATABASE_FILE", str(tmp_path / "absent.db"))
+        from src.web.app import app
+
+        return TestClient(app)
+
+    def test_a_missing_database_is_503_with_an_instruction(self, client):
+        response = client.get("/api/growth/summary")
+        assert response.status_code == 503
+        body = response.json()
+        assert body["error"] == "No database yet."
+        assert "create_database" in body["detail"]
+
+    def test_no_sql_reaches_the_response_body(self, client):
+        """It used to answer 500 with `no such table: films` in it."""
+        for path in ("/api/growth/summary", "/api/analytics/growth", "/api/metrics/stats"):
+            body = client.get(path).text.lower()
+            assert "no such table" not in body
+            assert "sqlite" not in body
+            assert "traceback" not in body

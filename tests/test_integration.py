@@ -30,7 +30,7 @@ class TestDatabaseIntegration:
         """Create a MovieDatabase instance with temporary path."""
         from src.data_processing.create_database import MovieDatabase
 
-        db = MovieDatabase(db_path=temp_db_path)
+        db = MovieDatabase(db_path=temp_db_path, create=True)
         db.connect()
         db.create_tables()
         yield db
@@ -134,7 +134,7 @@ class TestDatabaseIntegration:
         db_path = temp_dir / "migration_test.db"
 
         # Create initial database
-        db1 = MovieDatabase(db_path=db_path)
+        db1 = MovieDatabase(db_path=db_path, create=True)
         db1.connect()
         db1.create_tables()
 
@@ -147,7 +147,7 @@ class TestDatabaseIntegration:
         db1.close()
 
         # Reconnect and recreate tables (should use IF NOT EXISTS)
-        db2 = MovieDatabase(db_path=db_path)
+        db2 = MovieDatabase(db_path=db_path, create=True)
         db2.connect()
         db2.create_tables()
 
@@ -165,7 +165,7 @@ class TestDatabaseIntegration:
         db_path = temp_dir / "concurrent_test.db"
 
         # Create database
-        db1 = MovieDatabase(db_path=db_path)
+        db1 = MovieDatabase(db_path=db_path, create=True)
         db1.connect()
         db1.create_tables()
 
@@ -441,7 +441,7 @@ class TestReviewGenerationIntegration:
         from src.data_processing.create_database import MovieDatabase
 
         db_path = temp_dir / "test_reviews.db"
-        db = MovieDatabase(db_path=db_path)
+        db = MovieDatabase(db_path=db_path, create=True)
         db.connect()
         db.create_tables()
 
@@ -480,7 +480,7 @@ class TestReviewGenerationIntegration:
 
         # Create database with test data
         db_path = temp_dir / "test_style.db"
-        db = MovieDatabase(db_path=db_path)
+        db = MovieDatabase(db_path=db_path, create=True)
         db.connect()
         db.create_tables()
 
@@ -578,7 +578,7 @@ class TestReviewGenerationIntegration:
 
         # Create database with AI reviews
         db_path = temp_dir / "test_export.db"
-        db = MovieDatabase(db_path=db_path)
+        db = MovieDatabase(db_path=db_path, create=True)
         db.connect()
         db.create_tables()
 
@@ -643,7 +643,7 @@ class TestEndToEndFlow:
         assert importer.import_data() is True
 
         # Step 2: Create and populate database
-        db = MovieDatabase(db_path=temp_dir / "e2e_test.db")
+        db = MovieDatabase(db_path=temp_dir / "e2e_test.db", create=True)
         db.connect()
         db.create_tables()
         db.import_from_letterboxd_export(importer)
@@ -856,11 +856,17 @@ class TestErrorHandlingIntegration:
     """Test error handling across modules."""
 
     def test_database_error_on_invalid_path(self):
-        """Test database error handling for invalid paths."""
+        """A read against a path that cannot exist reports failure, not a stub."""
         from src.data_processing.create_database import MovieDatabase
 
         db = MovieDatabase(db_path=Path("/nonexistent/path/db.sqlite"))
+        assert db.connect() is False
 
+    def test_an_unwritable_path_raises_when_creating(self):
+        """The import path does try to build one, and cannot lie about failing."""
+        from src.data_processing.create_database import MovieDatabase
+
+        db = MovieDatabase(db_path=Path("/nonexistent/path/db.sqlite"), create=True)
         with pytest.raises(Exception):
             db.connect()
 
