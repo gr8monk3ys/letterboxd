@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from src.config import DATA_DIR
+from src.film_identity import film_key
 from src.freshness import ExportFreshness, describe_freshness
 from src.taste import TasteAnalysis, analyze_taste
 
@@ -191,7 +192,9 @@ def _build(conn: sqlite3.Connection, freshness: ExportFreshness | None = None) -
         for r in conn.execute("SELECT letterboxd_uri, rating FROM ratings")
         if r["rating"] is not None
     }
-    reviewed_keys = {(r["name"], r["year"]) for r in conn.execute("SELECT name, year FROM reviews")}
+    reviewed_keys = {
+        film_key(r["name"], r["year"]) for r in conn.execute("SELECT name, year FROM reviews")
+    }
     liked_uris = {
         r["letterboxd_uri"] for r in conn.execute("SELECT letterboxd_uri FROM liked_films")
     }
@@ -258,7 +261,7 @@ def _build(conn: sqlite3.Connection, freshness: ExportFreshness | None = None) -
             stars=_stars(_rating_of(film)),
         )
 
-    unreviewed = [f for f in films if (f["name"], f.get("year")) not in reviewed_keys]
+    unreviewed = [f for f in films if film_key(f["name"], f.get("year")) not in reviewed_keys]
 
     # 1. Films you loved. Short and finishable — this is the list that
     #    matches how reviewing actually happens.

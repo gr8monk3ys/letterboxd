@@ -31,9 +31,20 @@ Full history still requires a real export; RSS only covers the recent tail.
 The export identifies films by **opaque `boxd.it` short URLs**
 (`https://boxd.it/103U`), not readable slugs. Scraped pages carry readable
 slugs (`parasite`). **These can never be compared directly.** Match films
-across the two sources on normalized title+year — see `growth/trending.py`
-`film_key()`. A slug-based comparison silently matches nothing, which reads
-as "no opportunities found" rather than as a bug.
+across the two sources on normalized title+year — **always** via
+`src/film_identity.py` `film_key()`, which is the single home for this rule.
+A slug-based comparison silently matches nothing, which reads as "no
+opportunities found" rather than as a bug.
+
+Do not re-derive this rule, in Python or in SQL. It was written ten times
+once, and the copies disagreed: SQL's `f.name = r.name` splits a film on
+casing or a stray space, and `f.year = r.year` is *never* true when both
+years are NULL, so the review generator drafted AI reviews for films that
+had already been reviewed by hand. URI-keyed joins are exact and belong in
+SQL; title+year identity is applied in Python through `film_key`.
+Deliberate exceptions, both documented in that module: `prioritize.py`
+`_match_key` (fuzzy matching of model output) and `tmdb.py` `_make_key`
+(a cache key, not an identity).
 
 Likewise `films.rating` is **NULL for every row** in a real export; ratings
 live in the `ratings` table. Reading `films.rating` alone yields zero rated

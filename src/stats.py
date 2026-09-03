@@ -7,6 +7,7 @@ from datetime import datetime
 
 from src.config import DATA_DIR
 from src.data_processing.create_database import MovieDatabase
+from src.film_identity import film_key
 from src.rate_limiter import RateLimiter
 
 
@@ -115,17 +116,21 @@ def show_review_stats() -> None:
         review_coverage = ((existing_reviews + ai_reviews) / rated_films) * 100
         print(f"\nReview coverage: {review_coverage:.1f}% of rated films")
 
-    # Get rated films needing reviews
+    # Rated films needing reviews. The ai_reviews half is URI-keyed and
+    # stays in SQL; the reviews half is title+year and goes through
+    # film_key, so this reports the same number as the action board and
+    # the queue rather than its own.
+    db.cursor.execute("SELECT name, year FROM reviews")
+    reviewed = {film_key(name, year) for name, year in db.cursor.fetchall()}
     db.cursor.execute("""
-        SELECT COUNT(*) FROM ratings r
+        SELECT r.name, r.year FROM ratings r
         WHERE NOT EXISTS (
-            SELECT 1 FROM reviews rev WHERE rev.name = r.name AND rev.year = r.year
-        )
-        AND NOT EXISTS (
             SELECT 1 FROM ai_reviews ar WHERE ar.letterboxd_uri = r.letterboxd_uri
         )
     """)
-    needs_review = db.cursor.fetchone()[0]
+    needs_review = sum(
+        1 for name, year in db.cursor.fetchall() if film_key(name, year) not in reviewed
+    )
     print(f"Rated films needing reviews: {needs_review}")
 
     # Rating distribution (from ratings table)

@@ -25,6 +25,7 @@ from pathlib import Path
 import httpx
 
 from src.config import DATA_DIR, get_config
+from src.film_identity import film_key
 
 logger = logging.getLogger(__name__)
 
@@ -73,11 +74,6 @@ def _tag(block: str, name: str) -> str | None:
     # with the escape intact and no longer matched the film anywhere.
     text = match.group(1).replace("<![CDATA[", "").replace("]]>", "")
     return html.unescape(text).strip()
-
-
-def _film_key(title: str | None, year: int | None) -> tuple[str, int | None]:
-    """Identity shared between the feed and the export: normalized title+year."""
-    return ((title or "").strip().lower(), year)
 
 
 def parse_rss(xml: str) -> list[Watch]:
@@ -183,22 +179,22 @@ def _sync(conn: sqlite3.Connection, watches: list[Watch]) -> SyncResult:
     cursor = conn.cursor()
 
     existing = {
-        _film_key(name, year): uri
+        film_key(name, year): uri
         for uri, name, year in cursor.execute("SELECT letterboxd_uri, name, year FROM films")
     }
     diary_seen = {
-        (_film_key(name, year), date)
+        (film_key(name, year), date)
         for name, year, date in cursor.execute("SELECT name, year, date_watched FROM diary")
     }
     liked = {
-        _film_key(name, year) for name, year in cursor.execute("SELECT name, year FROM liked_films")
+        film_key(name, year) for name, year in cursor.execute("SELECT name, year FROM liked_films")
     }
 
     films_added = ratings_updated = diary_added = likes_added = 0
     now = datetime.now().strftime("%Y-%m-%d")
 
     for watch in watches:
-        key = _film_key(watch.title, watch.year)
+        key = film_key(watch.title, watch.year)
         uri = existing.get(key)
 
         if uri is None:

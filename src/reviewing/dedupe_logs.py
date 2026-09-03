@@ -46,6 +46,7 @@ from pathlib import Path
 from playwright.sync_api import Dialog, Page, sync_playwright
 
 from src.config import get_config
+from src.film_identity import film_key
 from src.reviewing.post_review import _CLICK_BUTTON_JS, EDIT_BUTTON_LABELS, ReviewPoster
 from src.utils.auth import login, open_browser, raise_if_challenged
 
@@ -81,10 +82,6 @@ class Plan:
     reason: str = ""
 
 
-def _key(name: str | None, year: int | None) -> tuple[str, int | None]:
-    return ((name or "").strip().lower(), year)
-
-
 def _norm(text: str | None) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
@@ -103,11 +100,11 @@ def find_duplicates(conn: sqlite3.Connection) -> list[Duplicate]:
         "SELECT letterboxd_uri, film_name, film_year, review_text FROM posted_reviews "
         "ORDER BY posted_at"
     ):
-        posted[_key(name, year)] = (uri, text)
+        posted[film_key(name, year)] = (uri, text)
 
     rows: dict[tuple[str, int | None], list[tuple[str, int | None, str | None]]] = {}
     for name, year, date in conn.execute("SELECT name, year, date_watched FROM diary"):
-        rows.setdefault(_key(name, year), []).append((name, year, date))
+        rows.setdefault(film_key(name, year), []).append((name, year, date))
 
     found = []
     for key, (uri, text) in posted.items():
@@ -223,7 +220,7 @@ def remove_entry(page: Page, entry: Entry) -> bool:
 
 def forget_local_rows(conn: sqlite3.Connection, dup: Duplicate, removed: int) -> int:
     """Drop the local diary rows that stood for the removed entries."""
-    name, year = _key(dup.name, dup.year)
+    name, year = film_key(dup.name, dup.year)
     ids = [
         row_id
         for (row_id,) in conn.execute(
