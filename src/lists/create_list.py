@@ -7,7 +7,7 @@ import logging
 from src.config import get_config
 from src.lists.generate_lists import ListDefinition, ListGenerator
 from src.rate_limiter import RateLimiter
-from src.utils.auth import PageLike, goto_with_retry, letterboxd_session
+from src.utils.auth import LetterboxdPage, letterboxd_session
 from src.utils.follow_actions import human_delay
 from src.utils.logs import configure
 
@@ -24,7 +24,7 @@ class ListCreator:
         # it shares the same limiter as following and unfollowing.
         self.rate_limiter = RateLimiter()
 
-    def create_list(self, page: PageLike, list_def: ListDefinition) -> bool:
+    def create_list(self, page: LetterboxdPage, list_def: ListDefinition) -> bool:
         """Create a single list on Letterboxd.
 
         Args:
@@ -38,7 +38,7 @@ class ListCreator:
             # Navigate to list creation page
             logger.info(f"Creating list: {list_def.title}")
 
-            if not goto_with_retry(page, "https://letterboxd.com/list/new/"):
+            if not page.open("https://letterboxd.com/list/new/"):
                 logger.error("Failed to navigate to list creation page")
                 return False
 
@@ -111,7 +111,7 @@ class ListCreator:
             logger.error(f"Error creating list {list_def.title}: {e}")
             return False
 
-    def _add_film_to_list(self, page: PageLike, film: dict) -> bool:
+    def _add_film_to_list(self, page: LetterboxdPage, film: dict) -> bool:
         """Add a single film to the list being created.
 
         Args:

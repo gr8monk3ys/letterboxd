@@ -13,10 +13,8 @@ from src.growth.campaigns import record_campaign_action
 from src.review_metrics import ReviewMetricsDB
 from src.reviewing.diary_form import DiaryForm, squash
 from src.utils.auth import (
-    PageLike,
-    goto_with_retry,
+    LetterboxdPage,
     letterboxd_session,
-    login,
 )
 from src.utils.errors import handle_exception
 from src.utils.logs import configure
@@ -59,10 +57,6 @@ class ReviewPoster:
             self._attributor = attributor
         self._attributor.record_review_posted(posted_review_id)
 
-    def do_login(self, page: PageLike) -> bool:
-        """Log in to Letterboxd account."""
-        return login(page, self.config)
-
     def get_pending_reviews(self) -> list[dict]:
         """The reviews this run may post: unposted *and* approved.
 
@@ -72,7 +66,7 @@ class ReviewPoster:
         """
         return self.db.get_approved_ai_reviews()
 
-    def post_review(self, page: PageLike, film: dict) -> tuple[bool, str | None]:
+    def post_review(self, page: LetterboxdPage, film: dict) -> tuple[bool, str | None]:
         """Post a review for a single film.
 
         Args:
@@ -92,7 +86,7 @@ class ReviewPoster:
 
             # Letterboxd URIs are boxd.it short links that redirect to
             # the film page
-            if not goto_with_retry(page, uri):
+            if not page.open(uri):
                 logging.error(f"Failed to navigate to {uri} after retries")
                 return False, None
             page.wait_for_timeout(2000)

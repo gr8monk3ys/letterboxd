@@ -50,7 +50,7 @@ from src.data_processing.db import open_db
 from src.film_identity import film_key
 from src.reviewing.diary_form import DiaryForm
 from src.reviewing.post_review import ReviewPoster
-from src.utils.auth import PageLike, letterboxd_session, raise_if_challenged
+from src.utils.auth import LetterboxdPage, letterboxd_session
 
 DELETE_BUTTON = "button#diary-entry-delete-button[data-js-trigger=delete]"
 ENTRY_FORM = "form.js-diary-entry-form"
@@ -159,12 +159,11 @@ def _slug(uri: str) -> str:
     return uri.rstrip("/").split("/film/")[-1].split("/")[0]
 
 
-def list_entries(page: PageLike, username: str, slug: str) -> list[Entry]:
+def list_entries(page: LetterboxdPage, username: str, slug: str) -> list[Entry]:
     """Every entry for the film, read from its activity page then each entry."""
     base = f"/{username}/film/{slug}/"
-    page.goto(f"https://letterboxd.com{base}activity/", wait_until="domcontentloaded")
+    page.open(f"https://letterboxd.com{base}activity/")
     page.wait_for_timeout(2000)
-    raise_if_challenged(page)
     hrefs: list[str] = page.evaluate(
         "() => [...document.querySelectorAll('a.target[href]')].map(a => a.getAttribute('href'))"
     )
@@ -173,9 +172,8 @@ def list_entries(page: PageLike, username: str, slug: str) -> list[Entry]:
 
     entries = []
     for url in urls:
-        page.goto(url, wait_until="domcontentloaded")
+        page.open(url)
         page.wait_for_timeout(2000)
-        raise_if_challenged(page)
         info = page.evaluate(_ENTRY_JS)
         if not info["options"]:
             raise RuntimeError(f"{url}: no edit button; is the session signed in?")
@@ -184,11 +182,10 @@ def list_entries(page: PageLike, username: str, slug: str) -> list[Entry]:
     return entries
 
 
-def remove_entry(page: PageLike, entry: Entry) -> bool:
+def remove_entry(page: LetterboxdPage, entry: Entry) -> bool:
     """Delete one entry through its edit modal; True once it is gone."""
-    page.goto(entry.url, wait_until="domcontentloaded")
+    page.open(entry.url)
     page.wait_for_timeout(2000)
-    raise_if_challenged(page)
     # The same edit-only opener the poster uses: never a "log again" control.
     if not DiaryForm(page).open_for_edit():
         print(f"    no edit button on {entry.url}; skipped")
@@ -213,7 +210,12 @@ def remove_entry(page: PageLike, entry: Entry) -> bool:
     finally:
         page.remove_listener("dialog", accept)
 
-    page.goto(entry.url, wait_until="domcontentloaded")
+    # Through the navigator: `gone` is read off this page, so a challenge
+    # served here would be scored as "the entry is deleted" -- the worst
+    # possible reading of a block.
+    if not page.open(entry.url):
+        print("    could not re-open the entry to confirm; treating as not removed")
+        return False
     page.wait_for_timeout(2000)
     gone = page.evaluate(_ENTRY_JS)["options"] is None or "404" in page.title()
     print(f"    confirm dialog: {seen[0][:40] + '…' if seen else 'none shown'}; gone: {gone}")

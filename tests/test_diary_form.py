@@ -37,15 +37,16 @@ class TestOpenReviewForm:
         def goto(*_args, **_kwargs):
             if after_goto is not None:
                 state["labels"] = set(after_goto)
+            return True
 
         page.evaluate.side_effect = evaluate
-        page.goto.side_effect = goto
+        page.open.side_effect = goto
         return page
 
     def test_unlogged_film_clicks_review_or_log(self):
         page = self._page({"review or log"})
         assert DiaryForm(page, "testuser").open("Test Film") is True
-        page.goto.assert_not_called()
+        page.open.assert_not_called()
 
     def test_existing_review_is_edited_not_relogged(self):
         """ "Review or log again" contains "review or log" as a substring;
@@ -58,7 +59,7 @@ class TestOpenReviewForm:
         assert DiaryForm(page, "testuser").open("Test Film") is True
         clicked = page.evaluate.call_args_list[0][0][1]
         assert clicked[0] == "edit or delete review"
-        page.goto.assert_not_called()
+        page.open.assert_not_called()
 
     @pytest.mark.parametrize(
         "duplicate_label",
@@ -75,8 +76,8 @@ class TestOpenReviewForm:
         left 27 reviews untagged, so the rule is the shared phrase."""
         page = self._page({duplicate_label}, after_goto={"edit or delete review"})
         assert DiaryForm(page, "testuser").open("Test Film") is True
-        page.goto.assert_called_once()
-        assert page.goto.call_args[0][0] == "https://letterboxd.com/testuser/film/test-film/"
+        page.open.assert_called_once()
+        assert page.open.call_args[0][0] == "https://letterboxd.com/testuser/film/test-film/"
 
     def test_no_usable_button_is_failure(self):
         page = self._page(set())

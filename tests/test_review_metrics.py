@@ -515,11 +515,15 @@ class TestEngagementBatching:
 class TestEngagementChallengeDetection:
     def test_a_challenge_page_raises_instead_of_reading_zeros(self):
         """An interstitial matches no count selectors, so without this guard it
-        would be recorded as genuine likes=0/comments=0 over real history."""
+        would be recorded as genuine likes=0/comments=0 over real history.
+
+        Navigation now goes through the navigator, whose `open()` raises on a
+        challenge -- exercised for real in tests/test_browser_session.py.
+        """
         from src.utils.errors import BotChallengeError
 
         page = MagicMock()
-        page.title.return_value = "Just a moment..."
+        page.open.side_effect = BotChallengeError()
         with pytest.raises(BotChallengeError):
             EngagementScraper()._read_engagement(page, "https://boxd.it/x")
 

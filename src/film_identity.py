@@ -49,19 +49,3 @@ def film_key(title: str | None, year: int | str | None) -> tuple[str, int | None
         # An unparseable year is closer to "unknown" than to a match against
         # some other film that happens to share the title.
         return (normalized, None)
-
-
-def film_keys(rows) -> set[tuple[str, int | None]]:
-    """The identities of an iterable of (name, year) pairs or mappings.
-
-    Convenience for the common "build the set of things already reviewed"
-    step, which is where the duplicated copies mostly lived.
-    """
-    keys = set()
-    for row in rows:
-        try:
-            name, year = row["name"], row["year"]
-        except (TypeError, KeyError, IndexError):
-            name, year = row[0], row[1]
-        keys.add(film_key(name, year))
-    return keys
