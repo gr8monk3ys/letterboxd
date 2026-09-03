@@ -19,7 +19,7 @@ class TestEmptyDatabaseScenarios:
         """Create an empty database with tables but no data."""
         from src.data_processing.create_database import MovieDatabase
 
-        db = MovieDatabase(db_path=temp_dir / "empty.db")
+        db = MovieDatabase(db_path=temp_dir / "empty.db", create=True)
         db.connect()
         db.create_tables()
         yield db
@@ -256,7 +256,7 @@ class TestMigrationEdgeCases:
         from src.data_processing.migrations import MigrationManager
 
         # Create database first
-        db = MovieDatabase(db_path=temp_dir / "test.db")
+        db = MovieDatabase(db_path=temp_dir / "test.db", create=True)
         db.connect()
         db.create_tables()
         db.close()
@@ -279,7 +279,7 @@ class TestMigrationEdgeCases:
         from src.data_processing.migrations import MIGRATIONS, MigrationManager
 
         # Create database first
-        db = MovieDatabase(db_path=temp_dir / "test.db")
+        db = MovieDatabase(db_path=temp_dir / "test.db", create=True)
         db.connect()
         db.create_tables()
         db.close()

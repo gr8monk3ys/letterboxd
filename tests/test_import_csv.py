@@ -36,7 +36,7 @@ class TestMain:
     @pytest.fixture
     def db_path(self, tmp_path):
         path = tmp_path / "movie_database.db"
-        db = MovieDatabase(db_path=path)
+        db = MovieDatabase(db_path=path, create=True)
         db.connect()
         db.create_tables()
         db.cursor.execute("INSERT INTO films VALUES ('u:1', 'Persona', 1966, NULL, NULL, 0)")
@@ -90,7 +90,7 @@ class TestIngestClearsPending:
         monkeypatch.setenv("DATABASE_FILE", str(data_dir / "movie_database.db"))
         monkeypatch.setattr("src.data_processing.import_letterboxd_export.DATA_DIR", data_dir)
         db_path = data_dir / "movie_database.db"
-        db = MovieDatabase(db_path=db_path)
+        db = MovieDatabase(db_path=db_path, create=True)
         db.connect()
         db.create_tables()
         db.upsert_pending_rating("https://letterboxd.com/film/the-matrix/", "The Matrix", 1999, 5)

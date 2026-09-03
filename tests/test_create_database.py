@@ -10,13 +10,13 @@ class TestMovieDatabase:
     """Test the MovieDatabase class."""
 
     def test_connect_creates_database(self, temp_dir):
-        """Test that connect creates a database file."""
+        """create=True is the import path, and the only one that may build one."""
         db_path = temp_dir / "test.db"
 
         with patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}):
             from src.data_processing.create_database import MovieDatabase
 
-            db = MovieDatabase(db_path)
+            db = MovieDatabase(db_path, create=True)
             db.connect()
 
             assert db_path.exists()
@@ -32,7 +32,7 @@ class TestMovieDatabase:
         with patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}):
             from src.data_processing.create_database import MovieDatabase
 
-            db = MovieDatabase(db_path)
+            db = MovieDatabase(db_path, create=True)
             db.connect()
             db.create_tables()
 
@@ -69,7 +69,7 @@ class TestMovieDatabase:
             importer.import_data()
 
             # Then import to database
-            db = MovieDatabase(db_path)
+            db = MovieDatabase(db_path, create=True)
             db.connect()
             db.create_tables()
             db.import_from_letterboxd_export(importer)
@@ -97,7 +97,7 @@ class TestMovieDatabase:
             importer = LetterboxdImporter(sample_letterboxd_zip)
             importer.import_data()
 
-            db = MovieDatabase(db_path)
+            db = MovieDatabase(db_path, create=True)
             db.connect()
             db.create_tables()
             db.import_from_letterboxd_export(importer)
@@ -124,7 +124,7 @@ class TestMovieDatabase:
             importer = LetterboxdImporter(sample_letterboxd_zip)
             importer.import_data()
 
-            db = MovieDatabase(db_path)
+            db = MovieDatabase(db_path, create=True)
             db.connect()
             db.create_tables()
             db.import_from_letterboxd_export(importer)
@@ -150,7 +150,7 @@ class TestMovieDatabase:
             importer = LetterboxdImporter(sample_letterboxd_zip)
             importer.import_data()
 
-            db = MovieDatabase(db_path)
+            db = MovieDatabase(db_path, create=True)
             db.connect()
             db.create_tables()
             db.import_from_letterboxd_export(importer)
@@ -168,7 +168,7 @@ class TestMovieDatabase:
         with patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}):
             from src.data_processing.create_database import MovieDatabase
 
-            db = MovieDatabase(db_path)
+            db = MovieDatabase(db_path, create=True)
             db.connect()
             db.create_tables()
 
@@ -202,7 +202,7 @@ class TestMovieDatabase:
             importer = LetterboxdImporter(sample_letterboxd_zip)
             importer.import_data()
 
-            db = MovieDatabase(db_path)
+            db = MovieDatabase(db_path, create=True)
             db.connect()
             db.create_tables()
             db.import_from_letterboxd_export(importer)

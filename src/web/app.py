@@ -5,7 +5,10 @@ import logging
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
+from functools import wraps
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import BackgroundTasks, FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -18,6 +21,7 @@ from src.data_processing.create_database import AI_REVIEW_STATUSES, MovieDatabas
 from src.data_processing.db import connected
 from src.rate_limiter import RateLimiter
 from src.setup_status import describe_setup
+from src.utils.errors import DatabaseError
 from src.utils.logs import configure
 
 # Set up logging
@@ -55,6 +59,61 @@ VALID_LOGS: tuple[str, ...] = (
     "trending",
     "unfollower",
 )
+
+
+@app.exception_handler(DatabaseError)
+async def database_unavailable(request: Request, exc: DatabaseError) -> JSONResponse:
+    """Answer "there is no database yet" once, for every route.
+
+    Fifteen routes were each carrying their own copy of this. Registering it
+    covers the ones that were not, including any added later, and it is the
+    single most likely failure on a fresh checkout -- it used to surface as a
+    500 whose body was raw SQL (`no such table: films`).
+    """
+    logger.warning(f"Database unavailable for {request.url.path}: {exc}")
+    return JSONResponse(
+        {
+            "error": "No database yet.",
+            "detail": "Build it first: uv run python -m src.data_processing.create_database",
+        },
+        status_code=503,
+    )
+
+
+def db_route(what: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Own the try/except/log/JSONResponse envelope for one route.
+
+    That envelope was written out 33 times, and every copy caught a bare
+    `Exception` and returned 500 with `str(e)` in the body. Two consequences.
+
+    A missing database -- by far the most likely failure on a fresh checkout
+    -- came back as a 500 whose body was raw SQL (`no such table: films`).
+    `DatabaseError` says "run the import first" and reached nobody, because
+    every route swallowed it. It now passes through to the handler registered
+    above, which answers 503 with that instruction.
+
+    And `str(e)` put exception internals into the response body of an
+    unauthenticated dashboard that can drive a real Letterboxd account. The
+    detail goes to the log; the caller gets the shape of the failure.
+
+    Args:
+        what: Named in the log line and the message, e.g. "growth summary".
+    """
+
+    def decorate(handler: Callable[..., Any]) -> Callable[..., Any]:
+        @wraps(handler)
+        async def guarded(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await handler(*args, **kwargs)
+            except DatabaseError:
+                raise
+            except Exception as e:
+                logger.error(f"Error getting {what}: {e}")
+                return JSONResponse({"error": f"Could not read {what}."}, status_code=500)
+
+        return guarded
+
+    return decorate
 
 
 @app.middleware("http")
@@ -195,27 +254,21 @@ async def api_logs(log_name: str, lines: int = 50):
 
 
 @app.get("/api/films/unreviewed")
+@db_route("unreviewed films")
 async def api_unreviewed_films(limit: int = 20):
     """Get list of unreviewed films."""
-    try:
-        with connected(MovieDatabase) as db:
-            films = db.get_films_without_reviews()[:limit]
-        return JSONResponse({"films": films, "total": len(films)})
-    except Exception as e:
-        logger.error(f"Error getting unreviewed films: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    with connected(MovieDatabase) as db:
+        films = db.get_films_without_reviews()[:limit]
+    return JSONResponse({"films": films, "total": len(films)})
 
 
 @app.get("/api/reviews/ai")
-def api_ai_reviews(limit: int = 20):
+@db_route("AI reviews")
+async def api_ai_reviews(limit: int = 20):
     """Get list of AI-generated reviews."""
-    try:
-        with connected(MovieDatabase) as db:
-            reviews = db.get_ai_reviews(limit=limit)
-        return JSONResponse({"reviews": reviews, "total": len(reviews)})
-    except Exception as e:
-        logger.error(f"Error getting AI reviews: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    with connected(MovieDatabase) as db:
+        reviews = db.get_ai_reviews(limit=limit)
+    return JSONResponse({"reviews": reviews, "total": len(reviews)})
 
 
 @app.get("/logs", response_class=HTMLResponse)
@@ -289,9 +342,11 @@ def api_update_ai_review(payload: dict):
         with connected(MovieDatabase) as db:
             if not db.update_ai_review(uri.strip(), review):
                 return JSONResponse({"error": "No draft found for that film"}, status_code=404)
+    except DatabaseError:
+        raise  # answered once, by the handler registered below
     except Exception as e:
         logger.error(f"Error saving draft: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Something went wrong."}, status_code=500)
 
     return JSONResponse(
         {"message": "Draft saved, back to pending approval", "letterboxd_uri": uri.strip()}
@@ -320,9 +375,11 @@ def api_set_ai_review_status(payload: dict):
         with connected(MovieDatabase) as db:
             if not db.set_ai_review_status(uri.strip(), status):
                 return JSONResponse({"error": "No pending draft for that film"}, status_code=404)
+    except DatabaseError:
+        raise  # answered once, by the handler registered below
     except Exception as e:
         logger.error(f"Error setting draft status: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Something went wrong."}, status_code=500)
 
     return JSONResponse(
         {"message": f"Draft {status}", "letterboxd_uri": uri.strip(), "status": status}
@@ -357,13 +414,10 @@ def queue_page(request: Request):
 
 
 @app.get("/api/queue")
-def api_queue():
+@db_route("loading queue")
+async def api_queue():
     """The same worklist as `python -m src.queue --json`."""
-    try:
-        entries = _load_queue()
-    except Exception as e:
-        logger.error(f"Error loading queue: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    entries = _load_queue()
     return JSONResponse({"queue": entries, "total": len(entries)})
 
 
@@ -394,9 +448,11 @@ def api_queue_rate(payload: dict):
                 return JSONResponse({"error": "No such film"}, status_code=404)
             db.upsert_pending_rating(uri.strip(), film[0], film[1], rating)
             pending = len(db.pending_ratings())
+    except DatabaseError:
+        raise  # answered once, by the handler registered below
     except Exception as e:
         logger.error(f"Error storing rating: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Something went wrong."}, status_code=500)
 
     return JSONResponse(
         {"message": f"Rated {film[0]} {rating}", "uri": uri.strip(), "pending": pending}
@@ -662,76 +718,61 @@ async def action_sync(background_tasks: BackgroundTasks):
 
 
 @app.post("/api/actions/clear-tmdb-cache")
+@db_route("clearing TMDB cache")
 async def action_clear_tmdb_cache():
     """Clear the TMDB metadata cache."""
-    try:
-        from src.utils.tmdb import clear_cache
+    from src.utils.tmdb import clear_cache
 
-        count = clear_cache()
-        return JSONResponse(
-            {
-                "message": f"Cleared {count} entries from TMDB cache",
-                "entries_cleared": count,
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error clearing TMDB cache: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    count = clear_cache()
+    return JSONResponse(
+        {
+            "message": f"Cleared {count} entries from TMDB cache",
+            "entries_cleared": count,
+        }
+    )
 
 
 @app.get("/api/tmdb-cache/stats")
+@db_route("TMDB cache stats")
 async def get_tmdb_cache_stats():
     """Get TMDB cache statistics."""
-    try:
-        from src.utils.tmdb import get_cache_stats
+    from src.utils.tmdb import get_cache_stats
 
-        stats = get_cache_stats()
-        return JSONResponse(stats or {"error": "Caching disabled"})
-    except Exception as e:
-        logger.error(f"Error getting TMDB cache stats: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    stats = get_cache_stats()
+    return JSONResponse(stats or {"error": "Caching disabled"})
 
 
 @app.get("/api/analytics/summary")
+@db_route("analytics")
 async def get_analytics_summary():
     """Get connection analytics summary."""
-    try:
-        from src.analytics import ConnectionAnalytics
+    from src.analytics import ConnectionAnalytics
 
-        with connected(ConnectionAnalytics) as analytics:
-            summary = analytics.get_summary()
-        return JSONResponse(summary)
-    except Exception as e:
-        logger.error(f"Error getting analytics: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    with connected(ConnectionAnalytics) as analytics:
+        summary = analytics.get_summary()
+    return JSONResponse(summary)
 
 
 @app.get("/api/analytics/growth")
+@db_route("growth analytics")
 async def get_analytics_growth(days: int = 30):
     """Get growth rate metrics."""
-    try:
-        from src.analytics import ConnectionAnalytics
+    from src.analytics import ConnectionAnalytics
 
-        with connected(ConnectionAnalytics) as analytics:
-            growth = analytics.get_growth_rate(days)
-        return JSONResponse(growth)
-    except Exception as e:
-        logger.error(f"Error getting growth analytics: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    with connected(ConnectionAnalytics) as analytics:
+        growth = analytics.get_growth_rate(days)
+    return JSONResponse(growth)
 
 
 @app.get("/api/analytics/daily")
+@db_route("daily analytics")
 async def get_analytics_daily(days: int = 30):
     """Get daily activity data."""
-    try:
-        from src.analytics import ConnectionAnalytics
+    from src.analytics import ConnectionAnalytics
 
-        with connected(ConnectionAnalytics) as analytics:
-            daily = analytics.get_daily_activity(days)
-        return JSONResponse({"data": daily, "days": days})
-    except Exception as e:
-        logger.error(f"Error getting daily analytics: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    with connected(ConnectionAnalytics) as analytics:
+        daily = analytics.get_daily_activity(days)
+    return JSONResponse({"data": daily, "days": days})
 
 
 @app.get("/analytics", response_class=HTMLResponse)
@@ -807,46 +848,40 @@ async def metrics_page(request: Request):
 
 
 @app.get("/api/metrics/stats")
+@db_route("metrics stats")
 async def get_metrics_stats():
     """Get review metrics statistics."""
-    try:
-        from src.review_metrics import ReviewMetricsDB
+    from src.review_metrics import ReviewMetricsDB
 
-        with connected(ReviewMetricsDB) as db:
-            stats = db.get_stats()
-        return JSONResponse(stats)
-    except Exception as e:
-        logger.error(f"Error getting metrics stats: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    with connected(ReviewMetricsDB) as db:
+        stats = db.get_stats()
+    return JSONResponse(stats)
 
 
 @app.get("/api/metrics/performance")
+@db_route("tone performance")
 async def get_metrics_performance(days: int = 30):
     """Get tone performance metrics."""
-    try:
-        from src.review_metrics import ReviewMetricsDB
+    from src.review_metrics import ReviewMetricsDB
 
-        with connected(ReviewMetricsDB) as db:
-            performance = db.get_tone_performance(days=days)
-        return JSONResponse(
-            {
-                "data": [
-                    {
-                        "tone": p.tone,
-                        "review_count": p.review_count,
-                        "total_likes": p.total_likes,
-                        "total_comments": p.total_comments,
-                        "avg_likes": p.avg_likes,
-                        "avg_comments": p.avg_comments,
-                        "engagement_score": p.engagement_score,
-                    }
-                    for p in performance
-                ]
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error getting tone performance: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    with connected(ReviewMetricsDB) as db:
+        performance = db.get_tone_performance(days=days)
+    return JSONResponse(
+        {
+            "data": [
+                {
+                    "tone": p.tone,
+                    "review_count": p.review_count,
+                    "total_likes": p.total_likes,
+                    "total_comments": p.total_comments,
+                    "avg_likes": p.avg_likes,
+                    "avg_comments": p.avg_comments,
+                    "engagement_score": p.engagement_score,
+                }
+                for p in performance
+            ]
+        }
+    )
 
 
 # Plain def: this drives a real browser synchronously, which inside an
@@ -871,90 +906,83 @@ def update_engagement():
             # any engagement", which is a different and much worse claim.
             message = f"Collected nothing; Letterboxd blocked the run: {result['error']}"
         return JSONResponse({"message": message, **result})
+    except DatabaseError:
+        raise  # answered once, by the handler registered below
     except Exception as e:
         logger.error(f"Error updating engagement: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Something went wrong."}, status_code=500)
     finally:
         release_tasks("engagement", "browser")
 
 
 @app.post("/api/metrics/ab-test/start")
+@db_route("starting A/B test")
 async def start_ab_test(request: Request):
     """Start a new A/B test."""
-    try:
-        from src.review_metrics import ReviewMetricsDB
+    from src.review_metrics import ReviewMetricsDB
 
-        data = await request.json()
-        name = data.get("name")
-        tone_a = data.get("tone_a")
-        tone_b = data.get("tone_b")
+    data = await request.json()
+    name = data.get("name")
+    tone_a = data.get("tone_a")
+    tone_b = data.get("tone_b")
 
-        if not all([name, tone_a, tone_b]):
-            return JSONResponse({"error": "Missing required fields"}, status_code=400)
+    if not all([name, tone_a, tone_b]):
+        return JSONResponse({"error": "Missing required fields"}, status_code=400)
 
-        # An unvalidated tone reaches generation and is discarded there as
-        # unknown, so the test would run both arms on the fallback tone and
-        # still declare a winner.
-        from src.reviewing.write_review import VALID_TONES
+    # An unvalidated tone reaches generation and is discarded there as
+    # unknown, so the test would run both arms on the fallback tone and
+    # still declare a winner.
+    from src.reviewing.write_review import VALID_TONES
 
-        unknown = [t for t in (tone_a, tone_b) if t not in VALID_TONES]
-        if unknown:
-            return JSONResponse(
-                {
-                    "error": f"Unknown tone(s): {', '.join(unknown)}. Choose from: "
-                    f"{', '.join(VALID_TONES)}"
-                },
-                status_code=400,
-            )
-
-        with connected(ReviewMetricsDB) as db:
-            test_id = db.create_ab_test(name, tone_a, tone_b)
-
+    unknown = [t for t in (tone_a, tone_b) if t not in VALID_TONES]
+    if unknown:
         return JSONResponse(
             {
-                "message": f"Started A/B test: {name}",
-                "test_id": test_id,
-            }
+                "error": f"Unknown tone(s): {', '.join(unknown)}. Choose from: "
+                f"{', '.join(VALID_TONES)}"
+            },
+            status_code=400,
         )
-    except Exception as e:
-        logger.error(f"Error starting A/B test: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+
+    with connected(ReviewMetricsDB) as db:
+        test_id = db.create_ab_test(name, tone_a, tone_b)
+
+    return JSONResponse(
+        {
+            "message": f"Started A/B test: {name}",
+            "test_id": test_id,
+        }
+    )
 
 
 @app.post("/api/metrics/ab-test/end")
+@db_route("ending A/B test")
 async def end_ab_test():
     """End the active A/B test and get results."""
-    try:
-        from src.review_metrics import ReviewMetricsDB
+    from src.review_metrics import ReviewMetricsDB
 
-        with connected(ReviewMetricsDB) as db:
-            results = db.end_ab_test()
+    with connected(ReviewMetricsDB) as db:
+        results = db.end_ab_test()
 
-        if results:
-            return JSONResponse({"message": "A/B test ended", **results})
-        else:
-            return JSONResponse({"error": "No active A/B test"}, status_code=404)
-    except Exception as e:
-        logger.error(f"Error ending A/B test: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    if results:
+        return JSONResponse({"message": "A/B test ended", **results})
+    else:
+        return JSONResponse({"error": "No active A/B test"}, status_code=404)
 
 
 @app.get("/api/metrics/ab-test/assignment")
+@db_route("A/B test assignment")
 async def get_ab_test_assignment():
     """Get the tone to use for the next review based on A/B test."""
-    try:
-        from src.review_metrics import ReviewMetricsDB
+    from src.review_metrics import ReviewMetricsDB
 
-        with connected(ReviewMetricsDB) as db:
-            tone = db.get_ab_test_assignment()
+    with connected(ReviewMetricsDB) as db:
+        tone = db.get_ab_test_assignment()
 
-        if tone:
-            return JSONResponse({"tone": tone})
-        else:
-            return JSONResponse({"tone": None, "message": "No active A/B test"})
-    except Exception as e:
-        logger.error(f"Error getting A/B test assignment: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    if tone:
+        return JSONResponse({"tone": tone})
+    else:
+        return JSONResponse({"tone": None, "message": "No active A/B test"})
 
 
 # Growth Dashboard Endpoints
@@ -983,96 +1011,78 @@ async def growth_page(request: Request):
 
 
 @app.get("/api/growth/summary")
+@db_route("growth summary")
 async def api_growth_summary(days: int = 30):
     """Get comprehensive growth summary."""
-    try:
-        from src.growth import GrowthDashboard
+    from src.growth import GrowthDashboard
 
-        with connected(GrowthDashboard) as dashboard:
-            summary = dashboard.get_growth_summary(days)
-        return JSONResponse(summary)
-    except Exception as e:
-        logger.error(f"Error getting growth summary: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    with connected(GrowthDashboard) as dashboard:
+        summary = dashboard.get_growth_summary(days)
+    return JSONResponse(summary)
 
 
 @app.get("/api/growth/history")
+@db_route("growth history")
 async def api_growth_history(days: int = 30):
     """Get follower history data."""
-    try:
-        from src.growth import FollowerTracker
+    from src.growth import FollowerTracker
 
-        with connected(FollowerTracker) as tracker:
-            history = tracker.get_history(days)
-        return JSONResponse({"data": history, "days": days})
-    except Exception as e:
-        logger.error(f"Error getting growth history: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    with connected(FollowerTracker) as tracker:
+        history = tracker.get_history(days)
+    return JSONResponse({"data": history, "days": days})
 
 
 @app.get("/api/growth/milestones")
+@db_route("milestones")
 async def api_growth_milestones():
     """Get milestone progress."""
-    try:
-        from src.growth import FollowerTracker
+    from src.growth import FollowerTracker
 
-        with connected(FollowerTracker) as tracker:
-            latest = tracker.get_latest_snapshot()
-            if latest:
-                milestones = tracker.get_milestones(latest["followers_count"])
-            else:
-                milestones = {}
-        return JSONResponse(milestones)
-    except Exception as e:
-        logger.error(f"Error getting milestones: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    with connected(FollowerTracker) as tracker:
+        latest = tracker.get_latest_snapshot()
+        if latest:
+            milestones = tracker.get_milestones(latest["followers_count"])
+        else:
+            milestones = {}
+    return JSONResponse(milestones)
 
 
 @app.post("/api/growth/snapshot")
+@db_route("taking snapshot")
 async def api_take_snapshot():
     """Take a new follower snapshot."""
-    try:
-        from src.growth import FollowerTracker
+    from src.growth import FollowerTracker
 
-        with connected(FollowerTracker) as tracker:
-            snapshot = tracker.take_snapshot()
+    with connected(FollowerTracker) as tracker:
+        snapshot = tracker.take_snapshot()
 
-        if snapshot:
-            return JSONResponse({"message": "Snapshot taken", "data": snapshot})
-        else:
-            return JSONResponse({"error": "Failed to take snapshot"}, status_code=500)
-    except Exception as e:
-        logger.error(f"Error taking snapshot: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    if snapshot:
+        return JSONResponse({"message": "Snapshot taken", "data": snapshot})
+    else:
+        return JSONResponse({"error": "Failed to take snapshot"}, status_code=500)
 
 
 @app.get("/api/growth/trending")
+@db_route("trending films")
 async def api_trending_films(limit: int = 20):
     """Get trending films for review opportunities."""
-    try:
-        from src.growth import TrendingDetector
+    from src.growth import TrendingDetector
 
-        with connected(TrendingDetector) as detector:
-            opportunities = detector.get_review_opportunities(limit=limit)
-        return JSONResponse({"films": opportunities, "count": len(opportunities)})
-    except Exception as e:
-        logger.error(f"Error getting trending films: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    with connected(TrendingDetector) as detector:
+        opportunities = detector.get_review_opportunities(limit=limit)
+    return JSONResponse({"films": opportunities, "count": len(opportunities)})
 
 
 @app.get("/api/growth/campaigns")
+@db_route("campaigns")
 async def api_campaigns(limit: int = 10):
     """Get list of growth campaigns."""
-    try:
-        from src.growth import CampaignManager
+    from src.growth import CampaignManager
 
-        with connected(CampaignManager) as manager:
-            campaigns = manager.list_campaigns(limit)
-            active = manager.get_active_campaign()
-        return JSONResponse({"campaigns": campaigns, "active": active})
-    except Exception as e:
-        logger.error(f"Error getting campaigns: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    with connected(CampaignManager) as manager:
+        campaigns = manager.list_campaigns(limit)
+        active = manager.get_active_campaign()
+    return JSONResponse({"campaigns": campaigns, "active": active})
 
 
 def main():

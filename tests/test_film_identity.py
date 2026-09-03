@@ -42,7 +42,7 @@ class TestFilmKey:
 @pytest.fixture
 def db(tmp_path):
     path = tmp_path / "movie_database.db"
-    base = MovieDatabase(db_path=path)
+    base = MovieDatabase(db_path=path, create=True)
     base.connect()
     base.create_tables()
     base.close()

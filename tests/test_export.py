@@ -12,7 +12,7 @@ from src.data_processing.migrations import MigrationManager
 
 def build_db(path: Path) -> sqlite3.Connection:
     """Production DDL + migrations, then a small real-export-shaped dataset."""
-    db = MovieDatabase(db_path=path)
+    db = MovieDatabase(db_path=path, create=True)
     db.connect()
     db.create_tables()
     db.close()

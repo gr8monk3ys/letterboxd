@@ -591,7 +591,7 @@ class TestDraftsPage:
         from src.data_processing.migrations import MigrationManager
 
         db_path = tmp_path / "movie_database.db"
-        db = MovieDatabase(db_path=db_path)
+        db = MovieDatabase(db_path=db_path, create=True)
         db.connect()
         db.create_tables()
         db.close()

@@ -18,7 +18,7 @@ def _build_schema(db_path):
     columns into CREATE TABLE - a shape no real code path produces - which
     hid the fact that a re-imported database lost them.
     """
-    db = MovieDatabase(db_path=db_path)
+    db = MovieDatabase(db_path=db_path, create=True)
     db.connect()
     db.create_tables()
     db.close()
@@ -216,7 +216,7 @@ class TestSchemaSelfSufficiency:
 
     def test_fresh_base_schema_supports_pending_query(self, tmp_path, monkeypatch):
         db_path = tmp_path / "movie_database.db"
-        db = MovieDatabase(db_path=db_path)
+        db = MovieDatabase(db_path=db_path, create=True)
         db.connect()
         db.create_tables()
         db.close()
@@ -244,7 +244,7 @@ class TestSchemaSelfSufficiency:
         now carries, or a fresh install stalls at the first one that
         collides and never reaches the rest."""
         db_path = tmp_path / "movie_database.db"
-        db = MovieDatabase(db_path=db_path)
+        db = MovieDatabase(db_path=db_path, create=True)
         db.connect()
         db.create_tables()
         db.close()
