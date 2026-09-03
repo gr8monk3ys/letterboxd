@@ -7,6 +7,8 @@ from playwright.sync_api import Page, sync_playwright
 
 from src.config import get_config, get_log_path
 from src.data_processing.create_database import MovieDatabase
+from src.growth.attribution import ReviewAttributor
+from src.growth.campaigns import record_campaign_action
 from src.review_metrics import ReviewMetricsDB
 from src.utils.auth import goto_with_retry, login, open_browser, raise_if_challenged
 from src.utils.errors import handle_exception
@@ -89,6 +91,26 @@ class ReviewPoster:
         self.metrics_db.connect()
         self.posted_count = 0
         self.tone = tone  # Track which tone was used for metrics
+        # Built on the first successful post, not here: it opens a second
+        # connection and a scraper, and most runs (dry runs, empty queues)
+        # never post anything.
+        self._attributor: ReviewAttributor | None = None
+
+    def _record_attribution(self, posted_review_id: int) -> None:
+        """Snapshot the follower count a posted review starts from.
+
+        Attribution compares followers before against followers after, so the
+        'before' has to be taken at post time. Failure is logged and dropped:
+        the review is already live and a missing snapshot costs one data
+        point, not the run.
+        """
+        if self._attributor is None:
+            attributor = ReviewAttributor(db_path=self.config.database_file)
+            if not attributor.connect():
+                logging.warning("Attribution unavailable; database not found")
+                return
+            self._attributor = attributor
+        self._attributor.record_review_posted(posted_review_id)
 
     def do_login(self, page: Page) -> bool:
         """Log in to Letterboxd account."""
@@ -399,7 +421,7 @@ class ReviewPoster:
                                 )
                             try:
                                 # Track the posted review for metrics
-                                self.metrics_db.save_posted_review(
+                                posted_id = self.metrics_db.save_posted_review(
                                     letterboxd_uri=film["letterboxd_uri"],
                                     film_name=film["name"],
                                     film_year=film["year"],
@@ -412,6 +434,15 @@ class ReviewPoster:
                                     f"Posted {film['name']} but could not record "
                                     f"metrics for it: {e}"
                                 )
+                            else:
+                                try:
+                                    self._record_attribution(posted_id)
+                                except Exception as e:
+                                    logging.error(
+                                        f"Posted {film['name']} but could not "
+                                        f"record attribution for it: {e}"
+                                    )
+                            record_campaign_action("review", film["name"])
                         # Delay between posts
                         time.sleep(2)
 
@@ -429,6 +460,8 @@ class ReviewPoster:
         """Close database connections."""
         self.db.close()
         self.metrics_db.close()
+        if self._attributor is not None:
+            self._attributor.close()
 
 
 def main() -> None:

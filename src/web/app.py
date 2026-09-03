@@ -46,12 +46,10 @@ VALID_LOGS: tuple[str, ...] = (
     "list_creation",
     "list_generation",
     "migrations",
-    "optimizer",
     "review_generation",
     "review_metrics",
     "review_posting",
     "scraper",
-    "smart_follow",
     "trending",
     "unfollower",
 )
@@ -939,6 +937,21 @@ async def start_ab_test(request: Request):
 
         if not all([name, tone_a, tone_b]):
             return JSONResponse({"error": "Missing required fields"}, status_code=400)
+
+        # An unvalidated tone reaches generation and is discarded there as
+        # unknown, so the test would run both arms on the fallback tone and
+        # still declare a winner.
+        from src.reviewing.write_review import VALID_TONES
+
+        unknown = [t for t in (tone_a, tone_b) if t not in VALID_TONES]
+        if unknown:
+            return JSONResponse(
+                {
+                    "error": f"Unknown tone(s): {', '.join(unknown)}. Choose from: "
+                    f"{', '.join(VALID_TONES)}"
+                },
+                status_code=400,
+            )
 
         db = ReviewMetricsDB()
         db.connect()

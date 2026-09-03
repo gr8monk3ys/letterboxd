@@ -195,10 +195,8 @@ letterboxd/
 │   ├── growth/                          # Growth tracking & targeting
 │   │   ├── tracker.py                   # Follower snapshots over time
 │   │   ├── trending.py                  # Trending-film review targeting
-│   │   ├── smart_follow.py              # Similar-taste follow queue
 │   │   ├── campaigns.py                 # Grouped growth campaigns
 │   │   ├── attribution.py               # Review → follower attribution
-│   │   ├── optimizer.py                 # Posting-time optimization
 │   │   └── dashboard.py                 # Growth summary
 │   ├── lists/
 │   │   ├── generate_lists.py            # Build list definitions

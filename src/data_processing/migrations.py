@@ -142,7 +142,12 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
                 FOREIGN KEY (campaign_id) REFERENCES growth_campaigns(id)
             )
             """,
-            # Smart follow queue for similar taste users
+            # Smart follow queue for similar taste users.
+            # Orphaned: src/growth/smart_follow.py was removed (its
+            # find_similar_users was a stub that always returned []).
+            # The migration stays because migrations are never edited
+            # or renumbered once released -- databases in the wild have
+            # recorded this version. The table is simply unused.
             """
             CREATE TABLE IF NOT EXISTS smart_follow_queue (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
