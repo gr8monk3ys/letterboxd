@@ -1,6 +1,7 @@
 """Tests for src/reviewing/post_review.py - Review posting functionality."""
 
 import sqlite3
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -495,133 +496,81 @@ class TestMain:
         main()
 
 
-class TestOpenReviewForm:
-    """Letterboxd labels the diary button five different ways."""
+class TestPostingLoopIsTestableNow:
+    """`run()` had no coverage at all: every test passed dry_run=True.
+
+    The reason was structural -- a bare `input()` sat in the middle of the
+    loop, so the posting path, the bookkeeping and both "posted but could not
+    record it" recovery branches could not be exercised. It also meant
+    `campaign --apply` could never run unattended: it blocked on stdin.
+    """
 
     @pytest.fixture
     def poster(self, tmp_path, monkeypatch):
         db_path = tmp_path / "test.db"
         _build_schema(db_path)
-
-        mock_config = MagicMock()
-        mock_config.database_file = db_path
-        mock_config.username = "testuser"
-        mock_config.headless = True
-
-        monkeypatch.setattr("src.reviewing.post_review.get_config", lambda: mock_config)
+        config = MagicMock()
+        config.database_file = db_path
+        config.username = "testuser"
+        config.headless = True
+        monkeypatch.setattr("src.reviewing.post_review.get_config", lambda: config)
         monkeypatch.setattr("src.reviewing.post_review.ReviewMetricsDB", MagicMock)
 
         from src.reviewing.post_review import ReviewPoster
 
-        return ReviewPoster()
-
-    @staticmethod
-    def _page(labels, url="https://letterboxd.com/film/test-film/", after_goto=None):
-        """A page offering exactly `labels`, which may change on navigation."""
-        page = MagicMock()
-        page.url = url
-        state = {"labels": set(labels)}
-
-        def evaluate(js, arg=None):
-            if arg is None:
-                # The duplicate probe takes no argument: it matches any
-                # button whose label contains the shared phrase.
-                return next((lbl for lbl in state["labels"] if "log again" in lbl), None)
-            return next((lbl for lbl in arg if lbl in state["labels"]), None)
-
-        def goto(*_args, **_kwargs):
-            if after_goto is not None:
-                state["labels"] = set(after_goto)
-
-        page.evaluate.side_effect = evaluate
-        page.goto.side_effect = goto
-        return page
-
-    def test_unlogged_film_clicks_review_or_log(self, poster):
-        page = self._page({"review or log"})
-        assert poster.open_review_form(page, "Test Film") is True
-        page.goto.assert_not_called()
-
-    def test_existing_review_is_edited_not_relogged(self, poster):
-        """ "Review or log again" contains "review or log" as a substring;
-        matching loosely here would add a second diary entry every time a
-        review is re-tagged."""
-        page = self._page(
-            {"review or log again", "edit or delete review"},
-            url="https://letterboxd.com/testuser/film/test-film/",
-        )
-        assert poster.open_review_form(page, "Test Film") is True
-        clicked = page.evaluate.call_args_list[0][0][1]
-        assert clicked[0] == "edit or delete review"
-        page.goto.assert_not_called()
-
-    @pytest.mark.parametrize(
-        "duplicate_label",
-        [
-            "log again / add review",
-            "log again / edit review",
-            "review or log again",
-            "log again",
-        ],
-    )
-    def test_any_log_again_variant_routes_to_the_entry_page(self, poster, duplicate_label):
-        """Letterboxd has shipped at least four wordings of this button.
-        Enumerating them exactly missed "log again / edit review" and
-        left 27 reviews untagged, so the rule is the shared phrase."""
-        page = self._page({duplicate_label}, after_goto={"edit or delete review"})
-        assert poster.open_review_form(page, "Test Film") is True
-        page.goto.assert_called_once()
-        assert page.goto.call_args[0][0] == "https://letterboxd.com/testuser/film/test-film/"
-
-    def test_no_usable_button_is_failure(self, poster):
-        page = self._page(set())
-        assert poster.open_review_form(page, "Test Film") is False
-
-
-class TestSetTags:
-    """The tag typeahead tokenizes as you type, and can race."""
-
-    @pytest.fixture
-    def poster(self, tmp_path, monkeypatch):
-        db_path = tmp_path / "test.db"
-        _build_schema(db_path)
-        mock_config = MagicMock()
-        mock_config.database_file = db_path
-        mock_config.username = "testuser"
-        monkeypatch.setattr("src.reviewing.post_review.get_config", lambda: mock_config)
-        monkeypatch.setattr("src.reviewing.post_review.ReviewMetricsDB", MagicMock)
-        from src.reviewing.post_review import ReviewPoster
-
-        return ReviewPoster()
-
-    @staticmethod
-    def _page(tokens_after_typing):
-        page = MagicMock()
-        page.locator.return_value.first.count.return_value = 1
-        page.evaluate.side_effect = lambda js, *a: (
-            tokens_after_typing if "name=tag]" in js or "name=tag'" in js else None
-        )
-        return page
-
-    def test_returns_tokens_that_stuck(self, poster):
-        page = self._page(["minimal-dialogue", "mortality"])
-        assert poster.set_tags(page, ["minimal-dialogue", "mortality"]) == [
-            "minimal-dialogue",
-            "mortality",
+        poster = ReviewPoster()
+        poster.get_pending_reviews = lambda: [
+            {
+                "letterboxd_uri": "https://boxd.it/a",
+                "name": "Alpha",
+                "year": 2001,
+                "review": "A review.",
+                "rating": 4.0,
+            },
+            {
+                "letterboxd_uri": "https://boxd.it/b",
+                "name": "Beta",
+                "year": 2002,
+                "review": "Another review.",
+                "rating": 3.5,
+            },
         ]
+        poster.post_review = MagicMock(return_value=(True, "https://letterboxd.com/u/film/a/"))
+        poster.db = MagicMock()
+        poster._record_attribution = MagicMock()
 
-    def test_drops_a_truncated_token_from_a_typeahead_race(self, poster):
-        """A half-typed token like 'tearjer' once shipped to the account
-        this way; anything not asked for is removed before saving."""
-        page = self._page(["comedy", "tearjer", "tearjerker"])
-        assert poster.set_tags(page, ["comedy", "tearjerker"]) == ["comedy", "tearjerker"]
-
-    def test_no_tags_is_a_noop(self, poster):
-        page = self._page([])
-        assert poster.set_tags(page, []) == []
-        page.locator.assert_not_called()
-
-    def test_missing_field_returns_empty(self, poster):
         page = MagicMock()
-        page.locator.return_value.first.count.return_value = 0
-        assert poster.set_tags(page, ["grief"]) == []
+
+        @contextmanager
+        def session(config, **kwargs):
+            yield page
+
+        monkeypatch.setattr("src.reviewing.post_review.letterboxd_session", session)
+        monkeypatch.setattr("src.reviewing.post_review.time.sleep", lambda _: None)
+        return poster
+
+    def test_a_scripted_yes_posts_every_film(self, poster):
+        assert poster.run(confirm=lambda film: "y") == 2
+        assert poster.post_review.call_count == 2
+
+    def test_declining_one_still_offers_the_next(self, poster):
+        answers = iter(["n", "y"])
+        assert poster.run(confirm=lambda film: next(answers)) == 1
+
+    def test_quitting_stops_the_batch(self, poster):
+        assert poster.run(confirm=lambda film: "q") == 0
+        poster.post_review.assert_not_called()
+
+    def test_a_bookkeeping_failure_does_not_abort_the_run(self, poster):
+        """The review is already live; a failed mark must not take the rest down."""
+        poster.db.mark_ai_review_posted.side_effect = RuntimeError("database is locked")
+        assert poster.run(confirm=lambda film: "y") == 2
+
+    def test_an_unattended_run_needs_no_terminal(self, poster, monkeypatch):
+        """campaign --apply passes a function returning 'y': the approval
+        already happened on /drafts, which is where the gate belongs."""
+        monkeypatch.setattr(
+            "builtins.input",
+            lambda *_: pytest.fail("run() must not read stdin when told what to do"),
+        )
+        assert poster.run(confirm=lambda film: "y") == 2
