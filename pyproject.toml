@@ -24,7 +24,7 @@ dependencies = [
 # default because it is the only one the core code has always needed; the
 # other two are opt-in so nobody installs three SDKs to use one.
 [project.optional-dependencies]
-openai = ["openai>=3.1.0"]
+openai = ["openai>=3.6.0"]
 gemini = ["google-genai>=2.20.0"]
 
 # Dev dependencies live in [dependency-groups] below, which is what
