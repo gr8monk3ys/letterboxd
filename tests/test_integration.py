@@ -227,7 +227,6 @@ class TestFollowIntegration:
         """Create a LetterboxdFollower with mocked dependencies."""
         with (
             patch("src.following.follow_users.DATA_DIR", temp_dir),
-            patch("src.following.follow_users.get_log_path", return_value=temp_dir / "test.log"),
             patch("src.rate_limiter.DATA_DIR", temp_dir),
         ):
             from src.following.follow_users import LetterboxdFollower
@@ -316,7 +315,6 @@ class TestUnfollowIntegration:
         """Create a LetterboxdUnfollower with mocked dependencies."""
         with (
             patch("src.following.unfollow_users.DATA_DIR", temp_dir),
-            patch("src.following.unfollow_users.get_log_path", return_value=temp_dir / "test.log"),
             patch("src.rate_limiter.DATA_DIR", temp_dir),
         ):
             from src.following.unfollow_users import LetterboxdUnfollower

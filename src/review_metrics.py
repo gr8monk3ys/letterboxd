@@ -13,7 +13,7 @@ from typing import Any
 
 from playwright.sync_api import sync_playwright
 
-from src.config import DATA_DIR, get_config, get_log_path
+from src.config import DATA_DIR, get_config
 from src.data_processing.db import connect_raw
 from src.utils.auth import open_browser, raise_if_challenged
 from src.utils.engagement_selectors import (
@@ -22,16 +22,8 @@ from src.utils.engagement_selectors import (
     LIKES_SELECTORS,
     parse_count,
 )
+from src.utils.logs import configure
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(get_log_path("review_metrics"), encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
 logger = logging.getLogger(__name__)
 
 
@@ -809,6 +801,7 @@ def main():
     collection used to be reachable only from a dashboard button, and so
     review_engagement sat at 0 rows while 34 reviews were live.
     """
+    configure("review_metrics")
     import argparse
 
     parser = argparse.ArgumentParser(

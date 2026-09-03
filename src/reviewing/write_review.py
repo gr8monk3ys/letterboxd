@@ -14,22 +14,13 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from src.config import DATA_DIR, get_config, get_log_path
+from src.config import DATA_DIR, get_config
 from src.data_processing.create_database import MovieDatabase
 from src.providers import get_provider
 from src.providers.base import VALID_PROVIDERS
 from src.utils.errors import handle_exception
+from src.utils.logs import configure
 from src.utils.tmdb import TMDBClient, format_film_context
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(get_log_path("review_generation"), encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
 
 # Review tone presets with their guidelines and system prompts
 # Writing tells that read as AI-generated (per Wikipedia's "Signs of AI
@@ -726,6 +717,7 @@ def build_arg_parser() -> "argparse.ArgumentParser":
 
 
 def main() -> None:
+    configure("review_generation")
     parser = build_arg_parser()
     args = parser.parse_args()
 

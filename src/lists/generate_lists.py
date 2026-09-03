@@ -12,18 +12,9 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from src.config import get_log_path
 from src.data_processing.create_database import MovieDatabase
+from src.utils.logs import configure
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(get_log_path("list_generation"), encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
 logger = logging.getLogger(__name__)
 
 
@@ -373,6 +364,7 @@ class ListGenerator:
 
 def main() -> None:
     """CLI entry point for list generation."""
+    configure("list_generation")
     import argparse
 
     parser = argparse.ArgumentParser(description="Generate Letterboxd lists")

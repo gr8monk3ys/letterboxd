@@ -12,21 +12,12 @@ from typing import Any, TextIO
 
 from playwright.sync_api import Page, sync_playwright
 
-from src.config import DATA_DIR, get_config, get_log_path
+from src.config import DATA_DIR, get_config
 from src.growth.campaigns import record_campaign_action
 from src.rate_limiter import RateLimiter
 from src.utils.auth import login_and_navigate, open_browser
 from src.utils.errors import format_rate_limit_message, handle_exception
-
-# Set up logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(get_log_path("follower"), encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
+from src.utils.logs import configure
 
 
 class LetterboxdFollower:
@@ -353,6 +344,7 @@ def build_url(args) -> str | None:
 
 
 def main() -> None:
+    configure("follower")
     parser = argparse.ArgumentParser(
         description="Follow Letterboxd users from various pages",
         formatter_class=argparse.RawDescriptionHelpFormatter,

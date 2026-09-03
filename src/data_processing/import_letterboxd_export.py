@@ -12,17 +12,8 @@ import logging
 import zipfile
 from pathlib import Path
 
-from src.config import DATA_DIR, get_log_path
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(get_log_path("import"), encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
+from src.config import DATA_DIR
+from src.utils.logs import configure
 
 
 class LetterboxdImporter:
@@ -175,6 +166,7 @@ class LetterboxdImporter:
 
 
 def main():
+    configure("import")
     importer = LetterboxdImporter()
 
     if importer.import_data():

@@ -9,25 +9,18 @@ import logging
 
 from playwright.sync_api import sync_playwright
 
-from src.config import get_config, get_log_path
+from src.config import get_config
 from src.data_processing.create_database import MovieDatabase
 from src.providers import get_provider
 from src.reviewing.post_review import ReviewPoster
 from src.tagging.apply import ReviewTagger
 from src.tagging.suggester import TagSuggester
 from src.utils.auth import login, open_browser
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(get_log_path("tagging"), encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
+from src.utils.logs import configure
 
 
 def main() -> None:
+    configure("tagging")
     parser = argparse.ArgumentParser(description="Tag posted Letterboxd reviews")
     parser.add_argument("-n", "--limit", type=int, help="Tag at most this many reviews")
     parser.add_argument(

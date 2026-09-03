@@ -16,18 +16,9 @@ import logging
 import sqlite3
 from pathlib import Path
 
-from src.config import DATA_DIR, get_log_path
+from src.config import DATA_DIR
 from src.data_processing.db import connect_raw
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(get_log_path("migrations"), encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
+from src.utils.logs import configure
 
 # Migration definitions: (version, description, statements)
 # Each migration is a list of individual SQL statements so they can run
@@ -512,6 +503,7 @@ class MigrationManager:
 
 def main() -> None:
     """Run database migrations."""
+    configure("migrations")
     import argparse
 
     parser = argparse.ArgumentParser(

@@ -13,19 +13,11 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from src.config import DATA_DIR, get_log_path
+from src.config import DATA_DIR
 from src.data_processing.db import connect_raw
 from src.growth.tracker import FollowerTracker
+from src.utils.logs import configure
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(get_log_path("growth_dashboard"), encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
 logger = logging.getLogger(__name__)
 
 
@@ -371,6 +363,7 @@ class GrowthDashboard:
 
 def main() -> None:
     """CLI entry point for growth dashboard."""
+    configure("growth_dashboard")
     import argparse
 
     parser = argparse.ArgumentParser(

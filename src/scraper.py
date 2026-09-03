@@ -19,13 +19,13 @@ from letterboxdpy.movie import Movie as LBMovie
 from letterboxdpy.search import Search as LBSearch
 from letterboxdpy.user import User as LBUser
 
-from src.config import get_log_path
 from src.utils.engagement_selectors import (
     COMMENT_COUNT_SELECTORS,
     COMMENT_ELEMENT_SELECTORS,
     LIKES_SELECTORS,
     parse_count,
 )
+from src.utils.logs import configure
 
 
 def _get_attr(tag: Tag, attr: str, default: str = "") -> str:
@@ -73,15 +73,6 @@ def _get_attr_or_none(tag: Tag, attr: str) -> str | None:
     return None
 
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(get_log_path("scraper"), encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://letterboxd.com"
@@ -623,6 +614,7 @@ class LetterboxdScraper:
 
 def main():
     """CLI for the scraper."""
+    configure("scraper")
     import argparse
 
     parser = argparse.ArgumentParser(description="Letterboxd scraper")

@@ -18,9 +18,9 @@ from src.data_processing.create_database import AI_REVIEW_STATUSES, MovieDatabas
 from src.data_processing.db import connected
 from src.rate_limiter import RateLimiter
 from src.setup_status import describe_setup
+from src.utils.logs import configure
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Create FastAPI app
@@ -39,6 +39,7 @@ templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 VALID_LOGS: tuple[str, ...] = (
     "attribution",
     "campaigns",
+    "dashboard",
     "database",
     "follower",
     "growth_dashboard",
@@ -1077,6 +1078,8 @@ async def api_campaigns(limit: int = 10):
 def main():
     """Run the web server."""
     import uvicorn
+
+    configure("dashboard")
 
     print("\nStarting Letterboxd Automation Dashboard...")
     print("Open http://localhost:8000 in your browser\n")

@@ -14,6 +14,7 @@ from typing import Any
 from playwright.sync_api import Page
 
 from src.tagging.taxonomy import MAX_TAGS, normalize_tag, validate_tags
+from src.utils.logs import configure
 
 logger = logging.getLogger(__name__)
 
@@ -158,17 +159,10 @@ class ListCurator:
 def main() -> None:
     from playwright.sync_api import sync_playwright
 
-    from src.config import get_config, get_log_path
+    from src.config import get_config
     from src.utils.auth import login, open_browser
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.FileHandler(get_log_path("list_curation"), encoding="utf-8"),
-            logging.StreamHandler(),
-        ],
-    )
+    configure("list_curation")
 
     parser = argparse.ArgumentParser(description="Set tags and descriptions on existing lists")
     parser.add_argument("--plan", required=True, type=Path, help="Slug-keyed JSON plan")
