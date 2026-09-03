@@ -134,3 +134,17 @@ Consequences worth remembering:
 - Follow button: `a.follow-button:not(.following)`
 - Next page link: `a.next`
 - Uses `wait_until="domcontentloaded"` (not `networkidle` which times out)
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues in `gr8monk3ys/letterboxd`, driven by the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, each label string equal to its name. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
