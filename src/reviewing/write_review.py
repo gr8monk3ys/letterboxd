@@ -742,9 +742,13 @@ def main() -> None:
         except Exception as e:
             logging.warning(f"Viral context unavailable ({e}); generating without it")
 
-    generator = ReviewGenerator(tone=args.tone, provider=args.provider, popular_fetcher=fetcher)
+    # Built inside the try: the browser context above is already open, and a
+    # constructor failure (a missing provider SDK, an absent database) must
+    # still reach the finally that closes it.
+    generator = None
 
     try:
+        generator = ReviewGenerator(tone=args.tone, provider=args.provider, popular_fetcher=fetcher)
         if args.export:
             output = generator.export_reviews(format=args.export)
             if output:
@@ -799,7 +803,8 @@ def main() -> None:
             else:
                 print("\nNo reviews generated.")
     finally:
-        generator.close()
+        if generator is not None:
+            generator.close()
         # An abandoned persistent profile keeps the browser's
         # SingletonLock and blocks every later run
         if browser_context is not None:
