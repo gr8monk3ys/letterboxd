@@ -22,6 +22,7 @@ from pathlib import Path
 from src.config import DATA_DIR
 from src.data_processing.db import open_db
 from src.utils.errors import DatabaseError
+from src.utils.logs import configure
 
 # Directory containing completion scripts
 COMPLETIONS_DIR = Path(__file__).parent / "completions"
@@ -141,6 +142,7 @@ def generate_fish_completions() -> str:
 
 def main():
     """CLI for generating completion scripts."""
+    configure("completions")
     import argparse
 
     parser = argparse.ArgumentParser(description="Generate shell completion scripts")

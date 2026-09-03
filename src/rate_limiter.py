@@ -6,6 +6,7 @@ from pathlib import Path
 
 from src.config import get_config
 from src.data_processing.db import SqliteBacked
+from src.utils.logs import configure
 
 # Warning thresholds (percentage of limit)
 WARNING_THRESHOLD = 0.8  # Warn at 80% of limit
@@ -357,4 +358,5 @@ def show_rate_limit_status():
 
 
 if __name__ == "__main__":
+    configure("rate_limiter")
     show_rate_limit_status()

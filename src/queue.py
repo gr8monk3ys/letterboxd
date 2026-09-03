@@ -25,6 +25,7 @@ from typing import Literal
 from src.config import DATA_DIR
 from src.data_processing.db import open_db
 from src.film_identity import film_key
+from src.utils.logs import configure
 
 INGEST_COMMAND = "uv run python -m src.data_processing.create_database"
 
@@ -83,6 +84,7 @@ def build_queue(conn: sqlite3.Connection) -> list[QueueEntry]:
 
 
 def main() -> None:
+    configure("queue")
     parser = argparse.ArgumentParser(description="Films needing a rating or a review")
     parser.add_argument("--db", type=Path, default=DATA_DIR / "movie_database.db")
     parser.add_argument("--json", action="store_true", help="machine-readable output")

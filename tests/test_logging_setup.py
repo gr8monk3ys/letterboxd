@@ -10,6 +10,8 @@ import logging
 import subprocess
 import sys
 
+import pytest
+
 from src.utils.logs import configure
 
 
@@ -64,3 +66,48 @@ class TestImportHasNoSideEffect:
         assert result.stdout.strip() == "0", (
             f"importing configured the root logger ({result.stdout.strip()} handlers)"
         )
+
+
+class TestTheRegistryIsShared:
+    """Log names lived in two places and drifted: `sync`, `tagging` and
+    `list_curation` were written to disk while the dashboard's viewer refused
+    to show them."""
+
+    def test_every_name_the_project_writes_is_viewable(self):
+        import re
+        from pathlib import Path
+
+        from src.utils.logs import LOG_NAMES
+
+        written = {
+            m.group(1)
+            for f in Path("src").rglob("*.py")
+            for m in re.finditer(r'configure\("([^"]+)"\)', f.read_text())
+        }
+        assert written <= set(LOG_NAMES), (
+            f"written but not viewable: {sorted(written - set(LOG_NAMES))}"
+        )
+
+    def test_the_viewer_reads_the_same_registry(self):
+        from src.utils.logs import LOG_NAMES
+        from src.web.app import VALID_LOGS
+
+        assert VALID_LOGS is LOG_NAMES
+
+    def test_an_unregistered_name_is_refused(self):
+        """Otherwise a new log is written somewhere nobody can read it."""
+        with pytest.raises(ValueError, match="Unknown log name"):
+            configure("a-log-nobody-registered")
+
+
+class TestEveryEntryPointLogs:
+    def test_no_entry_point_logs_nowhere(self):
+        """Ten of them did, including campaign.py -- the primary workflow."""
+        from pathlib import Path
+
+        missing = [
+            str(f)
+            for f in Path("src").rglob("*.py")
+            if '__name__ == "__main__"' in (text := f.read_text()) and "configure(" not in text
+        ]
+        assert missing == [], f"entry points that log nowhere: {missing}"
