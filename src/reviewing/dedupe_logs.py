@@ -48,7 +48,8 @@ from playwright.sync_api import Dialog
 from src.config import get_config
 from src.data_processing.db import open_db
 from src.film_identity import film_key
-from src.reviewing.post_review import _CLICK_BUTTON_JS, EDIT_BUTTON_LABELS, ReviewPoster
+from src.reviewing.diary_form import DiaryForm
+from src.reviewing.post_review import ReviewPoster
 from src.utils.auth import PageLike, letterboxd_session, raise_if_challenged
 
 DELETE_BUTTON = "button#diary-entry-delete-button[data-js-trigger=delete]"
@@ -189,7 +190,7 @@ def remove_entry(page: PageLike, entry: Entry) -> bool:
     page.wait_for_timeout(2000)
     raise_if_challenged(page)
     # The same edit-only opener the poster uses: never a "log again" control.
-    if not page.evaluate(_CLICK_BUTTON_JS, list(EDIT_BUTTON_LABELS)):
+    if not DiaryForm(page).open_for_edit():
         print(f"    no edit button on {entry.url}; skipped")
         return False
     page.wait_for_timeout(2000)

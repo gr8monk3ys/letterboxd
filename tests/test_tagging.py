@@ -181,12 +181,14 @@ class TestTagPersistence:
 class TestReviewTagger:
     """Tagging an existing review must never create a second entry."""
 
-    def _tagger(self, suggested=None, applied=None, form_opens=True):
+    def _tagger(self, monkeypatch, suggested=None, applied=None, form_opens=True):
         from src.tagging.apply import ReviewTagger
 
-        poster = MagicMock()
-        poster.open_review_form.return_value = form_opens
-        poster.set_tags.side_effect = lambda page, tags: applied if applied is not None else tags
+        form = MagicMock()
+        form.open.return_value = form_opens
+        form.set_tags.side_effect = lambda tags: applied if applied is not None else tags
+        form.submit.return_value = True
+        monkeypatch.setattr("src.tagging.apply.DiaryForm", lambda page, username: form)
 
         suggester = MagicMock()
         suggester.suggest.return_value = suggested if suggested is not None else []
@@ -194,7 +196,7 @@ class TestReviewTagger:
         db = MagicMock()
         page = MagicMock()
         page.evaluate.return_value = True
-        return ReviewTagger(poster, suggester, db), poster, db, page
+        return ReviewTagger("testuser", suggester, db), form, db, page
 
     def _film(self):
         return {
@@ -204,40 +206,40 @@ class TestReviewTagger:
             "review": "a review",
         }
 
-    def test_applies_and_records_suggested_tags(self):
-        tagger, poster, db, page = self._tagger(suggested=["mortality", "melancholy"])
+    def test_applies_and_records_suggested_tags(self, monkeypatch):
+        tagger, form, db, page = self._tagger(monkeypatch, suggested=["mortality", "melancholy"])
         assert tagger.tag_film(page, self._film()) == ["mortality", "melancholy"]
         db.save_ai_review_tags.assert_called_once_with(
             "https://boxd.it/abc", ["mortality", "melancholy"]
         )
-        poster.open_review_form.assert_called_once()
+        form.open.assert_called_once()
 
-    def test_explicit_tags_are_validated_not_trusted(self):
-        tagger, _, db, page = self._tagger()
+    def test_explicit_tags_are_validated_not_trusted(self, monkeypatch):
+        tagger, _, db, page = self._tagger(monkeypatch)
         assert tagger.tag_film(page, self._film(), tags=["grief", "made-up-tag"]) == ["grief"]
         db.save_ai_review_tags.assert_called_once_with("https://boxd.it/abc", ["grief"])
 
-    def test_no_applicable_tags_touches_nothing(self):
-        tagger, poster, db, page = self._tagger(suggested=[])
+    def test_no_applicable_tags_touches_nothing(self, monkeypatch):
+        tagger, form, db, page = self._tagger(monkeypatch, suggested=[])
         assert tagger.tag_film(page, self._film()) == []
-        poster.open_review_form.assert_not_called()
+        form.open.assert_not_called()
         db.save_ai_review_tags.assert_not_called()
 
-    def test_unopenable_form_records_nothing(self):
-        tagger, _, db, page = self._tagger(suggested=["grief"], form_opens=False)
+    def test_unopenable_form_records_nothing(self, monkeypatch):
+        tagger, _, db, page = self._tagger(monkeypatch, suggested=["grief"], form_opens=False)
         assert tagger.tag_film(page, self._film()) == []
         db.save_ai_review_tags.assert_not_called()
 
-    def test_run_skips_already_tagged_and_counts_work(self):
-        tagger, _, db, page = self._tagger(suggested=["grief"])
+    def test_run_skips_already_tagged_and_counts_work(self, monkeypatch):
+        tagger, _, db, page = self._tagger(monkeypatch, suggested=["grief"])
         db.get_posted_reviews_without_tags.return_value = [self._film(), self._film()]
         assert tagger.run(page) == 2
 
-    def test_dry_run_writes_nothing(self, capsys):
-        tagger, poster, db, page = self._tagger(suggested=["grief"])
+    def test_dry_run_writes_nothing(self, monkeypatch, capsys):
+        tagger, form, db, page = self._tagger(monkeypatch, suggested=["grief"])
         db.get_posted_reviews_without_tags.return_value = [self._film()]
         assert tagger.run(page, dry_run=True) == 0
-        poster.open_review_form.assert_not_called()
+        form.open.assert_not_called()
         db.save_ai_review_tags.assert_not_called()
         assert "Ikiru" in capsys.readouterr().out
 

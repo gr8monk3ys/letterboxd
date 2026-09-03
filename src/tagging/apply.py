@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from src.reviewing.diary_form import DiaryForm
 from src.tagging.taxonomy import validate_tags
 from src.utils.auth import PageLike
 
@@ -13,13 +14,17 @@ logger = logging.getLogger(__name__)
 class ReviewTagger:
     """Add tags to existing reviews, one film at a time.
 
-    Reuses the poster's modal handling, which knows never to click the
-    "log again" buttons: re-opening an entry to tag it must not create a
-    second diary entry for a film watched once.
+    Drives DiaryForm, which knows never to click the "log again" buttons:
+    re-opening an entry to tag it must not create a second diary entry for a
+    film watched once.
+
+    It used to take a whole ReviewPoster to borrow two of its methods, which
+    meant opening two database connections it never read, and it
+    re-implemented the submit block verbatim.
     """
 
-    def __init__(self, poster, suggester, db):
-        self.poster = poster
+    def __init__(self, username: str, suggester, db):
+        self.username = username
         self.suggester = suggester
         self.db = db
 
@@ -34,23 +39,16 @@ class ReviewTagger:
         page.goto(uri, wait_until="domcontentloaded")
         page.wait_for_timeout(2000)
 
-        if not self.poster.open_review_form(page, film["name"]):
+        form = DiaryForm(page, self.username)
+        if not form.open(film["name"]):
             return []
         page.wait_for_timeout(2000)
 
-        applied: list[str] = self.poster.set_tags(page, chosen)
+        applied: list[str] = form.set_tags(chosen)
         if not applied:
             return []
 
-        submitted = page.evaluate(
-            """() => {
-                const form = document.querySelector('form.js-diary-entry-form');
-                if (!form) return false;
-                form.requestSubmit();
-                return true;
-            }"""
-        )
-        if not submitted:
+        if not form.submit():
             logger.warning(f"Could not submit the tag form for {film['name']}")
             return []
         page.wait_for_timeout(2500)

@@ -9,7 +9,6 @@ import argparse
 from src.config import get_config
 from src.data_processing.create_database import MovieDatabase
 from src.providers import get_provider
-from src.reviewing.post_review import ReviewPoster
 from src.tagging.apply import ReviewTagger
 from src.tagging.suggester import TagSuggester
 from src.utils.auth import letterboxd_session
@@ -33,8 +32,9 @@ def main() -> None:
 
     provider_name = getattr(config, "ai_provider", "") or "anthropic"
     suggester = TagSuggester(provider=get_provider(provider_name))
-    poster = ReviewPoster()
-    tagger = ReviewTagger(poster, suggester, db)
+    # No ReviewPoster here any more: it was constructed only to borrow two
+    # methods, and opened two database connections this never read.
+    tagger = ReviewTagger(config.username, suggester, db)
 
     pending = db.get_posted_reviews_without_tags()
     print(f"\n{len(pending)} posted reviews have no tags yet")
@@ -49,7 +49,6 @@ def main() -> None:
             tagged = tagger.run(page, limit=args.limit)
             print(f"\nTagged {tagged} reviews")
     finally:
-        poster.close()
         db.close()
 
 

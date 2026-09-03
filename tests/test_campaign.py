@@ -11,6 +11,7 @@ import pytest
 
 from src.data_processing.create_database import MovieDatabase
 from src.data_processing.migrations import MigrationManager
+from src.reviewing.diary_form import DiaryForm
 
 
 def build_db(path):
@@ -329,25 +330,14 @@ class TestPosterUriFilter:
 
 
 class TestInvariant1EditNeverRelog:
-    """The campaign posts through ReviewPoster.open_review_form. When the
-    film page offers only a "log again" control, that control is never
-    clicked: the poster goes to the user's entry URL and edits there."""
-
-    @pytest.fixture
-    def poster(self, db_path, monkeypatch):
-        config = MagicMock()
-        config.database_file = db_path
-        config.username = "testuser"
-        monkeypatch.setattr("src.reviewing.post_review.get_config", lambda: config)
-        monkeypatch.setattr("src.reviewing.post_review.ReviewMetricsDB", MagicMock)
-        from src.reviewing.post_review import ReviewPoster
-
-        return ReviewPoster()
+    """The campaign posts through DiaryForm.open. When the film page offers
+    only a "log again" control, that control is never clicked: the form goes
+    to the user's entry URL and edits there."""
 
     @pytest.mark.parametrize(
         "only_button", ["log again / add review", "log again / edit review", "review or log again"]
     )
-    def test_log_again_is_never_among_the_labels_clicked(self, poster, only_button):
+    def test_log_again_is_never_among_the_labels_clicked(self, only_button):
         page = MagicMock()
         page.url = "https://letterboxd.com/film/alpha/"
         labels = {only_button}
@@ -369,7 +359,7 @@ class TestInvariant1EditNeverRelog:
         page.evaluate.side_effect = evaluate
         page.goto.side_effect = goto
 
-        assert poster.open_review_form(page, "Alpha") is True
+        assert DiaryForm(page, "testuser").open("Alpha") is True
         assert clicked == ["edit or delete review"]
         for call in page.evaluate.call_args_list:
             if len(call.args) > 1:
