@@ -44,7 +44,6 @@ class CampaignManager:
             return False
 
         self._conn = connect_raw(self.db_path)
-        self._conn.row_factory = sqlite3.Row
         return True
 
     @property

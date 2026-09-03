@@ -6,7 +6,7 @@ import logging
 
 from src.reviewing.diary_form import DiaryForm
 from src.tagging.taxonomy import validate_tags
-from src.utils.auth import PageLike
+from src.utils.auth import LetterboxdPage
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,9 @@ class ReviewTagger:
         self.suggester = suggester
         self.db = db
 
-    def tag_film(self, page: PageLike, film: dict, tags: list[str] | None = None) -> list[str]:
+    def tag_film(
+        self, page: LetterboxdPage, film: dict, tags: list[str] | None = None
+    ) -> list[str]:
         """Tag one already-posted review. Returns the tags that stuck."""
         chosen = validate_tags(tags) if tags else self.suggester.suggest(film, film["review"])
         if not chosen:
@@ -36,7 +38,12 @@ class ReviewTagger:
             return []
 
         uri = film["letterboxd_uri"]
-        page.goto(uri, wait_until="domcontentloaded")
+        # Through the navigator, not a bare goto: an interstitial here would
+        # otherwise look like a film page with no diary button, and the film
+        # would be silently reported as untaggable.
+        if not page.open(uri):
+            logger.warning(f"Could not open {film['name']}")
+            return []
         page.wait_for_timeout(2000)
 
         form = DiaryForm(page, self.username)
@@ -57,7 +64,9 @@ class ReviewTagger:
         logger.info(f"Tagged {film['name']}: {', '.join(applied)}")
         return applied
 
-    def run(self, page: "PageLike | None", limit: int | None = None, dry_run: bool = False) -> int:
+    def run(
+        self, page: "LetterboxdPage | None", limit: int | None = None, dry_run: bool = False
+    ) -> int:
         """Tag every posted review that has no tags yet.
 
         A dry run needs no browser, so `page` may be None there.

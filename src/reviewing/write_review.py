@@ -8,7 +8,7 @@ import random
 import re
 import statistics
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
@@ -357,7 +357,7 @@ class ReviewGenerator:
                 reviews = near
         return LengthSampler.from_reviews(reviews)
 
-    def generate_review(self, film: dict, avoid: set[str] | None = None) -> str | None:
+    def generate_review(self, film: dict, avoid: Sequence[str] | None = None) -> str | None:
         """Generate a review for a single movie matching user's style.
 
         `avoid` carries the wording earlier reviews in this batch already
@@ -414,11 +414,14 @@ class ReviewGenerator:
             if avoid:
                 # Cap it: the list grows with every film and a prompt full
                 # of banned wording starts crowding out the examples.
-                # Sampled, not sliced: `sorted(avoid)[:40]` passed 40 entries
-                # after the second film and then never changed, so the model
-                # only ever saw the phrases beginning "a", "and", "at" -- a
-                # construction from film nine could not enter the list.
-                sample_avoid = random.sample(sorted(avoid), min(40, len(avoid)))
+                # The most recent 40, not the alphabetically first.
+                # `sorted(avoid)[:40]` passed 40 entries after the second film
+                # and then never changed, so the model only ever saw phrases
+                # beginning "a", "and", "at" and a construction from film nine
+                # could not enter the list. Ordered rather than sampled so
+                # prompt construction stays reproducible, and recent because
+                # the wording just used is the wording worth banning.
+                sample_avoid = list(avoid)[-40:]
                 quoted = "; ".join(f'"{p}"' for p in sample_avoid)
                 avoid_block = (
                     f"\n- I already used this wording in other reviews today, "
@@ -510,10 +513,11 @@ Now write a review for "{title}" ({year}):"""
         `review` is None when the model declined the film or the provider
         failed; the caller decides what that means.
         """
-        # What this batch has already said. Reviews are generated one call
-        # at a time, so nothing else stops the model writing the same
-        # construction into a dozen films in a row.
-        used: set[str] = set()
+        # What this batch has already said, oldest first. A list rather than
+        # a set because the prompt shows only the last 40 (see
+        # generate_review), and "last" needs an order.
+        used: list[str] = []
+        seen: set[str] = set()
         for film in films:
             review = self.generate_review(film, avoid=used)
 
@@ -521,10 +525,13 @@ Now write a review for "{title}" ({year}):"""
                 borrowed = find_borrowed_phrases(review)
                 if borrowed:
                     logging.info(f"Stock wording {borrowed} in '{film['name']}'; asking again")
-                    retry = self.generate_review(film, avoid=used | set(borrowed))
+                    retry = self.generate_review(film, avoid=used + sorted(borrowed))
                     if retry and not find_borrowed_phrases(retry):
                         review = retry
-                used |= distinctive_phrases(review)
+                for phrase in distinctive_phrases(review):
+                    if phrase not in seen:
+                        seen.add(phrase)
+                        used.append(phrase)
 
             yield film, review
 

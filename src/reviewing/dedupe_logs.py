@@ -265,9 +265,12 @@ def main() -> None:
                 return
 
         removed_total = 0
+        # Bound before the try: constructing it inside means a failure there
+        # leaves `poster` unbound and the finally raises UnboundLocalError,
+        # masking the real error.
+        poster = ReviewPoster() if args.apply else None
         with letterboxd_session(config) as page:
             try:
-                poster = ReviewPoster() if args.apply else None
                 for d in dups:
                     print(f"\n== {d.name} ({d.year})")
                     entries = list_entries(page, config.username, _slug(d.uri))

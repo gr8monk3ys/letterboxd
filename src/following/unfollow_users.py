@@ -301,6 +301,10 @@ class LetterboxdUnfollower:
                 print("\nProcess interrupted. Progress has been saved.")
             except Exception as e:
                 handle_exception(e, "Unexpected error during unfollow process")
+            finally:
+                # The browser context is the session's to close; the rate
+                # limiter's connection is still this method's, and it leaked
+                # on the normal path when the old finally was removed.
                 self.rate_limiter.close()
 
 
