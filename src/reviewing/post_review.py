@@ -35,7 +35,11 @@ class ReviewPoster:
         self.metrics_db = ReviewMetricsDB()
         self.metrics_db.connect()
         self.posted_count = 0
-        self.tone = tone  # Track which tone was used for metrics
+        # Fallback only. The tone that matters is the one the draft was
+        # written in, which each row now carries; a constructor tone is a
+        # post-time flag and labelling both A/B arms with it is what made
+        # the test measure nothing.
+        self.tone = tone
         # Built on the first successful post, not here: it opens a second
         # connection and a scraper, and most runs (dry runs, empty queues)
         # never post anything.
@@ -227,7 +231,7 @@ class ReviewPoster:
                                     film_name=film["name"],
                                     film_year=film["year"],
                                     review_text=film["review"],
-                                    tone_preset=self.tone,
+                                    tone_preset=film.get("tone") or self.tone,
                                     letterboxd_review_url=review_url,
                                 )
                             except Exception as e:

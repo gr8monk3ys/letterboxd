@@ -594,6 +594,7 @@ Now write a review for "{title}" ({year}):"""
                         name=film["name"],
                         year=film["year"],
                         review=review,
+                        tone=self.tone,
                     )
                     generated += 1
                     logging.debug(f"Generated review for: {film['name']} ({film['year']})")
