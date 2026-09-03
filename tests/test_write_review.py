@@ -888,3 +888,89 @@ class TestViralBrowserLifecycle:
         assert context.closed
         assert playwright.stopped
         generator.close.assert_called_once()
+
+
+class TestDraftBatchOwnsTheQualityControls:
+    """The batch is the unit, not the single review.
+
+    `generate_review`'s quality depended on an argument the caller had to
+    thread and two functions it had to remember to run afterwards. Two
+    callers; only `generate_reviews` did it, so `campaign.draft` -- the
+    workflow the docs call primary -- silently lost the ban list added in #84.
+    """
+
+    def _generator(self, mock_provider, replies):
+        mock_provider.generate.side_effect = replies
+        with (
+            patch("src.reviewing.write_review.get_provider") as get_provider,
+            patch("src.reviewing.write_review.MovieDatabase") as MockDB,
+        ):
+            get_provider.return_value = mock_provider
+            MockDB.return_value = MagicMock(get_user_reviews=MagicMock(return_value=[]))
+            from src.reviewing.write_review import ReviewGenerator
+
+            return ReviewGenerator()
+
+    def test_the_ban_list_grows_across_the_batch(self, mock_provider, mock_env_vars):
+        """What film one said must reach the prompt for film two."""
+        generator = self._generator(
+            mock_provider,
+            ["The camera lingers on her face for a long, uncomfortable beat here."] * 3,
+        )
+        films = [
+            {"letterboxd_uri": f"u{i}", "name": f"F{i}", "year": 2020, "rating": 4.0}
+            for i in range(3)
+        ]
+
+        list(generator.draft_batch(films))
+
+        last_prompt = mock_provider.generate.call_args.kwargs["prompt"]
+        assert "camera lingers" in last_prompt, "the batch did not carry its own wording forward"
+
+    def test_a_declined_film_yields_none_rather_than_vanishing(self, mock_provider, mock_env_vars):
+        """The caller decides what a decline means; the batch does not skip it."""
+        generator = self._generator(mock_provider, [None, "A real review of this one."])
+        films = [
+            {"letterboxd_uri": f"u{i}", "name": f"F{i}", "year": 2020, "rating": 4.0}
+            for i in range(2)
+        ]
+
+        results = list(generator.draft_batch(films))
+
+        assert [r is None for _, r in results] == [True, False]
+        assert [f["name"] for f, _ in results] == ["F0", "F1"]
+
+    def test_it_is_lazy_so_an_unconsumed_film_costs_no_call(self, mock_provider, mock_env_vars):
+        """campaign.draft stops at --per-run; the film after must not be drafted."""
+        generator = self._generator(mock_provider, ["A review."] * 5)
+        films = [
+            {"letterboxd_uri": f"u{i}", "name": f"F{i}", "year": 2020, "rating": 4.0}
+            for i in range(5)
+        ]
+
+        batch = generator.draft_batch(films)
+        next(batch)
+        next(batch)
+
+        assert mock_provider.generate.call_count == 2
+
+    def test_the_avoid_cap_samples_rather_than_taking_the_alphabetical_head(
+        self, mock_provider, mock_env_vars
+    ):
+        """`sorted(avoid)[:40]` froze after film two on phrases starting a/and/at.
+
+        The list is capped at 40 to keep the prompt from crowding out the
+        style examples, so with more than 40 banned phrases two calls must
+        show the model different ones -- otherwise wording from late in a
+        batch can never enter the ban list at all.
+        """
+        generator = self._generator(mock_provider, ["a review", "another review"])
+        film = {"letterboxd_uri": "u", "name": "F", "year": 2020, "rating": 4.0}
+        avoid = {f"banned phrase {i:03d} of many" for i in range(100)}
+
+        generator.generate_review(film, avoid=avoid)
+        first = mock_provider.generate.call_args.kwargs["prompt"]
+        generator.generate_review(film, avoid=avoid)
+        second = mock_provider.generate.call_args.kwargs["prompt"]
+
+        assert first != second, "the cap is deterministic; late phrases can never appear"

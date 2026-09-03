@@ -163,11 +163,16 @@ class FakeGenerator:
 
     declines: set[str] = set()
 
-    def generate_review(self, film):
+    def generate_review(self, film, avoid=None):
         self.asked.append(film["name"])
         if film["name"] in FakeGenerator.declines:
             return None
         return f"Review of {film['name']}."
+
+    def draft_batch(self, films):
+        """The real generator's batch interface, which owns the ban list."""
+        for film in films:
+            yield film, self.generate_review(film)
 
     def close(self):
         pass

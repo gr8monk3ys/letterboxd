@@ -8,7 +8,7 @@ import random
 import re
 import statistics
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
@@ -414,7 +414,11 @@ class ReviewGenerator:
             if avoid:
                 # Cap it: the list grows with every film and a prompt full
                 # of banned wording starts crowding out the examples.
-                sample_avoid = sorted(avoid)[:40]
+                # Sampled, not sliced: `sorted(avoid)[:40]` passed 40 entries
+                # after the second film and then never changed, so the model
+                # only ever saw the phrases beginning "a", "and", "at" -- a
+                # construction from film nine could not enter the list.
+                sample_avoid = random.sample(sorted(avoid), min(40, len(avoid)))
                 quoted = "; ".join(f'"{p}"' for p in sample_avoid)
                 avoid_block = (
                     f"\n- I already used this wording in other reviews today, "
@@ -489,6 +493,44 @@ Now write a review for "{title}" ({year}):"""
             handle_exception(e, f"Error generating review for '{film.get('name')}'")
             return None
 
+    def draft_batch(self, films: Iterable[dict]) -> Iterator[tuple[dict, str | None]]:
+        """Draft a review for each film, yielding `(film, review)` as it goes.
+
+        The batch is the unit, not the single review. Everything that stops a
+        run reading like one long sentence lives here: the growing set of
+        wording this batch has already used, the borrowed-phrase check, and
+        the one retry. A caller iterates and persists; it cannot opt out by
+        forgetting to thread an argument.
+
+        It used to be the caller's job, and only one of the two callers did
+        it. `campaign.draft` -- the workflow the docs call primary -- called
+        `generate_review(film)` bare, so the ban list added in #84 protected
+        the path nobody was told to use.
+
+        `review` is None when the model declined the film or the provider
+        failed; the caller decides what that means.
+        """
+        # What this batch has already said. Reviews are generated one call
+        # at a time, so nothing else stops the model writing the same
+        # construction into a dozen films in a row.
+        used: set[str] = set()
+        for film in films:
+            review = self.generate_review(film, avoid=used)
+
+            if review:
+                borrowed = find_borrowed_phrases(review)
+                if borrowed:
+                    logging.info(f"Stock wording {borrowed} in '{film['name']}'; asking again")
+                    retry = self.generate_review(film, avoid=used | set(borrowed))
+                    if retry and not find_borrowed_phrases(retry):
+                        review = retry
+                used |= distinctive_phrases(review)
+
+            yield film, review
+
+            # Rate limiting
+            time.sleep(0.5)
+
     def generate_reviews(
         self,
         limit: int | None = None,
@@ -538,22 +580,8 @@ Now write a review for "{title}" ({year}):"""
             logging.info(f"Using {style_count} of your reviews for style matching")
 
             generated = 0
-            # What this batch has already said. Reviews are generated one
-            # call at a time, so nothing else stops the model writing the
-            # same construction into a dozen films in a row.
-            used: set[str] = set()
-            for film in tqdm(films, desc="Generating reviews"):
-                review = self.generate_review(film, avoid=used)
-
+            for film, review in self.draft_batch(tqdm(films, desc="Generating reviews")):
                 if review:
-                    borrowed = find_borrowed_phrases(review)
-                    if borrowed:
-                        logging.info(f"Stock wording {borrowed} in '{film['name']}'; asking again")
-                        retry = self.generate_review(film, avoid=used | set(borrowed))
-                        if retry and not find_borrowed_phrases(retry):
-                            review = retry
-
-                    used |= distinctive_phrases(review)
                     self.db.save_ai_review(
                         letterboxd_uri=film["letterboxd_uri"],
                         name=film["name"],
@@ -562,9 +590,6 @@ Now write a review for "{title}" ({year}):"""
                     )
                     generated += 1
                     logging.debug(f"Generated review for: {film['name']} ({film['year']})")
-
-                # Rate limiting
-                time.sleep(0.5)
 
             return generated
 
