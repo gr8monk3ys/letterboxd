@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Literal
 
 from src.config import DATA_DIR
+from src.film_identity import film_key
 
 INGEST_COMMAND = "uv run python -m src.data_processing.create_database"
 
@@ -35,10 +36,6 @@ class QueueEntry:
     rating: float | None
     watched: str | None
     needs: Literal["rating", "review"]
-
-
-def _key(name: str | None, year: int | None) -> tuple[str, int | None]:
-    return ((name or "").strip().lower(), year)
 
 
 def _has_table(conn: sqlite3.Connection, name: str) -> bool:
@@ -57,10 +54,11 @@ def build_queue(conn: sqlite3.Connection) -> list[QueueEntry]:
         for uri, rating in conn.execute("SELECT letterboxd_uri, rating FROM ratings")
         if rating is not None
     }
-    reviewed = {_key(n, y) for n, y in conn.execute("SELECT name, year FROM reviews")}
+    reviewed = {film_key(n, y) for n, y in conn.execute("SELECT name, year FROM reviews")}
     if _has_table(conn, "posted_reviews"):
         reviewed |= {
-            _key(n, y) for n, y in conn.execute("SELECT film_name, film_year FROM posted_reviews")
+            film_key(n, y)
+            for n, y in conn.execute("SELECT film_name, film_year FROM posted_reviews")
         }
     pending: set[str] = set()
     if _has_table(conn, "pending_ratings"):
@@ -75,7 +73,7 @@ def build_queue(conn: sqlite3.Connection) -> list[QueueEntry]:
         if rating is None:
             if uri not in pending:
                 need_rating.append(QueueEntry(uri, name, year, None, watched, "rating"))
-        elif _key(name, year) not in reviewed:
+        elif film_key(name, year) not in reviewed:
             need_review.append(QueueEntry(uri, name, year, rating, watched, "review"))
 
     need_rating.sort(key=lambda e: (e.watched or "", e.name), reverse=True)

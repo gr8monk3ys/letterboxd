@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from src.config import DATA_DIR, get_config
+from src.film_identity import film_key
 
 SCHEMA = "letterboxd/1"
 INGEST_COMMAND = "uv run python -m src.data_processing.create_database"
@@ -30,10 +31,6 @@ INGEST_COMMAND = "uv run python -m src.data_processing.create_database"
 def default_path() -> Path:
     """``$MOVIES_DIR/letterboxd.json``, defaulting to ``~/.movies``."""
     return Path(os.environ.get("MOVIES_DIR") or "~/.movies").expanduser() / "letterboxd.json"
-
-
-def _key(name: str | None, year: int | None) -> tuple[str, int | None]:
-    return ((name or "").strip().lower(), year)
 
 
 def _has_table(conn: sqlite3.Connection, name: str) -> bool:
@@ -50,22 +47,23 @@ def build_export(conn: sqlite3.Connection, username: str, generated_at: str) -> 
         for uri, rating in conn.execute("SELECT letterboxd_uri, rating FROM ratings")
         if rating is not None
     }
-    own = {_key(n, y) for n, y in conn.execute("SELECT name, year FROM reviews")}
+    own = {film_key(n, y) for n, y in conn.execute("SELECT name, year FROM reviews")}
     ai: set[tuple[str, int | None]] = set()
     if _has_table(conn, "posted_reviews"):
         ai = {
-            _key(n, y) for n, y in conn.execute("SELECT film_name, film_year FROM posted_reviews")
+            film_key(n, y)
+            for n, y in conn.execute("SELECT film_name, film_year FROM posted_reviews")
         }
     watch_counts: dict[tuple[str, int | None], int] = {}
     for name, year in conn.execute("SELECT name, year FROM diary"):
-        watch_counts[_key(name, year)] = watch_counts.get(_key(name, year), 0) + 1
+        watch_counts[film_key(name, year)] = watch_counts.get(film_key(name, year), 0) + 1
 
     films = []
     for uri, name, year, watched, rewatch in conn.execute(
         "SELECT letterboxd_uri, name, year, date_watched, rewatch FROM films "
         "ORDER BY date_watched DESC, name"
     ):
-        key = _key(name, year)
+        key = film_key(name, year)
         review = "own" if key in own else "ai" if key in ai else None
         films.append(
             {

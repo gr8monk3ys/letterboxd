@@ -12,6 +12,7 @@ from pathlib import Path
 
 from src.config import DATA_DIR, get_log_path
 from src.data_processing.import_letterboxd_export import LetterboxdImporter
+from src.film_identity import film_key
 
 # Set up logging
 logging.basicConfig(
@@ -346,14 +347,19 @@ class MovieDatabase:
         # is only a fallback. Reading films.rating alone makes every film
         # look unrated: min_rating then matches nothing and the ORDER BY
         # below silently degrades to alphabetical.
+        # The reviews table is matched on title+year, not URI, and that
+        # comparison needs normalizing -- SQL's `f.name = r.name` splits a
+        # film on casing or a stray space, and `f.year = r.year` is never
+        # true when both years are NULL. So URI-keyed joins stay in SQL,
+        # where they are exact, and title+year identity is applied in
+        # Python through the one rule in src/film_identity.py.
         query = """
             SELECT f.letterboxd_uri, f.name, f.year,
                    COALESCE(rt.rating, f.rating) AS rating
             FROM films f
             LEFT JOIN ratings rt ON f.letterboxd_uri = rt.letterboxd_uri
-            LEFT JOIN reviews r ON f.name = r.name AND f.year = r.year
             LEFT JOIN ai_reviews ar ON f.letterboxd_uri = ar.letterboxd_uri
-            WHERE r.review_uri IS NULL AND ar.letterboxd_uri IS NULL
+            WHERE ar.letterboxd_uri IS NULL
         """
         params: list[int | float] = []
 
@@ -381,7 +387,11 @@ class MovieDatabase:
 
         self.cursor.execute(query, params)
         columns = ["letterboxd_uri", "name", "year", "rating"]
-        return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
+        films = [dict(zip(columns, row)) for row in self.cursor.fetchall()]
+
+        self.cursor.execute("SELECT name, year FROM reviews")
+        reviewed = {film_key(name, year) for name, year in self.cursor.fetchall()}
+        return [f for f in films if film_key(f["name"], f["year"]) not in reviewed]
 
     def get_user_reviews(self, limit: int | None = None) -> list[dict]:
         """Get the user's existing reviews for style analysis."""
@@ -403,12 +413,15 @@ class MovieDatabase:
         self.cursor.execute("SELECT COUNT(*) FROM films")
         total_films = self.cursor.fetchone()[0]
 
-        self.cursor.execute("""
-            SELECT COUNT(DISTINCT f.letterboxd_uri)
-            FROM films f
-            INNER JOIN reviews r ON f.name = r.name AND f.year = r.year
-        """)
-        user_reviewed = self.cursor.fetchone()[0]
+        # Counted through film_key for the same reason as above: an SQL
+        # equality join reports a different number from every other part of
+        # the app that answers "has this been reviewed?".
+        self.cursor.execute("SELECT name, year FROM reviews")
+        reviewed = {film_key(name, year) for name, year in self.cursor.fetchall()}
+        self.cursor.execute("SELECT name, year FROM films")
+        user_reviewed = sum(
+            1 for name, year in self.cursor.fetchall() if film_key(name, year) in reviewed
+        )
 
         self.cursor.execute("SELECT COUNT(*) FROM ai_reviews")
         ai_reviewed = self.cursor.fetchone()[0]

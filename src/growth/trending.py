@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.config import DATA_DIR, get_log_path
+from src.film_identity import film_key
 from src.scraper import FilmData, LetterboxdScraper
 
 # Set up logging
@@ -27,18 +28,6 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger(__name__)
-
-
-def film_key(title: str | None, year: int | None) -> tuple[str, int | None]:
-    """Build the identity used to compare films across data sources.
-
-    The export identifies films by opaque boxd.it URLs while scraped
-    pages use readable slugs, so title+year is the only shared identity.
-    Titles are normalized so casing and stray whitespace do not split a
-    film into two.
-    """
-    normalized = (title or "").strip().lower()
-    return (normalized, int(year) if year is not None else None)
 
 
 # How long to wait before retrying after a failed outbound fetch. Shared

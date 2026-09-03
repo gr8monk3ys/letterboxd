@@ -688,9 +688,7 @@ class TestDraftsPage:
         assert "approved" in client.get("/drafts").text.lower()
 
     def test_rejecting_records_the_decision(self, client):
-        client.post(
-            "/api/reviews/ai/status", json={"letterboxd_uri": "uri1", "status": "rejected"}
-        )
+        client.post("/api/reviews/ai/status", json={"letterboxd_uri": "uri1", "status": "rejected"})
         from src.data_processing.create_database import MovieDatabase
 
         db = MovieDatabase()
@@ -702,9 +700,7 @@ class TestDraftsPage:
             db.close()
 
     def test_editing_an_approved_draft_sends_it_back_for_approval(self, client):
-        client.post(
-            "/api/reviews/ai/status", json={"letterboxd_uri": "uri1", "status": "approved"}
-        )
+        client.post("/api/reviews/ai/status", json={"letterboxd_uri": "uri1", "status": "approved"})
         client.post(
             "/api/reviews/ai/update", json={"letterboxd_uri": "uri1", "review": "Rewritten."}
         )
