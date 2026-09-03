@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from src.action_board import build_action_board
 from src.config import LOGS_DIR, get_config
 from src.data_processing.create_database import AI_REVIEW_STATUSES, MovieDatabase
+from src.data_processing.db import connected
 from src.rate_limiter import RateLimiter
 from src.setup_status import describe_setup
 
@@ -79,10 +80,8 @@ async def block_cross_origin_writes(request: Request, call_next):
 def get_database_stats() -> dict:
     """Get stats from the movie database."""
     try:
-        db = MovieDatabase()
-        db.connect()
-        counts = db.get_review_count()
-        db.close()
+        with connected(MovieDatabase) as db:
+            counts = db.get_review_count()
         return counts
     except Exception as e:
         logger.error(f"Error getting database stats: {e}")
@@ -97,10 +96,8 @@ def get_database_stats() -> dict:
 def get_rate_limit_stats() -> dict:
     """Get rate limit statistics."""
     try:
-        limiter = RateLimiter()
-        limiter.connect()
-        stats = limiter.get_stats()
-        limiter.close()
+        with connected(RateLimiter) as limiter:
+            stats = limiter.get_stats()
         return stats
     except Exception as e:
         logger.error(f"Error getting rate limit stats: {e}")
@@ -200,10 +197,8 @@ async def api_logs(log_name: str, lines: int = 50):
 async def api_unreviewed_films(limit: int = 20):
     """Get list of unreviewed films."""
     try:
-        db = MovieDatabase()
-        db.connect()
-        films = db.get_films_without_reviews()[:limit]
-        db.close()
+        with connected(MovieDatabase) as db:
+            films = db.get_films_without_reviews()[:limit]
         return JSONResponse({"films": films, "total": len(films)})
     except Exception as e:
         logger.error(f"Error getting unreviewed films: {e}")
@@ -214,12 +209,8 @@ async def api_unreviewed_films(limit: int = 20):
 def api_ai_reviews(limit: int = 20):
     """Get list of AI-generated reviews."""
     try:
-        db = MovieDatabase()
-        db.connect()
-        try:
+        with connected(MovieDatabase) as db:
             reviews = db.get_ai_reviews(limit=limit)
-        finally:
-            db.close()
         return JSONResponse({"reviews": reviews, "total": len(reviews)})
     except Exception as e:
         logger.error(f"Error getting AI reviews: {e}")
@@ -271,12 +262,8 @@ async def actions_page(request: Request):
 def drafts_page(request: Request):
     """Review drafts, editable before you post them by hand."""
     try:
-        db = MovieDatabase()
-        db.connect()
-        try:
+        with connected(MovieDatabase) as db:
             drafts = db.get_ai_review_drafts()
-        finally:
-            db.close()
     except Exception as e:
         logger.error(f"Error loading drafts: {e}")
         drafts = []
@@ -298,13 +285,9 @@ def api_update_ai_review(payload: dict):
         return JSONResponse({"error": "Review cannot be empty"}, status_code=400)
 
     try:
-        db = MovieDatabase()
-        db.connect()
-        try:
+        with connected(MovieDatabase) as db:
             if not db.update_ai_review(uri.strip(), review):
                 return JSONResponse({"error": "No draft found for that film"}, status_code=404)
-        finally:
-            db.close()
     except Exception as e:
         logger.error(f"Error saving draft: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -333,13 +316,9 @@ def api_set_ai_review_status(payload: dict):
         )
 
     try:
-        db = MovieDatabase()
-        db.connect()
-        try:
+        with connected(MovieDatabase) as db:
             if not db.set_ai_review_status(uri.strip(), status):
                 return JSONResponse({"error": "No pending draft for that film"}, status_code=404)
-        finally:
-            db.close()
     except Exception as e:
         logger.error(f"Error setting draft status: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -354,12 +333,8 @@ def _load_queue() -> list[dict]:
 
     from src.queue import build_queue
 
-    db = MovieDatabase()
-    db.connect()
-    try:
+    with connected(MovieDatabase) as db:
         return [asdict(e) for e in build_queue(db.conn)]
-    finally:
-        db.close()
 
 
 @app.get("/queue", response_class=HTMLResponse)
@@ -409,9 +384,7 @@ def api_queue_rate(payload: dict):
         return JSONResponse({"error": "rating must be 0.5-5 in half-star steps"}, status_code=400)
 
     try:
-        db = MovieDatabase()
-        db.connect()
-        try:
+        with connected(MovieDatabase) as db:
             db.cursor.execute(
                 "SELECT name, year FROM films WHERE letterboxd_uri = ?", (uri.strip(),)
             )
@@ -420,8 +393,6 @@ def api_queue_rate(payload: dict):
                 return JSONResponse({"error": "No such film"}, status_code=404)
             db.upsert_pending_rating(uri.strip(), film[0], film[1], rating)
             pending = len(db.pending_ratings())
-        finally:
-            db.close()
     except Exception as e:
         logger.error(f"Error storing rating: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -726,10 +697,8 @@ async def get_analytics_summary():
     try:
         from src.analytics import ConnectionAnalytics
 
-        analytics = ConnectionAnalytics()
-        analytics.connect()
-        summary = analytics.get_summary()
-        analytics.close()
+        with connected(ConnectionAnalytics) as analytics:
+            summary = analytics.get_summary()
         return JSONResponse(summary)
     except Exception as e:
         logger.error(f"Error getting analytics: {e}")
@@ -742,10 +711,8 @@ async def get_analytics_growth(days: int = 30):
     try:
         from src.analytics import ConnectionAnalytics
 
-        analytics = ConnectionAnalytics()
-        analytics.connect()
-        growth = analytics.get_growth_rate(days)
-        analytics.close()
+        with connected(ConnectionAnalytics) as analytics:
+            growth = analytics.get_growth_rate(days)
         return JSONResponse(growth)
     except Exception as e:
         logger.error(f"Error getting growth analytics: {e}")
@@ -758,10 +725,8 @@ async def get_analytics_daily(days: int = 30):
     try:
         from src.analytics import ConnectionAnalytics
 
-        analytics = ConnectionAnalytics()
-        analytics.connect()
-        daily = analytics.get_daily_activity(days)
-        analytics.close()
+        with connected(ConnectionAnalytics) as analytics:
+            daily = analytics.get_daily_activity(days)
         return JSONResponse({"data": daily, "days": days})
     except Exception as e:
         logger.error(f"Error getting daily analytics: {e}")
@@ -774,10 +739,8 @@ async def analytics_page(request: Request):
     try:
         from src.analytics import ConnectionAnalytics
 
-        analytics = ConnectionAnalytics()
-        analytics.connect()
-        summary = analytics.get_summary()
-        analytics.close()
+        with connected(ConnectionAnalytics) as analytics:
+            summary = analytics.get_summary()
     except Exception as e:
         logger.error(f"Error loading analytics: {e}")
         summary = {}
@@ -797,14 +760,12 @@ async def metrics_page(request: Request):
     try:
         from src.review_metrics import ReviewMetricsDB, get_tone_suggestions
 
-        db = ReviewMetricsDB()
-        db.connect()
-        stats = db.get_stats()
-        performance = db.get_tone_performance()
-        recent_reviews = db.get_posted_reviews(limit=20)
-        ab_test = db.get_active_ab_test()
-        suggestions = get_tone_suggestions(db)
-        db.close()
+        with connected(ReviewMetricsDB) as db:
+            stats = db.get_stats()
+            performance = db.get_tone_performance()
+            recent_reviews = db.get_posted_reviews(limit=20)
+            ab_test = db.get_active_ab_test()
+            suggestions = get_tone_suggestions(db)
 
         # Convert TonePerformance dataclasses to dicts for template
         performance_dicts = [
@@ -850,10 +811,8 @@ async def get_metrics_stats():
     try:
         from src.review_metrics import ReviewMetricsDB
 
-        db = ReviewMetricsDB()
-        db.connect()
-        stats = db.get_stats()
-        db.close()
+        with connected(ReviewMetricsDB) as db:
+            stats = db.get_stats()
         return JSONResponse(stats)
     except Exception as e:
         logger.error(f"Error getting metrics stats: {e}")
@@ -866,10 +825,8 @@ async def get_metrics_performance(days: int = 30):
     try:
         from src.review_metrics import ReviewMetricsDB
 
-        db = ReviewMetricsDB()
-        db.connect()
-        performance = db.get_tone_performance(days=days)
-        db.close()
+        with connected(ReviewMetricsDB) as db:
+            performance = db.get_tone_performance(days=days)
         return JSONResponse(
             {
                 "data": [
@@ -904,13 +861,9 @@ def update_engagement():
     try:
         from src.review_metrics import EngagementScraper, ReviewMetricsDB
 
-        db = ReviewMetricsDB()
-        db.connect()
-        try:
+        with connected(ReviewMetricsDB) as db:
             scraper = EngagementScraper()
             result = scraper.update_all_engagement(db)
-        finally:
-            db.close()
         message = f"Updated {result['updated']} reviews"
         if result.get("error"):
             # Otherwise a blocked run reads on the page as "0 reviews had
@@ -953,10 +906,8 @@ async def start_ab_test(request: Request):
                 status_code=400,
             )
 
-        db = ReviewMetricsDB()
-        db.connect()
-        test_id = db.create_ab_test(name, tone_a, tone_b)
-        db.close()
+        with connected(ReviewMetricsDB) as db:
+            test_id = db.create_ab_test(name, tone_a, tone_b)
 
         return JSONResponse(
             {
@@ -975,10 +926,8 @@ async def end_ab_test():
     try:
         from src.review_metrics import ReviewMetricsDB
 
-        db = ReviewMetricsDB()
-        db.connect()
-        results = db.end_ab_test()
-        db.close()
+        with connected(ReviewMetricsDB) as db:
+            results = db.end_ab_test()
 
         if results:
             return JSONResponse({"message": "A/B test ended", **results})
@@ -995,10 +944,8 @@ async def get_ab_test_assignment():
     try:
         from src.review_metrics import ReviewMetricsDB
 
-        db = ReviewMetricsDB()
-        db.connect()
-        tone = db.get_ab_test_assignment()
-        db.close()
+        with connected(ReviewMetricsDB) as db:
+            tone = db.get_ab_test_assignment()
 
         if tone:
             return JSONResponse({"tone": tone})
@@ -1016,11 +963,9 @@ async def growth_page(request: Request):
     try:
         from src.growth import GrowthDashboard
 
-        dashboard = GrowthDashboard()
-        dashboard.connect()
-        summary = dashboard.get_growth_summary(30)
-        correlation = dashboard.get_correlation_analysis(60)
-        dashboard.close()
+        with connected(GrowthDashboard) as dashboard:
+            summary = dashboard.get_growth_summary(30)
+            correlation = dashboard.get_correlation_analysis(60)
     except Exception as e:
         logger.error(f"Error loading growth dashboard: {e}")
         summary = {}
@@ -1042,10 +987,8 @@ async def api_growth_summary(days: int = 30):
     try:
         from src.growth import GrowthDashboard
 
-        dashboard = GrowthDashboard()
-        dashboard.connect()
-        summary = dashboard.get_growth_summary(days)
-        dashboard.close()
+        with connected(GrowthDashboard) as dashboard:
+            summary = dashboard.get_growth_summary(days)
         return JSONResponse(summary)
     except Exception as e:
         logger.error(f"Error getting growth summary: {e}")
@@ -1058,10 +1001,8 @@ async def api_growth_history(days: int = 30):
     try:
         from src.growth import FollowerTracker
 
-        tracker = FollowerTracker()
-        tracker.connect()
-        history = tracker.get_history(days)
-        tracker.close()
+        with connected(FollowerTracker) as tracker:
+            history = tracker.get_history(days)
         return JSONResponse({"data": history, "days": days})
     except Exception as e:
         logger.error(f"Error getting growth history: {e}")
@@ -1074,14 +1015,12 @@ async def api_growth_milestones():
     try:
         from src.growth import FollowerTracker
 
-        tracker = FollowerTracker()
-        tracker.connect()
-        latest = tracker.get_latest_snapshot()
-        if latest:
-            milestones = tracker.get_milestones(latest["followers_count"])
-        else:
-            milestones = {}
-        tracker.close()
+        with connected(FollowerTracker) as tracker:
+            latest = tracker.get_latest_snapshot()
+            if latest:
+                milestones = tracker.get_milestones(latest["followers_count"])
+            else:
+                milestones = {}
         return JSONResponse(milestones)
     except Exception as e:
         logger.error(f"Error getting milestones: {e}")
@@ -1094,10 +1033,8 @@ async def api_take_snapshot():
     try:
         from src.growth import FollowerTracker
 
-        tracker = FollowerTracker()
-        tracker.connect()
-        snapshot = tracker.take_snapshot()
-        tracker.close()
+        with connected(FollowerTracker) as tracker:
+            snapshot = tracker.take_snapshot()
 
         if snapshot:
             return JSONResponse({"message": "Snapshot taken", "data": snapshot})
@@ -1114,10 +1051,8 @@ async def api_trending_films(limit: int = 20):
     try:
         from src.growth import TrendingDetector
 
-        detector = TrendingDetector()
-        detector.connect()
-        opportunities = detector.get_review_opportunities(limit=limit)
-        detector.close()
+        with connected(TrendingDetector) as detector:
+            opportunities = detector.get_review_opportunities(limit=limit)
         return JSONResponse({"films": opportunities, "count": len(opportunities)})
     except Exception as e:
         logger.error(f"Error getting trending films: {e}")
@@ -1130,11 +1065,9 @@ async def api_campaigns(limit: int = 10):
     try:
         from src.growth import CampaignManager
 
-        manager = CampaignManager()
-        manager.connect()
-        campaigns = manager.list_campaigns(limit)
-        active = manager.get_active_campaign()
-        manager.close()
+        with connected(CampaignManager) as manager:
+            campaigns = manager.list_campaigns(limit)
+            active = manager.get_active_campaign()
         return JSONResponse({"campaigns": campaigns, "active": active})
     except Exception as e:
         logger.error(f"Error getting campaigns: {e}")

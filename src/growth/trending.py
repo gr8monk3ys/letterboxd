@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.config import DATA_DIR, get_log_path
+from src.data_processing.db import connect_raw
 from src.film_identity import film_key
 from src.scraper import FilmData, LetterboxdScraper
 
@@ -57,7 +58,7 @@ class TrendingDetector:
             logger.error(f"Database not found: {self.db_path}")
             return False
 
-        self._conn = sqlite3.connect(self.db_path)
+        self._conn = connect_raw(self.db_path)
         self._conn.row_factory = sqlite3.Row
         return True
 

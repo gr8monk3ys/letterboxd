@@ -17,9 +17,11 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from src.config import DATA_DIR
+from src.data_processing.db import open_db
 from src.film_identity import film_key
 from src.freshness import ExportFreshness, describe_freshness
 from src.taste import TasteAnalysis, analyze_taste
+from src.utils.errors import DatabaseError
 
 logger = logging.getLogger(__name__)
 
@@ -133,12 +135,9 @@ def _stars(rating: float | None) -> str:
 def _latest_watch_date(path: Path) -> date | None:
     """Newest diary entry, which an RSS sync can advance past the export."""
     try:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        try:
+        with open_db(path, readonly=True) as conn:
             row = conn.execute("SELECT MAX(date_watched) FROM diary").fetchone()
-        finally:
-            conn.close()
-    except sqlite3.Error:
+    except (sqlite3.Error, DatabaseError):
         return None
 
     if not row or not row[0]:
@@ -166,15 +165,12 @@ def build_action_board(db_path: Path | None = None) -> ActionBoard:
     freshness = describe_freshness(data_dir=path.parent, latest_watch=_latest_watch_date(path))
 
     # Read-only connection: the board must never modify the database.
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
     try:
-        board = _build(conn, freshness)
-    except sqlite3.Error as e:
+        with open_db(path, readonly=True) as conn:
+            board = _build(conn, freshness)
+    except (sqlite3.Error, DatabaseError) as e:
         logger.warning(f"Could not build action board from {path}: {e}")
         return ActionBoard(is_empty=True, freshness=freshness)
-    finally:
-        conn.close()
 
     return replace(board, freshness=freshness, taste=analyze_taste(path))
 

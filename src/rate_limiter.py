@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.config import DATA_DIR, get_config
+from src.data_processing.db import connect_raw
 
 # Warning thresholds (percentage of limit)
 WARNING_THRESHOLD = 0.8  # Warn at 80% of limit
@@ -35,7 +36,7 @@ class RateLimiter:
 
     def connect(self) -> None:
         """Connect to the database and ensure rate_limits table exists."""
-        self._conn = sqlite3.connect(self.db_path, timeout=30.0)
+        self._conn = connect_raw(self.db_path)
         # Enable WAL mode for better concurrent access
         self._conn.execute("PRAGMA journal_mode=WAL")
         # Set isolation level to enable transaction control

@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from src.config import DATA_DIR, get_config
+from src.data_processing.db import open_db
 from src.film_identity import film_key
 
 SCHEMA = "letterboxd/1"
@@ -127,11 +128,8 @@ def main() -> None:
         )
         sys.exit(2)
 
-    conn = sqlite3.connect(args.db)
-    try:
+    with open_db(args.db) as conn:
         doc = build_export(conn, get_config().username, datetime.now(UTC).isoformat())
-    finally:
-        conn.close()
 
     out = write_export(doc, args.output or default_path())
     cov = doc["coverage"]

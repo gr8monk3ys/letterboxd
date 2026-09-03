@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.config import DATA_DIR, get_log_path
+from src.data_processing.db import connect_raw
 from src.data_processing.import_letterboxd_export import LetterboxdImporter
 from src.film_identity import film_key
 
@@ -64,7 +65,7 @@ class MovieDatabase:
     def connect(self) -> None:
         """Connect to the SQLite database."""
         try:
-            self._conn = sqlite3.connect(self.db_path)
+            self._conn = connect_raw(self.db_path)
             self._cursor = self._conn.cursor()
             logging.info(f"Connected to database: {self.db_path}")
         except Exception as e:

@@ -14,6 +14,7 @@ from typing import Any
 from playwright.sync_api import sync_playwright
 
 from src.config import DATA_DIR, get_config, get_log_path
+from src.data_processing.db import connect_raw
 from src.utils.auth import open_browser, raise_if_challenged
 from src.utils.engagement_selectors import (
     COMMENT_COUNT_SELECTORS,
@@ -71,7 +72,7 @@ class ReviewMetricsDB:
 
     def connect(self) -> None:
         """Connect to the SQLite database."""
-        self._conn = sqlite3.connect(self.db_path)
+        self._conn = connect_raw(self.db_path)
         self._conn.row_factory = sqlite3.Row
         self._cursor = self._conn.cursor()
         self._create_tables()

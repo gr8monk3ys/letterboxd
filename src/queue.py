@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Literal
 
 from src.config import DATA_DIR
+from src.data_processing.db import open_db
 from src.film_identity import film_key
 
 INGEST_COMMAND = "uv run python -m src.data_processing.create_database"
@@ -95,11 +96,8 @@ def main() -> None:
         )
         sys.exit(2)
 
-    conn = sqlite3.connect(args.db)
-    try:
+    with open_db(args.db) as conn:
         entries = build_queue(conn)
-    finally:
-        conn.close()
 
     shown = entries[: args.limit] if args.limit is not None else entries
     if args.json:

@@ -20,6 +20,8 @@ import sqlite3
 from pathlib import Path
 
 from src.config import DATA_DIR
+from src.data_processing.db import open_db
+from src.utils.errors import DatabaseError
 
 # Directory containing completion scripts
 COMPLETIONS_DIR = Path(__file__).parent / "completions"
@@ -42,34 +44,17 @@ def get_film_names(prefix: str = "", limit: int = 50) -> list[str]:
     if not db_path.exists():
         return []
 
+    query = "SELECT DISTINCT name FROM films"
+    params: tuple = (limit,)
+    if prefix:
+        query += " WHERE name LIKE ? || '%'"
+        params = (prefix, limit)
+    query += " ORDER BY name LIMIT ?"
+
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-
-        if prefix:
-            cursor.execute(
-                """
-                SELECT DISTINCT name FROM films
-                WHERE name LIKE ? || '%'
-                ORDER BY name
-                LIMIT ?
-                """,
-                (prefix, limit),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT DISTINCT name FROM films
-                ORDER BY name
-                LIMIT ?
-                """,
-                (limit,),
-            )
-
-        results = [row[0] for row in cursor.fetchall()]
-        conn.close()
-        return results
-    except sqlite3.Error:
+        with open_db(db_path) as conn:
+            return [row[0] for row in conn.execute(query, params)]
+    except (sqlite3.Error, DatabaseError):
         return []
 
 
@@ -87,35 +72,17 @@ def get_usernames(prefix: str = "", limit: int = 50) -> list[str]:
     if not db_path.exists():
         return []
 
+    query = "SELECT DISTINCT username FROM rate_limits WHERE username IS NOT NULL"
+    params: tuple = (limit,)
+    if prefix:
+        query += " AND username LIKE ? || '%'"
+        params = (prefix, limit)
+    query += " ORDER BY username LIMIT ?"
+
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-
-        if prefix:
-            cursor.execute(
-                """
-                SELECT DISTINCT username FROM rate_limits
-                WHERE username IS NOT NULL AND username LIKE ? || '%'
-                ORDER BY username
-                LIMIT ?
-                """,
-                (prefix, limit),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT DISTINCT username FROM rate_limits
-                WHERE username IS NOT NULL
-                ORDER BY username
-                LIMIT ?
-                """,
-                (limit,),
-            )
-
-        results = [row[0] for row in cursor.fetchall()]
-        conn.close()
-        return results
-    except sqlite3.Error:
+        with open_db(db_path) as conn:
+            return [row[0] for row in conn.execute(query, params)]
+    except (sqlite3.Error, DatabaseError):
         return []
 
 
