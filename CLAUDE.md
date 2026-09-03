@@ -98,7 +98,9 @@ Environment variables (`.env`):
 - `data/protected_users.txt` - Usernames to never unfollow (one per line)
 - `logs/` - Per-run log files (follower.log, unfollower.log, review_generation.log).
   Each entry point calls `configure("<name>")` from `src/utils/logs.py` as the
-  first line of its `main()`. **Never call `logging.basicConfig` at module
+  first line of its `main()`, and the name must be in that module's
+  `LOG_NAMES` -- the dashboard's log viewer reads the same tuple, so a log
+  that is written is a log you can read. **Never call `logging.basicConfig` at module
   scope**: it is a no-op once the root logger has handlers, so the first module
   imported wins and every other file stays empty. That was the state until
   2026-09-03 -- every per-module log listed here was 0 bytes and everything

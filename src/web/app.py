@@ -22,7 +22,7 @@ from src.data_processing.db import connected
 from src.rate_limiter import RateLimiter
 from src.setup_status import describe_setup
 from src.utils.errors import DatabaseError
-from src.utils.logs import configure
+from src.utils.logs import LOG_NAMES, configure
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -40,25 +40,9 @@ templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
 # Log files the dashboard is allowed to read. Single source of truth for
 # both the REST and WebSocket endpoints; also guards against path traversal.
-VALID_LOGS: tuple[str, ...] = (
-    "attribution",
-    "campaigns",
-    "dashboard",
-    "database",
-    "follower",
-    "growth_dashboard",
-    "growth_tracker",
-    "import",
-    "list_creation",
-    "list_generation",
-    "migrations",
-    "review_generation",
-    "review_metrics",
-    "review_posting",
-    "scraper",
-    "trending",
-    "unfollower",
-)
+# The log viewer shows what the project actually writes. Keeping a second
+# list here is what let three logs be written and not be viewable.
+VALID_LOGS: tuple[str, ...] = LOG_NAMES
 
 
 @app.exception_handler(DatabaseError)

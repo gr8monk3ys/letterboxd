@@ -4,6 +4,7 @@ from datetime import date as date_type
 from datetime import datetime, timedelta
 
 from src.data_processing.db import SqliteBacked
+from src.utils.logs import configure
 
 
 class ConnectionAnalytics(SqliteBacked):
@@ -409,4 +410,5 @@ def show_analytics():
 
 
 if __name__ == "__main__":
+    configure("analytics")
     show_analytics()

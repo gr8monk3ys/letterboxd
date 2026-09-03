@@ -20,6 +20,7 @@ from pathlib import Path
 
 from src.config import DATA_DIR
 from src.data_processing.create_database import MovieDatabase
+from src.utils.logs import configure
 
 COLUMNS = ["Title", "Year", "Rating10", "WatchedDate"]
 UPLOAD_URL = "https://letterboxd.com/import/"
@@ -40,6 +41,7 @@ def build_rows(pending: list[dict]) -> list[dict]:
 
 
 def main() -> None:
+    configure("import_csv")
     parser = argparse.ArgumentParser(description="Write a Letterboxd import CSV of pending ratings")
     parser.add_argument("--db", type=Path, default=DATA_DIR / "movie_database.db")
     parser.add_argument("--output", type=Path, default=DATA_DIR / "letterboxd-import.csv")

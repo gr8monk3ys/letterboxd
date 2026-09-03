@@ -13,6 +13,7 @@ from typing import Any
 
 from src.config import DATA_DIR, OUTPUT_DIR
 from src.data_processing.db import open_db
+from src.utils.logs import configure
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +269,7 @@ def list_backups(backup_dir: Path | None = None) -> list[dict]:
 
 def main() -> None:
     """CLI for backup/restore operations."""
+    configure("backup")
     import argparse
 
     parser = argparse.ArgumentParser(description="Database backup and restore")

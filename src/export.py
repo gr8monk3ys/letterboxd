@@ -24,6 +24,7 @@ from pathlib import Path
 from src.config import DATA_DIR, get_config
 from src.data_processing.db import open_db
 from src.film_identity import film_key
+from src.utils.logs import configure
 
 SCHEMA = "letterboxd/1"
 INGEST_COMMAND = "uv run python -m src.data_processing.create_database"
@@ -115,6 +116,7 @@ def write_export(doc: dict, path: Path) -> Path:
 
 
 def main() -> None:
+    configure("export")
     parser = argparse.ArgumentParser(description="Write letterboxd.json for other tools")
     parser.add_argument("--db", type=Path, default=DATA_DIR / "movie_database.db")
     parser.add_argument(

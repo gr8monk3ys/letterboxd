@@ -32,6 +32,7 @@ from src.providers.base import VALID_PROVIDERS
 from src.queue import build_queue
 from src.reviewing.post_review import ReviewPoster
 from src.reviewing.write_review import VALID_TONES, ReviewGenerator
+from src.utils.logs import configure
 
 DIGEST_DIR = DATA_DIR / "digests"
 _URI_LINE = re.compile(r"^<!-- uri: (.+?) -->$", re.M)
@@ -154,6 +155,7 @@ def draft(
 
 
 def main() -> None:
+    configure("campaign")
     parser = argparse.ArgumentParser(description="Draft, read, then post a few reviews")
     parser.add_argument("--per-run", type=int, default=5, help="films per run (default 5)")
     # No default: an explicit --tone wins, but leaving it unset lets an

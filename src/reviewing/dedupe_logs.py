@@ -51,6 +51,7 @@ from src.film_identity import film_key
 from src.reviewing.diary_form import DiaryForm
 from src.reviewing.post_review import ReviewPoster
 from src.utils.auth import LetterboxdPage, letterboxd_session
+from src.utils.logs import configure
 
 DELETE_BUTTON = "button#diary-entry-delete-button[data-js-trigger=delete]"
 ENTRY_FORM = "form.js-diary-entry-form"
@@ -239,6 +240,7 @@ def forget_local_rows(conn: sqlite3.Connection, dup: Duplicate, removed: int) ->
 
 
 def main() -> None:
+    configure("dedupe_logs")
     parser = argparse.ArgumentParser(description="Remove tool-made duplicate diary entries")
     parser.add_argument("--inspect", action="store_true", help="read the live entries, no writes")
     parser.add_argument("--apply", action="store_true", help="remove them (asks once)")

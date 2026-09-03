@@ -9,6 +9,7 @@ from src.config import DATA_DIR
 from src.data_processing.create_database import MovieDatabase
 from src.film_identity import film_key
 from src.rate_limiter import RateLimiter
+from src.utils.logs import configure
 
 
 def get_follow_history() -> list[dict]:
@@ -246,6 +247,7 @@ def show_all_stats() -> None:
 
 
 def main() -> None:
+    configure("stats")
     parser = argparse.ArgumentParser(
         description="Display Letterboxd automation statistics",
         formatter_class=argparse.RawDescriptionHelpFormatter,
