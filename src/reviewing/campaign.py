@@ -26,7 +26,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from src.config import DATA_DIR, get_config
-from src.data_processing.db import open_db
+from src.data_processing.create_database import MovieDatabase
+from src.data_processing.db import connected, open_db
 from src.providers.base import VALID_PROVIDERS
 from src.queue import build_queue
 from src.reviewing.post_review import ReviewPoster
@@ -108,7 +109,7 @@ SPARE_CANDIDATES = 3
 
 
 def draft(
-    conn: sqlite3.Connection,
+    db: MovieDatabase,
     films: list[dict],
     tone: str,
     provider: str | None,
@@ -117,35 +118,35 @@ def draft(
     """Generate and save drafts, the way write_review does it, until `want`.
 
     Films the generator declines are reported and passed over.
+
+    Takes a MovieDatabase rather than a bare connection so the write goes
+    through save_ai_review. The hand-rolled upsert this replaced updated
+    ai_review and generated_at but left `status` alone, so regenerating the
+    text of an approved draft carried the approval onto words no human had
+    read -- the exact thing the approval gate exists to prevent. It also
+    now drafts through draft_batch, so the campaign gets the ban list and
+    the borrowed-phrase retry that only write_review used to apply.
     """
     generator = ReviewGenerator(tone=tone, provider=provider)
     drafts: list[dict] = []
     try:
-        for film in films:
-            if want is not None and len(drafts) >= want:
-                break
-            review = generator.generate_review(film)
+        for film, review in generator.draft_batch(films):
             if not review:
                 print(f"  skipped {film['name']} ({film['year']}): no review generated")
                 continue
-            conn.execute(
-                """
-                INSERT INTO ai_reviews (letterboxd_uri, name, year, ai_review, generated_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(letterboxd_uri) DO UPDATE SET
-                    ai_review = excluded.ai_review, generated_at = excluded.generated_at
-                """,
-                (
-                    film["letterboxd_uri"],
-                    film["name"],
-                    film["year"],
-                    review,
-                    datetime.now().isoformat(),
-                ),
+            db.save_ai_review(
+                letterboxd_uri=film["letterboxd_uri"],
+                name=film["name"],
+                year=film["year"],
+                review=review,
             )
-            conn.commit()
             drafts.append({**film, "review": review})
             print(f"  drafted {film['name']} ({film['year']}) [{film['rating']}]")
+            # Breaking here, rather than testing at the top, stops the
+            # generator before it drafts the film after the last one wanted.
+            # draft_batch is lazy, so an unconsumed film costs no API call.
+            if want is not None and len(drafts) >= want:
+                break
     finally:
         generator.close()
     return drafts
@@ -195,7 +196,8 @@ def main() -> None:
                 print("Nothing to draft: every rated film has a review or a draft.")
             else:
                 print(f"Drafting {min(args.per_run, len(films))} review(s), tone {args.tone}:")
-                drafts = draft(conn, films, args.tone, args.provider, want=args.per_run)
+                with connected(MovieDatabase, db_path=db_path) as db:
+                    drafts = draft(db, films, args.tone, args.provider, want=args.per_run)
                 if not drafts:
                     print("No drafts produced.")
                 else:
