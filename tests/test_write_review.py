@@ -1,7 +1,10 @@
 """Tests for src/reviewing/write_review.py - Review generation with mock Claude API."""
 
 import json
+import sys
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 class TestTonePresets:
@@ -814,3 +817,76 @@ class TestBatchRepetition:
             last_prompt = mock_provider.generate.call_args.kwargs["prompt"]
             assert "broke something in me" in last_prompt
             generator.close()
+
+
+class TestViralBrowserLifecycle:
+    """--viral opens a persistent browser context before the generator exists.
+
+    An abandoned persistent profile keeps Chromium's SingletonLock, and the
+    next run of *any* browser module cannot launch at all, so the context has
+    to be closed even when the thing built after it raises.
+    """
+
+    def _run_viral_main(self, monkeypatch, generator_factory):
+        """Run `write_review --viral` with the browser faked out.
+
+        Returns the fake context so the test can assert on close().
+        """
+        import src.reviewing.write_review as wr
+
+        class FakeContext:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        class FakePlaywright:
+            def __init__(self):
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+        context = FakeContext()
+        playwright = FakePlaywright()
+
+        monkeypatch.setattr(
+            "playwright.sync_api.sync_playwright", lambda: MagicMock(start=lambda: playwright)
+        )
+        monkeypatch.setattr(
+            "src.utils.auth.open_browser", lambda ctx, cfg: (context, MagicMock())
+        )
+        monkeypatch.setattr(wr, "get_config", lambda: MagicMock())
+        monkeypatch.setattr(wr, "ReviewGenerator", generator_factory)
+        monkeypatch.setattr(sys, "argv", ["write_review", "--viral", "-n", "1"])
+        return context, playwright
+
+    def test_browser_closes_when_the_generator_fails_to_build(self, monkeypatch):
+        """A missing provider SDK must not strand the profile lock."""
+        from src.reviewing.write_review import main
+
+        def explode(**kwargs):
+            raise ImportError("Gemini provider requires the 'google-genai' package.")
+
+        context, playwright = self._run_viral_main(monkeypatch, explode)
+
+        with pytest.raises(ImportError):
+            main()
+
+        assert context.closed, "browser context abandoned; next run cannot launch"
+        assert playwright.stopped
+
+    def test_browser_closes_on_the_happy_path(self, monkeypatch):
+        """The ordinary path still cleans up."""
+        from src.reviewing.write_review import main
+
+        generator = MagicMock()
+        generator.generate_reviews.return_value = 0
+        context, playwright = self._run_viral_main(monkeypatch, lambda **kwargs: generator)
+
+        main()
+
+        assert context.closed
+        assert playwright.stopped
+        generator.close.assert_called_once()
