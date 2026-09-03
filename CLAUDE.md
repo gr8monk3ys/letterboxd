@@ -132,8 +132,14 @@ bundled Chromium with a warning if Chrome is absent. Do not drop those flags.
 Even then, scripted credential entry gets challenged; the reliable path is a
 human completing the sign-in once. `login()` does this automatically — on
 failure, with a visible browser and a TTY, it prompts and polls for the session
-cookie. All browser entry points go through `open_browser()`, which uses
-`launch_persistent_context` so that session survives into later runs.
+cookie. All browser entry points go through **`letterboxd_session(config)`**, a
+context manager over `open_browser()` that signs in, hands back a page
+whose `.open(url)` retries and then raises `BotChallengeError`, and closes
+the context on every path. Use it rather than `open_browser` directly:
+signing in, checking for a challenge after each navigation, and closing in
+a `finally` were three separate things every caller had to remember, and
+most did not — `unfollow_users` navigated with a bare `goto`, so a blocked
+run reported `Following: 0 / Followers: 0` and exited 0.
 
 Consequences worth remembering:
 - **Never `chromium.launch()` directly** — an ephemeral context throws away the

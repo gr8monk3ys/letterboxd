@@ -43,13 +43,13 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from playwright.sync_api import Dialog, Page, sync_playwright
+from playwright.sync_api import Dialog
 
 from src.config import get_config
 from src.data_processing.db import open_db
 from src.film_identity import film_key
 from src.reviewing.post_review import _CLICK_BUTTON_JS, EDIT_BUTTON_LABELS, ReviewPoster
-from src.utils.auth import login, open_browser, raise_if_challenged
+from src.utils.auth import PageLike, letterboxd_session, raise_if_challenged
 
 DELETE_BUTTON = "button#diary-entry-delete-button[data-js-trigger=delete]"
 ENTRY_FORM = "form.js-diary-entry-form"
@@ -158,7 +158,7 @@ def _slug(uri: str) -> str:
     return uri.rstrip("/").split("/film/")[-1].split("/")[0]
 
 
-def list_entries(page: Page, username: str, slug: str) -> list[Entry]:
+def list_entries(page: PageLike, username: str, slug: str) -> list[Entry]:
     """Every entry for the film, read from its activity page then each entry."""
     base = f"/{username}/film/{slug}/"
     page.goto(f"https://letterboxd.com{base}activity/", wait_until="domcontentloaded")
@@ -183,7 +183,7 @@ def list_entries(page: Page, username: str, slug: str) -> list[Entry]:
     return entries
 
 
-def remove_entry(page: Page, entry: Entry) -> bool:
+def remove_entry(page: PageLike, entry: Entry) -> bool:
     """Delete one entry through its edit modal; True once it is gone."""
     page.goto(entry.url, wait_until="domcontentloaded")
     page.wait_for_timeout(2000)
@@ -264,12 +264,8 @@ def main() -> None:
                 return
 
         removed_total = 0
-        with sync_playwright() as playwright:
-            context, page = open_browser(playwright, config)
+        with letterboxd_session(config) as page:
             try:
-                if not login(page, config):
-                    print("Login failed; nothing touched.")
-                    return
                 poster = ReviewPoster() if args.apply else None
                 for d in dups:
                     print(f"\n== {d.name} ({d.year})")
@@ -303,10 +299,9 @@ def main() -> None:
                     if removed:
                         forget_local_rows(conn, d, removed)
                     removed_total += removed
+            finally:
                 if poster is not None:
                     poster.close()
-            finally:
-                context.close()
         if args.apply:
             print(f"\nRemoved {removed_total} entries. Now run: uv run python -m src.sync")
 

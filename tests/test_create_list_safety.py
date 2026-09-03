@@ -22,8 +22,8 @@ class TestRateLimiting:
 
     def test_denied_limit_prevents_a_browser_launch(self, monkeypatch):
         monkeypatch.setattr(
-            "src.lists.create_list.sync_playwright",
-            lambda: pytest.fail("browser must not launch when rate limited"),
+            "src.lists.create_list.letterboxd_session",
+            lambda *a, **k: pytest.fail("browser must not launch when rate limited"),
         )
         creator = ListCreator()
         creator.rate_limiter = MagicMock()
@@ -35,8 +35,8 @@ class TestRateLimiting:
     def test_dry_run_needs_no_rate_limit(self, monkeypatch):
         """Previewing writes nothing, so it must not be blocked."""
         monkeypatch.setattr(
-            "src.lists.create_list.sync_playwright",
-            lambda: pytest.fail("dry run must not launch a browser"),
+            "src.lists.create_list.letterboxd_session",
+            lambda *a, **k: pytest.fail("dry run must not launch a browser"),
         )
         creator = ListCreator()
         creator.rate_limiter = MagicMock()

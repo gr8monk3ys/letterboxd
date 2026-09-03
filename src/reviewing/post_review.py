@@ -1,16 +1,22 @@
 """Post AI-generated reviews to Letterboxd."""
 
+from __future__ import annotations
+
 import logging
 import time
-
-from playwright.sync_api import Page, sync_playwright
 
 from src.config import get_config
 from src.data_processing.create_database import MovieDatabase
 from src.growth.attribution import ReviewAttributor
 from src.growth.campaigns import record_campaign_action
 from src.review_metrics import ReviewMetricsDB
-from src.utils.auth import goto_with_retry, login, open_browser, raise_if_challenged
+from src.utils.auth import (
+    PageLike,
+    goto_with_retry,
+    letterboxd_session,
+    login,
+    raise_if_challenged,
+)
 from src.utils.errors import handle_exception
 from src.utils.logs import configure
 
@@ -102,7 +108,7 @@ class ReviewPoster:
             self._attributor = attributor
         self._attributor.record_review_posted(posted_review_id)
 
-    def do_login(self, page: Page) -> bool:
+    def do_login(self, page: PageLike) -> bool:
         """Log in to Letterboxd account."""
         return login(page, self.config)
 
@@ -115,7 +121,7 @@ class ReviewPoster:
         """
         return self.db.get_approved_ai_reviews()
 
-    def open_review_form(self, page: Page, name: str) -> bool:
+    def open_review_form(self, page: PageLike, name: str) -> bool:
         """Open the diary-entry modal from whichever button this page has.
 
         Letterboxd labels the control five ways depending on whether the
@@ -153,7 +159,7 @@ class ReviewPoster:
         logging.warning(f"Could not find review button for {name}")
         return False
 
-    def set_tags(self, page: Page, tags: list[str]) -> list[str]:
+    def set_tags(self, page: PageLike, tags: list[str]) -> list[str]:
         """Enter tags in the modal's typeahead, returning what stuck.
 
         The field tokenizes as you type into hidden `tag` inputs. It also
@@ -196,7 +202,7 @@ class ReviewPoster:
 
         return tokens
 
-    def post_review(self, page: Page, film: dict) -> tuple[bool, str | None]:
+    def post_review(self, page: PageLike, film: dict) -> tuple[bool, str | None]:
         """Post a review for a single film.
 
         Args:
@@ -379,14 +385,8 @@ class ReviewPoster:
                 print(f"... and {len(reviews) - 10} more")
             return 0
 
-        with sync_playwright() as playwright:
-            context, page = open_browser(playwright, self.config)
-
+        with letterboxd_session(self.config) as page:
             try:
-                if not self.do_login(page):
-                    logging.error("Login failed, aborting")
-                    return 0
-
                 for film in reviews:
                     print(f"\n=== {film['name']} ({film['year']}) ===")
                     print(f"Review: {film['review'][:100]}...")
@@ -441,8 +441,6 @@ class ReviewPoster:
                 print("\nProcess interrupted. Progress has been saved.")
             except Exception as e:
                 handle_exception(e, "Unexpected error during review posting")
-            finally:
-                context.close()
 
         return self.posted_count
 

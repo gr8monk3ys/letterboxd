@@ -1,5 +1,7 @@
 """Automated following of Letterboxd users using pure Playwright."""
 
+from __future__ import annotations
+
 import argparse
 import csv
 import logging
@@ -10,12 +12,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, TextIO
 
-from playwright.sync_api import Page, sync_playwright
-
 from src.config import DATA_DIR, get_config
 from src.growth.campaigns import record_campaign_action
 from src.rate_limiter import RateLimiter
-from src.utils.auth import login_and_navigate, open_browser
+from src.utils.auth import PageLike, letterboxd_session, login_and_navigate
 from src.utils.errors import format_rate_limit_message, handle_exception
 from src.utils.logs import configure
 
@@ -62,14 +62,14 @@ class LetterboxdFollower:
         self._csv_writer.writerow([timestamp, username])
         self._csv_file.flush()
 
-    def login(self, page: Page) -> bool:
+    def login(self, page: PageLike) -> bool:
         """Log in to Letterboxd account and navigate to target page."""
         result = login_and_navigate(page, self.config, self.config.base_url)
         if result:
             self.random_delay()
         return result
 
-    def follow_users(self, page: Page) -> None:
+    def follow_users(self, page: PageLike) -> None:
         """Follow users from the page."""
         try:
             current_page = 1
@@ -460,18 +460,11 @@ Examples:
         return
 
     try:
-        with sync_playwright() as playwright:
-            context, page = open_browser(playwright, follower.config)
-
-            # Must close on every path: an abandoned persistent profile keeps
-            # Chromium's SingletonLock and the next run cannot launch.
-            try:
-                if follower.login(page):
-                    follower.follow_users(page)
-                else:
-                    logging.error("Failed to start following process due to login failure")
-            finally:
-                context.close()
+        # letterboxd_session signs in and closes on every path: an abandoned
+        # persistent profile keeps Chromium's SingletonLock and the next run
+        # cannot launch.
+        with letterboxd_session(follower.config) as page:
+            follower.follow_users(page)
 
     except KeyboardInterrupt:
         logging.info("Process interrupted by user")

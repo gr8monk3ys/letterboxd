@@ -9,6 +9,7 @@ import re
 import statistics
 import time
 from collections.abc import Callable
+from contextlib import ExitStack
 from datetime import datetime
 from pathlib import Path
 
@@ -746,95 +747,93 @@ def main() -> None:
 
     # The viral fetcher shares one browser session across the batch;
     # a scrape failure degrades to plain generation rather than aborting.
-    playwright_ctx = None
-    browser_context = None
-    fetcher = None
-    if args.viral and not (args.export or args.preview):
-        from playwright.sync_api import sync_playwright
+    # ExitStack owns the browser: whatever happens below -- a provider SDK
+    # that is not installed, an absent database, a KeyboardInterrupt -- the
+    # session is closed on the way out. An abandoned persistent profile keeps
+    # Chromium's SingletonLock and blocks every later browser run, and this
+    # main() previously built the generator outside the block that closed it.
+    with ExitStack() as stack:
+        fetcher = None
+        if args.viral and not (args.export or args.preview):
+            from src.reviewing.popular_reviews import fetch_popular_reviews
+            from src.utils.auth import letterboxd_session
 
-        from src.reviewing.popular_reviews import fetch_popular_reviews
-        from src.utils.auth import open_browser
+            try:
+                # Signed in: the most-liked reviews this reads are behind the
+                # same Cloudflare that 403s an anonymous client, and a blank
+                # scrape used to look like "this film has no popular reviews".
+                browser_page = stack.enter_context(letterboxd_session(get_config()))
 
+                def fetcher(film: dict) -> list[dict]:
+                    return fetch_popular_reviews(browser_page, film["letterboxd_uri"])
+
+                print("Viral mode: pulling each film's most-liked reviews as influence")
+            except Exception as e:
+                logging.warning(f"Viral context unavailable ({e}); generating without it")
+
+        generator = None
         try:
-            playwright_ctx = sync_playwright().start()
-            browser_context, browser_page = open_browser(playwright_ctx, get_config())
-
-            def fetcher(film: dict) -> list[dict]:
-                return fetch_popular_reviews(browser_page, film["letterboxd_uri"])
-
-            print("Viral mode: pulling each film's most-liked reviews as influence")
-        except Exception as e:
-            logging.warning(f"Viral context unavailable ({e}); generating without it")
-
-    # Built inside the try: the browser context above is already open, and a
-    # constructor failure (a missing provider SDK, an absent database) must
-    # still reach the finally that closes it.
-    generator = None
-
-    try:
-        generator = ReviewGenerator(tone=args.tone, provider=args.provider, popular_fetcher=fetcher)
-        if args.export:
-            output = generator.export_reviews(format=args.export)
-            if output:
-                print(f"\nExported reviews to: {output}")
-            else:
-                print("\nNo AI reviews found to export. Generate some first with -n or --all")
-        elif args.preview:
-            tone_info = generator.get_tone_preset()
-            print(f"\n=== Preview review for '{args.preview}' (tone: {tone_info['name']}) ===\n")
-            review = generator.preview_review(args.preview)
-            if review:
-                print(review)
-            else:
-                print(f"Film '{args.preview}' not found in your watched list")
-        else:
-            # Show current stats
-            counts = generator.db.get_review_count()
-            tone_info = generator.get_tone_preset()
-            print(
-                f"\nFilms: {counts['total_films']} total, "
-                f"{counts['user_reviewed']} reviewed by you, "
-                f"{counts['ai_reviewed']} AI reviews, "
-                f"{counts['unreviewed']} remaining"
+            generator = ReviewGenerator(
+                tone=args.tone, provider=args.provider, popular_fetcher=fetcher
             )
-            print(f"Tone: {tone_info['name']} - {tone_info['description']}")
-
-            # Show active filters
-            filters_active = []
-            if args.year:
-                filters_active.append(f"year={args.year}")
-            if year_start and year_end:
-                filters_active.append(f"year range={year_start}-{year_end}")
-            if args.min_rating:
-                filters_active.append(f"min rating={args.min_rating}")
-            if filters_active:
-                print(f"Filters: {', '.join(filters_active)}")
-            print()
-
-            limit = None if args.all else args.limit
-            generated = generator.generate_reviews(
-                limit=limit,
-                year=args.year,
-                year_start=year_start,
-                year_end=year_end,
-                min_rating=args.min_rating,
-                sample=args.sample,
-            )
-
-            if generated > 0:
-                print(f"\nGenerated {generated} reviews!")
-                print("Reviews stored in database (ai_reviews table)")
+            if args.export:
+                output = generator.export_reviews(format=args.export)
+                if output:
+                    print(f"\nExported reviews to: {output}")
+                else:
+                    print("\nNo AI reviews found to export. Generate some first with -n or --all")
+            elif args.preview:
+                tone_info = generator.get_tone_preset()
+                print(
+                    f"\n=== Preview review for '{args.preview}' (tone: {tone_info['name']}) ===\n"
+                )
+                review = generator.preview_review(args.preview)
+                if review:
+                    print(review)
+                else:
+                    print(f"Film '{args.preview}' not found in your watched list")
             else:
-                print("\nNo reviews generated.")
-    finally:
-        if generator is not None:
-            generator.close()
-        # An abandoned persistent profile keeps the browser's
-        # SingletonLock and blocks every later run
-        if browser_context is not None:
-            browser_context.close()
-        if playwright_ctx is not None:
-            playwright_ctx.stop()
+                # Show current stats
+                counts = generator.db.get_review_count()
+                tone_info = generator.get_tone_preset()
+                print(
+                    f"\nFilms: {counts['total_films']} total, "
+                    f"{counts['user_reviewed']} reviewed by you, "
+                    f"{counts['ai_reviewed']} AI reviews, "
+                    f"{counts['unreviewed']} remaining"
+                )
+                print(f"Tone: {tone_info['name']} - {tone_info['description']}")
+
+                # Show active filters
+                filters_active = []
+                if args.year:
+                    filters_active.append(f"year={args.year}")
+                if year_start and year_end:
+                    filters_active.append(f"year range={year_start}-{year_end}")
+                if args.min_rating:
+                    filters_active.append(f"min rating={args.min_rating}")
+                if filters_active:
+                    print(f"Filters: {', '.join(filters_active)}")
+                print()
+
+                limit = None if args.all else args.limit
+                generated = generator.generate_reviews(
+                    limit=limit,
+                    year=args.year,
+                    year_start=year_start,
+                    year_end=year_end,
+                    min_rating=args.min_rating,
+                    sample=args.sample,
+                )
+
+                if generated > 0:
+                    print(f"\nGenerated {generated} reviews!")
+                    print("Reviews stored in database (ai_reviews table)")
+                else:
+                    print("\nNo reviews generated.")
+        finally:
+            if generator is not None:
+                generator.close()
 
 
 if __name__ == "__main__":

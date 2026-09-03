@@ -1,8 +1,13 @@
 """Shared authentication utilities for Letterboxd automation."""
 
+from __future__ import annotations
+
 import logging
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any
 
 from playwright.sync_api import BrowserContext, Page, Playwright
 from playwright.sync_api import Error as PlaywrightError
@@ -12,6 +17,7 @@ from src.config import Config
 from src.utils.errors import (
     BotChallengeError,
     ErrorCategory,
+    LoginRequired,
     format_login_error,
     format_navigation_error,
     log_error_with_suggestions,
@@ -84,7 +90,7 @@ def has_session_cookie(context: BrowserContext) -> bool:
     return any(cookie["name"] == SESSION_COOKIE for cookie in context.cookies())
 
 
-def session_is_live(page: Page) -> bool:
+def session_is_live(page: PageLike) -> bool:
     """Confirm the saved session is still accepted by Letterboxd.
 
     The cookie outliving the server-side session is the dangerous case: the
@@ -105,7 +111,7 @@ def session_is_live(page: Page) -> bool:
     return page.locator("body.logged-in").count() > 0
 
 
-def raise_if_challenged(page: Page) -> None:
+def raise_if_challenged(page: PageLike) -> None:
     """Raise BotChallengeError if the page is a Cloudflare interstitial.
 
     Args:
@@ -119,7 +125,7 @@ def raise_if_challenged(page: Page) -> None:
         raise BotChallengeError()
 
 
-def goto_with_retry(page: Page, url: str, timeout: int = 30000) -> bool:
+def goto_with_retry(page: PageLike, url: str, timeout: int = 30000) -> bool:
     """Navigate to a URL with retry logic.
 
     Args:
@@ -142,7 +148,7 @@ def goto_with_retry(page: Page, url: str, timeout: int = 30000) -> bool:
 
 
 @retry(max_attempts=3, delay=2.0, exceptions=(PlaywrightTimeout, ConnectionError))
-def perform_login(page: Page, username: str, password: str) -> bool:
+def perform_login(page: PageLike, username: str, password: str) -> bool:
     """Perform the Letterboxd login sequence with retry support.
 
     Args:
@@ -192,7 +198,7 @@ def perform_login(page: Page, username: str, password: str) -> bool:
     return True
 
 
-def wait_for_manual_login(page: Page, timeout_seconds: int = 180) -> bool:
+def wait_for_manual_login(page: PageLike, timeout_seconds: int = 180) -> bool:
     """Wait for the user to sign in by hand in the open browser window.
 
     Cloudflare challenges scripted sign-ins, but a human completing the form
@@ -239,7 +245,7 @@ def wait_for_manual_login(page: Page, timeout_seconds: int = 180) -> bool:
     return False
 
 
-def login(page: Page, config: Config) -> bool:
+def login(page: PageLike, config: Config) -> bool:
     """Log in to Letterboxd account with error handling.
 
     Falls back to a manual sign-in prompt when the browser is visible, which is
@@ -276,7 +282,7 @@ def login(page: Page, config: Config) -> bool:
         return False
 
 
-def login_and_navigate(page: Page, config: Config, target_url: str) -> bool:
+def login_and_navigate(page: PageLike, config: Config, target_url: str) -> bool:
     """Log in to Letterboxd and navigate to a target page.
 
     Args:
@@ -308,3 +314,98 @@ def login_and_navigate(page: Page, config: Config, target_url: str) -> bool:
     except Exception as e:
         log_error_with_suggestions(format_navigation_error(target_url, e), ErrorCategory.NETWORK, e)
         return False
+
+
+class LetterboxdPage:
+    """A page that knows the three things every Cloudflare-facing caller forgot.
+
+    `open_browser` hands back a bare `Page`, so navigating safely meant
+    remembering to retry, then to call `raise_if_challenged`, at every call
+    site. Measured across the ten browser entry points, most did neither: of
+    fourteen raw `page.goto` calls, four were followed by a challenge check.
+
+    That is not a style problem. `unfollow_users.scrape_user_list` navigated
+    with a bare `goto`, and an interstitial matches no `.person-summary`, so
+    a blocked run reported "Following: 0 / Followers: 0 / Non-followers: 0"
+    and exited 0.
+
+    `.page` is still available for everything else a caller does with a page;
+    only navigation is taken over, because navigation is where the challenge
+    appears.
+    """
+
+    def __init__(self, page: Page):
+        self.page = page
+
+    def open(self, url: str, timeout: int = 30000) -> bool:
+        """Navigate, retrying transient failures, and refuse to return a challenge.
+
+        Returns:
+            True if the page loaded.
+
+        Raises:
+            BotChallengeError: Cloudflare served an interstitial. Deliberately
+                not retried -- a challenge is not transient, and retrying it
+                only turns a 13s failure into a 45s one.
+        """
+        if not goto_with_retry(self.page, url, timeout=timeout):
+            return False
+        raise_if_challenged(self.page)
+        return True
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate the rest of the Page surface, so callers keep what they had.
+
+        Returns Any deliberately: this stands in for a Playwright Page, whose
+        surface is far too large to restate, and every caller here was already
+        working against that untyped-in-practice surface.
+        """
+        return getattr(self.page, name)
+
+
+# Anything the browser entry points navigate with. A LetterboxdPage delegates
+# the whole Page surface, so functions that only drive a page accept either;
+# only code calling `.open()` needs the navigator specifically.
+PageLike = Page | LetterboxdPage
+
+
+@contextmanager
+def letterboxd_session(config: Config, *, signed_in: bool = True) -> Iterator[LetterboxdPage]:
+    """Open a browser on the persistent profile, sign in, and always close it.
+
+    Replaces the `with sync_playwright() ... open_browser(...) ... finally:
+    context.close()` sequence that each entry point wrote out by hand. The
+    close is the part that must not be optional: an abandoned persistent
+    profile keeps Chromium's SingletonLock and the *next* run of any browser
+    module cannot launch at all.
+
+    Args:
+        config: Supplies the profile directory, headless flag and credentials.
+        signed_in: Sign in before yielding. Pass False only for genuinely
+            public reads.
+
+    Yields:
+        A LetterboxdPage whose `.open()` retries and raises on a challenge.
+
+    Raises:
+        LoginRequired: `signed_in` was asked for and sign-in did not succeed.
+    """
+    from playwright.sync_api import sync_playwright
+
+    playwright = sync_playwright().start()
+    try:
+        context, page = open_browser(playwright, config)
+        try:
+            if signed_in and not login(page, config):
+                raise LoginRequired(
+                    "Could not sign in to Letterboxd. Run with a visible browser "
+                    "(HEADLESS=false) and complete the sign-in once; the session "
+                    "is saved into the browser profile for later runs."
+                )
+            yield LetterboxdPage(page)
+        finally:
+            # An abandoned persistent profile keeps the browser's
+            # SingletonLock and blocks every later run.
+            context.close()
+    finally:
+        playwright.stop()

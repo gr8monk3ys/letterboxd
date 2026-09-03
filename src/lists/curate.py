@@ -5,15 +5,16 @@ metadata on lists already on the account, so the whole profile shares one
 tag vocabulary instead of ad-hoc per-list wording.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import Page
-
 from src.tagging.taxonomy import MAX_TAGS, normalize_tag, validate_tags
+from src.utils.auth import PageLike, letterboxd_session
 from src.utils.logs import configure
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ class ListCurator:
     def __init__(self, username: str):
         self.username = username
 
-    def _read_state(self, page: Page) -> dict:
+    def _read_state(self, page: PageLike) -> dict:
         tags = page.evaluate(
             "() => [...document.querySelectorAll('#current-tags input[name=tag]')]"
             ".map(i => i.value)"
@@ -58,7 +59,7 @@ class ListCurator:
 
     def curate(
         self,
-        page: Page,
+        page: PageLike,
         slug: str,
         tags: list[str] | None = None,
         description: str | None = None,
@@ -138,7 +139,7 @@ class ListCurator:
         page.wait_for_timeout(3000)
         return result
 
-    def run(self, page: Page, plan: dict[str, dict], dry_run: bool = False) -> int:
+    def run(self, page: PageLike, plan: dict[str, dict], dry_run: bool = False) -> int:
         """Curate every list in the plan, returning how many changed."""
         changed = 0
         for slug, entry in plan.items():
@@ -157,10 +158,8 @@ class ListCurator:
 
 
 def main() -> None:
-    from playwright.sync_api import sync_playwright
 
     from src.config import get_config
-    from src.utils.auth import login, open_browser
 
     configure("list_curation")
 
@@ -175,19 +174,10 @@ def main() -> None:
 
     print(f"\n{len(plan)} lists in the plan")
 
-    with sync_playwright() as playwright:
-        context, page = open_browser(playwright, config)
-        try:
-            if not login(page, config):
-                logging.error("Login failed, aborting")
-                return
-            changed = curator.run(page, plan, dry_run=args.dry_run)
-            verb = "would change" if args.dry_run else "changed"
-            print(f"\n{verb} {changed} lists")
-        finally:
-            # An abandoned persistent profile keeps the browser's
-            # SingletonLock and blocks every later run
-            context.close()
+    with letterboxd_session(config) as page:
+        changed = curator.run(page, plan, dry_run=args.dry_run)
+        verb = "would change" if args.dry_run else "changed"
+        print(f"\n{verb} {changed} lists")
 
 
 if __name__ == "__main__":

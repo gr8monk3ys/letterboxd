@@ -1,13 +1,13 @@
 """Create lists on Letterboxd via browser automation."""
 
-import logging
+from __future__ import annotations
 
-from playwright.sync_api import Page, sync_playwright
+import logging
 
 from src.config import get_config
 from src.lists.generate_lists import ListDefinition, ListGenerator
 from src.rate_limiter import RateLimiter
-from src.utils.auth import goto_with_retry, login, open_browser
+from src.utils.auth import PageLike, goto_with_retry, letterboxd_session
 from src.utils.follow_actions import human_delay
 from src.utils.logs import configure
 
@@ -24,7 +24,7 @@ class ListCreator:
         # it shares the same limiter as following and unfollowing.
         self.rate_limiter = RateLimiter()
 
-    def create_list(self, page: Page, list_def: ListDefinition) -> bool:
+    def create_list(self, page: PageLike, list_def: ListDefinition) -> bool:
         """Create a single list on Letterboxd.
 
         Args:
@@ -111,7 +111,7 @@ class ListCreator:
             logger.error(f"Error creating list {list_def.title}: {e}")
             return False
 
-    def _add_film_to_list(self, page: Page, film: dict) -> bool:
+    def _add_film_to_list(self, page: PageLike, film: dict) -> bool:
         """Add a single film to the list being created.
 
         Args:
@@ -203,15 +203,8 @@ class ListCreator:
             print(f"\nRate limited: {reason}")
             return 0
 
-        with sync_playwright() as playwright:
-            context, page = open_browser(playwright, self.config)
-
+        with letterboxd_session(self.config) as page:
             try:
-                # Login first
-                if not login(page, self.config):
-                    logger.error("Login failed, aborting")
-                    return 0
-
                 for lst in lists:
                     print(f"\n=== Creating: {lst.title} ===")
                     print(f"Films: {len(lst.films)}")
@@ -236,8 +229,6 @@ class ListCreator:
 
             except KeyboardInterrupt:
                 logger.info("Process interrupted by user")
-            finally:
-                context.close()
 
         return self.created_count
 

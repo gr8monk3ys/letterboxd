@@ -238,6 +238,18 @@ class ConfigurationError(LetterboxdError):
         super().__init__(message, ErrorCategory.CONFIG)
 
 
+class LoginRequired(LetterboxdError):
+    """Raised when an action needs a signed-in session and sign-in did not happen.
+
+    Distinct from BotChallengeError: a challenge means Cloudflare blocked the
+    client, this means Letterboxd did not accept (or was never given) the
+    credentials. Both are terminal for the run; neither is retried.
+    """
+
+    def __init__(self, message: str = "Letterboxd sign-in required"):
+        super().__init__(message, ErrorCategory.AUTH)
+
+
 class DatabaseError(LetterboxdError):
     """Raised when database operations fail."""
 

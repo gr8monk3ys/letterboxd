@@ -1,5 +1,6 @@
 """Tests for review quality metrics module."""
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
@@ -496,12 +497,12 @@ class TestEngagementBatching:
         mock_page.locator.return_value.count.return_value = 0
         mock_page.locator.return_value.first.count.return_value = 0
 
-        def fake_open_browser(playwright, config):
+        @contextmanager
+        def fake_session(config, *, signed_in=True):
             launches.append(1)
-            return MagicMock(), mock_page
+            yield mock_page
 
-        monkeypatch.setattr("src.review_metrics.open_browser", fake_open_browser)
-        monkeypatch.setattr("src.review_metrics.sync_playwright", MagicMock())
+        monkeypatch.setattr("src.review_metrics.letterboxd_session", fake_session)
 
         from src.review_metrics import EngagementScraper
 
@@ -605,10 +606,12 @@ class TestEngagementEntryPoint:
         page.locator.return_value.count.return_value = 0
         page.locator.return_value.first.count.return_value = 1
         page.locator.return_value.first.text_content.return_value = "7 likes"
-        monkeypatch.setattr(
-            "src.review_metrics.open_browser", lambda playwright, config: (MagicMock(), page)
-        )
-        monkeypatch.setattr("src.review_metrics.sync_playwright", MagicMock())
+
+        @contextmanager
+        def fake_session(config, *, signed_in=True):
+            yield page
+
+        monkeypatch.setattr("src.review_metrics.letterboxd_session", fake_session)
         return page
 
     def test_bare_invocation_collects_and_reports_rows_written(
@@ -640,7 +643,7 @@ class TestEngagementEntryPoint:
         def no_browser(*a, **kw):  # pragma: no cover - must never be called
             raise AssertionError("a dry run must not open a browser")
 
-        monkeypatch.setattr("src.review_metrics.open_browser", no_browser)
+        monkeypatch.setattr("src.review_metrics.letterboxd_session", no_browser)
         monkeypatch.setattr("src.review_metrics.ReviewMetricsDB", lambda: self.connected(db_path))
         monkeypatch.setattr("sys.argv", ["review_metrics", "--dry-run"])
         review_metrics.main()
@@ -654,11 +657,10 @@ class TestEngagementEntryPoint:
         403s; a run that collected nothing must say so, not print zeros."""
         from src import review_metrics
 
-        monkeypatch.setattr(
-            "src.review_metrics.open_browser",
-            lambda playwright, config: (_ for _ in ()).throw(RuntimeError("403 Just a moment")),
-        )
-        monkeypatch.setattr("src.review_metrics.sync_playwright", MagicMock())
+        def blocked(*a, **kw):
+            raise RuntimeError("403 Just a moment")
+
+        monkeypatch.setattr("src.review_metrics.letterboxd_session", blocked)
         monkeypatch.setattr("src.review_metrics.ReviewMetricsDB", lambda: self.connected(db_path))
         monkeypatch.setattr("sys.argv", ["review_metrics"])
 
