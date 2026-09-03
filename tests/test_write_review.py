@@ -854,9 +854,7 @@ class TestViralBrowserLifecycle:
         monkeypatch.setattr(
             "playwright.sync_api.sync_playwright", lambda: MagicMock(start=lambda: playwright)
         )
-        monkeypatch.setattr(
-            "src.utils.auth.open_browser", lambda ctx, cfg: (context, MagicMock())
-        )
+        monkeypatch.setattr("src.utils.auth.open_browser", lambda ctx, cfg: (context, MagicMock()))
         monkeypatch.setattr(wr, "get_config", lambda: MagicMock())
         monkeypatch.setattr(wr, "ReviewGenerator", generator_factory)
         monkeypatch.setattr(sys, "argv", ["write_review", "--viral", "-n", "1"])

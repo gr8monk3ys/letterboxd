@@ -381,6 +381,37 @@ class CampaignManager:
         print()
 
 
+def record_campaign_action(
+    action_type: str, target: str | None = None, db_path: Path | None = None
+) -> bool:
+    """Record an action against the active campaign, if one is running.
+
+    Callers -- the poster, the follower -- know what they just did but not
+    whether a campaign is open or what its id is, so that is the whole of
+    what this hides. No active campaign is the normal case and is not an
+    error; neither is a database that is not there yet.
+
+    Never raises. It is called from inside the follow and post loops, where
+    the action has already happened; a bookkeeping failure must not take down
+    the run that earned it.
+
+    Returns True only when a row was actually written.
+    """
+    manager = CampaignManager(db_path=db_path)
+    try:
+        if not manager.connect():
+            return False
+        campaign = manager.get_active_campaign()
+        if campaign is None:
+            return False
+        return manager.record_action(campaign["id"], action_type, target)
+    except Exception as e:
+        logger.error(f"Could not record campaign action: {e}")
+        return False
+    finally:
+        manager.close()
+
+
 def main() -> None:
     """CLI entry point for campaign management."""
     import argparse

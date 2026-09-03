@@ -213,6 +213,36 @@ class ReviewGenerator:
         "gemini": "gemini_api_key",
     }
 
+    @staticmethod
+    def _ab_test_tone() -> str | None:
+        """The tone an active A/B test assigns to the next review.
+
+        Without this the test is not a test: `end_ab_test` compares the
+        engagement of two tones and declares a winner, but nothing ever
+        varied the tone, so both arms hold whatever tone the run happened to
+        use. Returns None when no test is running, and on any failure -- a
+        missing database must not stop reviews being written.
+        """
+        try:
+            from src.review_metrics import ReviewMetricsDB
+
+            db = ReviewMetricsDB()
+            db.connect()
+            try:
+                assigned = db.get_ab_test_assignment()
+            finally:
+                db.close()
+        except Exception as e:
+            logging.debug(f"No A/B assignment available: {e}")
+            return None
+
+        if assigned and assigned not in VALID_TONES:
+            logging.warning(f"A/B test assigns unknown tone '{assigned}', ignoring")
+            return None
+        if assigned:
+            logging.info(f"A/B test assigned tone '{assigned}'")
+        return assigned
+
     def _api_key_for(self, provider_name: str) -> str:
         """The configured key for a vendor, or "" to let the provider look."""
         return str(getattr(self.config, self._KEY_ENV.get(provider_name, ""), "") or "")
@@ -247,8 +277,10 @@ class ReviewGenerator:
         self._style_examples: list[dict] | None = None
         self._all_reviews: list[dict] | None = None
 
-        # Set tone from parameter, env var, or default
-        self.tone = tone or self.config.review_tone
+        # Set tone from parameter, an active A/B test, env var, or default.
+        # An explicit --tone always wins: asking for a tone and silently
+        # getting a different one would be worse than not running the test.
+        self.tone = tone or self._ab_test_tone() or self.config.review_tone
         if self.tone not in VALID_TONES:
             logging.warning(f"Invalid tone '{self.tone}', using 'casual'")
             self.tone = "casual"

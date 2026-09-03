@@ -13,6 +13,7 @@ from typing import Any, TextIO
 from playwright.sync_api import Page, sync_playwright
 
 from src.config import DATA_DIR, get_config, get_log_path
+from src.growth.campaigns import record_campaign_action
 from src.rate_limiter import RateLimiter
 from src.utils.auth import login_and_navigate, open_browser
 from src.utils.errors import format_rate_limit_message, handle_exception
@@ -178,6 +179,7 @@ class LetterboxdFollower:
                                 self.followed_count += 1
                                 self.log_follow(username)
                                 self.rate_limiter.log_action("follow", username)
+                                record_campaign_action("follow", username)
                                 logging.info(
                                     f"Followed: {username} "
                                     f"({self.followed_count}/{self.config.max_follows_per_session})"

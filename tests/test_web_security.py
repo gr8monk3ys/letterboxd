@@ -115,7 +115,7 @@ class TestLogWhitelist:
     def test_growth_logs_are_available(self, client):
         from src.web.app import VALID_LOGS
 
-        assert "smart_follow" in VALID_LOGS
+        assert "growth_tracker" in VALID_LOGS
         assert "trending" in VALID_LOGS
         assert "migrations" in VALID_LOGS
 
