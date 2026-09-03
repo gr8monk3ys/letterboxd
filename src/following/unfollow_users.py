@@ -1,5 +1,7 @@
 """Unfollow Letterboxd users who don't follow you back using pure Playwright."""
 
+from __future__ import annotations
+
 import csv
 import logging
 import random
@@ -7,12 +9,10 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from playwright.sync_api import Page, sync_playwright
-
 from src.config import DATA_DIR, get_config
 from src.rate_limiter import RateLimiter
-from src.utils.auth import login, open_browser
-from src.utils.errors import handle_exception
+from src.utils.auth import LetterboxdPage, PageLike, letterboxd_session, login
+from src.utils.errors import BotChallengeError, handle_exception
 from src.utils.logs import configure
 
 
@@ -61,14 +61,14 @@ class LetterboxdUnfollower:
         delay = random.uniform(self.config.min_delay * min_mult, self.config.max_delay * max_mult)
         time.sleep(delay)
 
-    def do_login(self, page: Page) -> bool:
+    def do_login(self, page: PageLike) -> bool:
         """Log in to Letterboxd account."""
         result = login(page, self.config)
         if result:
             self.random_delay()
         return result
 
-    def scrape_user_list(self, page: Page, list_type: str) -> set[str]:
+    def scrape_user_list(self, page: LetterboxdPage, list_type: str) -> set[str]:
         """Scrape usernames from following or followers list.
 
         Args:
@@ -84,7 +84,7 @@ class LetterboxdUnfollower:
         logging.info(f"Scraping {list_type} list...")
 
         try:
-            page.goto(base_url, wait_until="domcontentloaded")
+            page.open(base_url)
             page.wait_for_timeout(2000)  # Let page settle
 
             page_num = 1
@@ -114,10 +114,18 @@ class LetterboxdUnfollower:
 
                 page_num += 1
                 next_url = f"{base_url}page/{page_num}/"
-                page.goto(next_url, wait_until="domcontentloaded")
+                page.open(next_url)
                 page.wait_for_timeout(2000)
                 self.random_delay(0.5, 1.0)
 
+        except BotChallengeError:
+            # Must not be swallowed. An interstitial matches no
+            # `.person-summary`, so a blocked run used to report
+            # "Following: 0 / Followers: 0 / Non-followers: 0" and exit 0 --
+            # an empty set here means "unfollow nobody", which reads as
+            # success. Reported, never rendered as zero.
+            logging.error(f"Cloudflare blocked the {list_type} page")
+            raise
         except Exception as e:
             logging.error(f"Error scraping {list_type}: {e}")
 
@@ -139,7 +147,7 @@ class LetterboxdUnfollower:
 
         return self.non_followers
 
-    def unfollow_user(self, page: Page, username: str) -> bool:
+    def unfollow_user(self, page: PageLike, username: str) -> bool:
         """Unfollow a specific user.
 
         Args:
@@ -190,7 +198,7 @@ class LetterboxdUnfollower:
             writer.writerow([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), username])
 
     def unfollow_non_followers(
-        self, page: Page, limit: int | None = None, dry_run: bool = False
+        self, page: PageLike, limit: int | None = None, dry_run: bool = False
     ) -> int:
         """Unfollow users who don't follow back.
 
@@ -258,14 +266,8 @@ class LetterboxdUnfollower:
 
     def run(self, limit: int | None = None, dry_run: bool = False) -> None:
         """Run the full unfollow process."""
-        with sync_playwright() as playwright:
-            context, page = open_browser(playwright, self.config)
-
+        with letterboxd_session(self.config) as page:
             try:
-                if not self.do_login(page):
-                    logging.error("Login failed, aborting")
-                    return
-
                 # Scrape both lists
                 self.following = self.scrape_user_list(page, "following")
                 self.followers = self.scrape_user_list(page, "followers")
@@ -299,8 +301,6 @@ class LetterboxdUnfollower:
                 print("\nProcess interrupted. Progress has been saved.")
             except Exception as e:
                 handle_exception(e, "Unexpected error during unfollow process")
-            finally:
-                context.close()
                 self.rate_limiter.close()
 
 

@@ -11,11 +11,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import sync_playwright
-
 from src.config import DATA_DIR, get_config
 from src.data_processing.db import connect_raw
-from src.utils.auth import open_browser, raise_if_challenged
+from src.utils.auth import letterboxd_session, raise_if_challenged
 from src.utils.engagement_selectors import (
     COMMENT_COUNT_SELECTORS,
     COMMENT_ELEMENT_SELECTORS,
@@ -589,14 +587,12 @@ class EngagementScraper:
             Dict with likes_count and comments_count, or None on error
         """
         try:
-            with sync_playwright() as p:
-                # Shares the persistent profile so this reuses the Cloudflare
-                # clearance instead of drawing a fresh challenge per review.
-                context, page = open_browser(p, self.config)
-                try:
-                    return self._read_engagement(page, review_url)
-                finally:
-                    context.close()
+            # Shares the persistent profile so this reuses the Cloudflare
+            # clearance instead of drawing a fresh challenge per review.
+            # signed_in=False: a review page is public, and this must not
+            # block on a sign-in prompt during a metrics refresh.
+            with letterboxd_session(self.config, signed_in=False) as page:
+                return self._read_engagement(page, review_url)
 
         except Exception as e:
             logger.error(f"Error scraping engagement from {review_url}: {e}")
@@ -659,34 +655,30 @@ class EngagementScraper:
 
         if targets:
             try:
-                with sync_playwright() as p:
-                    context, page = open_browser(p, self.config)
-                    try:
-                        for review in targets:
-                            try:
-                                engagement = self._read_engagement(
-                                    page, review["letterboxd_review_url"]
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Error scraping engagement from "
-                                    f"{review['letterboxd_review_url']}: {e}"
-                                )
-                                failed += 1
-                                continue
-                            db.save_engagement(
-                                posted_review_id=review["id"],
-                                likes_count=engagement["likes_count"],
-                                comments_count=engagement["comments_count"],
+                with letterboxd_session(self.config, signed_in=False) as page:
+                    for review in targets:
+                        try:
+                            engagement = self._read_engagement(
+                                page, review["letterboxd_review_url"]
                             )
-                            updated += 1
-                            logger.info(
-                                f"Updated engagement for {review['film_name']}: "
-                                f"{engagement['likes_count']} likes, "
-                                f"{engagement['comments_count']} comments"
+                        except Exception as e:
+                            logger.error(
+                                f"Error scraping engagement from "
+                                f"{review['letterboxd_review_url']}: {e}"
                             )
-                    finally:
-                        context.close()
+                            failed += 1
+                            continue
+                        db.save_engagement(
+                            posted_review_id=review["id"],
+                            likes_count=engagement["likes_count"],
+                            comments_count=engagement["comments_count"],
+                        )
+                        updated += 1
+                        logger.info(
+                            f"Updated engagement for {review['film_name']}: "
+                            f"{engagement['likes_count']} likes, "
+                            f"{engagement['comments_count']} comments"
+                        )
             except Exception as e:
                 # Launching or clearing Cloudflare failed, so nothing was
                 # read at all. Reported, never rendered as zero engagement.

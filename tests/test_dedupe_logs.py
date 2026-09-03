@@ -162,7 +162,7 @@ class TestMainDryRun:
         config.username = "u"
         monkeypatch.setattr("src.reviewing.dedupe_logs.get_config", lambda: config)
         browser = MagicMock(side_effect=AssertionError("dry run opened a browser"))
-        monkeypatch.setattr("src.reviewing.dedupe_logs.sync_playwright", browser)
+        monkeypatch.setattr("src.reviewing.dedupe_logs.letterboxd_session", browser)
         monkeypatch.setattr("sys.argv", ["dedupe_logs"])
 
         dedupe_logs.main()
@@ -181,7 +181,10 @@ class TestMainDryRun:
         config.database_file = db_path
         config.username = "u"
         monkeypatch.setattr("src.reviewing.dedupe_logs.get_config", lambda: config)
-        monkeypatch.setattr("src.reviewing.dedupe_logs.sync_playwright", MagicMock())
+        session = MagicMock()
+        session.return_value.__enter__ = lambda self: MagicMock()
+        session.return_value.__exit__ = lambda self, *a: False
+        monkeypatch.setattr("src.reviewing.dedupe_logs.letterboxd_session", session)
         monkeypatch.setattr("builtins.input", lambda *_: "n")
         monkeypatch.setattr("sys.argv", ["dedupe_logs", "--apply"])
         dedupe_logs.main()
