@@ -6,6 +6,7 @@ hour". Under-reporting makes every follow path resume early and hammer
 Letterboxd, which is the behaviour the limiter exists to prevent.
 """
 
+import sqlite3
 from datetime import datetime, timedelta
 
 import pytest
@@ -15,7 +16,10 @@ from src.rate_limiter import RateLimiter
 
 @pytest.fixture
 def limiter(tmp_path):
-    lim = RateLimiter(db_path=tmp_path / "rl.db")
+    rl_path = tmp_path / "rl.db"
+    # The limiter adds its table to an existing database; it will not make one.
+    sqlite3.connect(rl_path).close()
+    lim = RateLimiter(db_path=rl_path)
     lim.connect()
     lim.limits = {"follow": {"hourly": 5, "daily": 100}}
     yield lim

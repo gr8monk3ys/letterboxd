@@ -11,8 +11,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from src.config import DATA_DIR, get_config
-from src.data_processing.db import connect_raw
+from src.config import get_config
+from src.data_processing.db import SqliteBacked
 from src.utils.auth import LetterboxdPage, letterboxd_session
 from src.utils.engagement_selectors import (
     COMMENT_COUNT_SELECTORS,
@@ -38,20 +38,13 @@ class TonePerformance:
     engagement_score: float  # Weighted score combining likes and comments
 
 
-class ReviewMetricsDB:
+class ReviewMetricsDB(SqliteBacked):
     """Database manager for review metrics tracking."""
 
-    def __init__(self, db_path: Path | None = None):
-        self.db_path = db_path or (DATA_DIR / "movie_database.db")
-        self._conn: sqlite3.Connection | None = None
+    def __init__(self, db_path: Path | str | None = None):
+        """Initialize with the database whose posted reviews it tracks."""
+        super().__init__(db_path)
         self._cursor: sqlite3.Cursor | None = None
-
-    @property
-    def conn(self) -> sqlite3.Connection:
-        """Get the database connection, raising if not connected."""
-        if self._conn is None:
-            raise RuntimeError("Database not connected. Call connect() first.")
-        return self._conn
 
     @property
     def cursor(self) -> sqlite3.Cursor:
@@ -60,10 +53,17 @@ class ReviewMetricsDB:
             raise RuntimeError("Database not connected. Call connect() first.")
         return self._cursor
 
-    def connect(self) -> None:
-        """Connect to the SQLite database."""
-        self._conn = connect_raw(self.db_path)
-        self._cursor = self._conn.cursor()
+    def _after_connect(self) -> None:
+        """Open the cursor and add this module's tables to the database.
+
+        The tables are created here rather than by a migration for history,
+        but the database itself must already exist -- the base refuses a
+        missing one. Creating it here is how a `movie_database.db` holding
+        only posted_reviews, rate_limits, review_engagement and tone_ab_tests
+        used to appear: no films, no schema_version, just the side effects of
+        two classes connecting to a database nobody had built.
+        """
+        self._cursor = self.conn.cursor()
         self._create_tables()
 
     def _create_tables(self) -> None:
@@ -117,11 +117,9 @@ class ReviewMetricsDB:
         self.conn.commit()
 
     def close(self) -> None:
-        """Close the database connection."""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
-            self._cursor = None
+        """Close the connection and drop the cursor with it."""
+        super().close()
+        self._cursor = None
 
     def save_posted_review(
         self,

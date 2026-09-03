@@ -4,19 +4,18 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from src.config import DATA_DIR, get_config
-from src.data_processing.db import connect_raw
+from src.config import get_config
+from src.data_processing.db import SqliteBacked
 
 # Warning thresholds (percentage of limit)
 WARNING_THRESHOLD = 0.8  # Warn at 80% of limit
 
 
-class RateLimiter:
+class RateLimiter(SqliteBacked):
     """Track and enforce rate limits for Letterboxd actions."""
 
     def __init__(self, db_path: Path | None = None):
-        self.db_path = db_path or (DATA_DIR / "movie_database.db")
-        self._conn: sqlite3.Connection | None = None
+        super().__init__(db_path)
         # Get limits from config (allows env var override)
         config = get_config()
         self.limits = {
@@ -27,20 +26,18 @@ class RateLimiter:
             "create_list": {"hourly": 3, "daily": 10},
         }
 
-    @property
-    def conn(self) -> sqlite3.Connection:
-        """Get the database connection, raising if not connected."""
-        if self._conn is None:
-            raise RuntimeError("Database not connected. Call connect() first.")
-        return self._conn
+    def _after_connect(self) -> None:
+        """WAL plus the rate_limits table, on a database that already exists.
 
-    def connect(self) -> None:
-        """Connect to the database and ensure rate_limits table exists."""
-        self._conn = connect_raw(self.db_path)
-        # Enable WAL mode for better concurrent access
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        # Set isolation level to enable transaction control
-        self._conn.isolation_level = "IMMEDIATE"
+        WAL is a database-wide, persistent setting; it is set here because
+        the limiter is the one component that must survive concurrent
+        writers. The table is added to the database the import made -- the
+        base refuses a missing one, which is what stops this class
+        manufacturing a stub database as a side effect of connecting.
+        """
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        # Explicit transaction control for the atomic check-and-log.
+        self.conn.isolation_level = "IMMEDIATE"
         self._create_table()
 
     def _create_table(self) -> None:
@@ -331,12 +328,6 @@ class RateLimiter:
                 "reason": reason,
             }
         return stats
-
-    def close(self) -> None:
-        """Close the database connection."""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
 
 
 def show_rate_limit_status():

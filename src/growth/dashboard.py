@@ -13,50 +13,40 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from src.config import DATA_DIR
-from src.data_processing.db import connect_raw
+from src.data_processing.db import SqliteBacked
 from src.growth.tracker import FollowerTracker
 from src.utils.logs import configure
 
 logger = logging.getLogger(__name__)
 
 
-class GrowthDashboard:
+class GrowthDashboard(SqliteBacked):
     """Comprehensive growth dashboard and analysis."""
 
-    def __init__(self, db_path: Path | None = None):
+    def __init__(self, db_path: Path | str | None = None):
         """Initialize the growth dashboard.
 
         Args:
             db_path: Path to the SQLite database.
         """
-        self.db_path = db_path or (DATA_DIR / "movie_database.db")
-        self.tracker = FollowerTracker(db_path)
-        self._conn: sqlite3.Connection | None = None
+        super().__init__(db_path)
+        self.tracker = FollowerTracker(self.db_path)
 
     def connect(self) -> bool:
-        """Connect to the database."""
-        if not self.db_path.exists():
-            logger.error(f"Database not found: {self.db_path}")
+        """Connect this and the tracker it reads through."""
+        if not super().connect():
             return False
-
-        self._conn = connect_raw(self.db_path)
-        self._conn.row_factory = sqlite3.Row
-        return self.tracker.connect()
-
-    @property
-    def conn(self) -> sqlite3.Connection:
-        """Get the database connection."""
-        if self._conn is None:
-            raise RuntimeError("Database not connected. Call connect() first.")
-        return self._conn
+        if not self.tracker.connect():
+            # Leaving our own connection open here reported the whole thing
+            # as failed while holding a handle nobody would close.
+            self.close()
+            return False
+        return True
 
     def close(self) -> None:
-        """Close database connections."""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
+        """Close both connections."""
         self.tracker.close()
+        super().close()
 
     def get_review_activity(self, days: int = 30) -> dict:
         """Get review posting activity for the period.

@@ -1,43 +1,13 @@
 """Connection analytics for tracking follow/unfollow patterns over time."""
 
-import sqlite3
 from datetime import date as date_type
 from datetime import datetime, timedelta
-from pathlib import Path
 
-from src.config import DATA_DIR
-from src.data_processing.db import connect_raw
+from src.data_processing.db import SqliteBacked
 
 
-class ConnectionAnalytics:
+class ConnectionAnalytics(SqliteBacked):
     """Analyze follow/unfollow patterns and connection growth."""
-
-    def __init__(self, db_path: Path | None = None):
-        """Initialize analytics.
-
-        Args:
-            db_path: Path to database. Defaults to DATA_DIR/movie_database.db
-        """
-        self.db_path = db_path or (DATA_DIR / "movie_database.db")
-        self._conn: sqlite3.Connection | None = None
-
-    @property
-    def conn(self) -> sqlite3.Connection:
-        """Get the database connection, raising if not connected."""
-        if self._conn is None:
-            raise RuntimeError("Database not connected. Call connect() first.")
-        return self._conn
-
-    def connect(self) -> None:
-        """Connect to the database."""
-        self._conn = connect_raw(self.db_path)
-        self._conn.row_factory = sqlite3.Row
-
-    def close(self) -> None:
-        """Close the database connection."""
-        if self._conn:
-            self._conn.close()
-            self._conn = None
 
     def get_daily_activity(self, days: int = 30) -> list[dict]:
         """Get daily follow/unfollow counts.

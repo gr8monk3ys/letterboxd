@@ -1,5 +1,6 @@
 """Tests for review quality metrics module."""
 
+import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
@@ -21,6 +22,9 @@ class TestReviewMetricsDB:
     def db(self, tmp_path):
         """Create a temporary database for testing."""
         db_path = tmp_path / "test_metrics.db"
+        # The store adds its tables to a database the import already made;
+        # it will not manufacture one, so the file has to exist first.
+        sqlite3.connect(db_path).close()
         db = ReviewMetricsDB(db_path=db_path)
         db.connect()
         yield db
@@ -295,6 +299,9 @@ class TestABTesting:
     def db(self, tmp_path):
         """Create a temporary database for testing."""
         db_path = tmp_path / "test_ab.db"
+        # The store adds its tables to a database the import already made;
+        # it will not manufacture one, so the file has to exist first.
+        sqlite3.connect(db_path).close()
         db = ReviewMetricsDB(db_path=db_path)
         db.connect()
         yield db
@@ -395,6 +402,9 @@ class TestToneSuggestions:
     def db(self, tmp_path):
         """Create a temporary database for testing."""
         db_path = tmp_path / "test_suggestions.db"
+        # The store adds its tables to a database the import already made;
+        # it will not manufacture one, so the file has to exist first.
+        sqlite3.connect(db_path).close()
         db = ReviewMetricsDB(db_path=db_path)
         db.connect()
         yield db
@@ -472,7 +482,9 @@ class TestTonePerformanceDataclass:
 class TestEngagementBatching:
     @pytest.fixture
     def db(self, tmp_path):
-        db = ReviewMetricsDB(db_path=tmp_path / "metrics.db")
+        metrics_path = tmp_path / "metrics.db"
+        sqlite3.connect(metrics_path).close()
+        db = ReviewMetricsDB(db_path=metrics_path)
         db.connect()
         yield db
         db.close()
@@ -570,6 +582,9 @@ class TestEngagementEntryPoint:
     @pytest.fixture
     def db_path(self, tmp_path):
         db_path = tmp_path / "metrics.db"
+        # The store adds its tables to a database the import already made;
+        # it will not manufacture one, so the file has to exist first.
+        sqlite3.connect(db_path).close()
         db = ReviewMetricsDB(db_path=db_path)
         db.connect()
         old = (datetime.now() - timedelta(hours=48)).isoformat()
@@ -589,6 +604,9 @@ class TestEngagementEntryPoint:
 
     @staticmethod
     def rows(db_path):
+        # The store adds its tables to a database the import already made;
+        # it will not manufacture one, so the file has to exist first.
+        sqlite3.connect(db_path).close()
         db = ReviewMetricsDB(db_path=db_path)
         db.connect()
         try:
@@ -598,6 +616,9 @@ class TestEngagementEntryPoint:
 
     @staticmethod
     def connected(db_path):
+        # The store adds its tables to a database the import already made;
+        # it will not manufacture one, so the file has to exist first.
+        sqlite3.connect(db_path).close()
         db = ReviewMetricsDB(db_path=db_path)
         db.connect()
         return db

@@ -210,7 +210,7 @@ class TestShowReviewStats:
 
     def test_show_review_stats(self, mock_db, monkeypatch, capsys):
         """Test review statistics display."""
-        monkeypatch.setattr("src.data_processing.create_database.DATA_DIR", mock_db.parent)
+        monkeypatch.setenv("DATABASE_FILE", str(mock_db.parent / "movie_database.db"))
         monkeypatch.setattr("src.stats.DATA_DIR", mock_db.parent)
 
         from src.stats import show_review_stats
@@ -290,7 +290,7 @@ class TestShowDatabaseStats:
 
     def test_show_database_stats(self, mock_db, monkeypatch, capsys):
         """Test database statistics display."""
-        monkeypatch.setattr("src.data_processing.create_database.DATA_DIR", mock_db.parent)
+        monkeypatch.setenv("DATABASE_FILE", str(mock_db.parent / "movie_database.db"))
         monkeypatch.setattr("src.stats.DATA_DIR", mock_db.parent)
 
         from src.stats import show_database_stats

@@ -4,6 +4,8 @@ These tests verify end-to-end flows with mocked external dependencies
 (browser, API calls) to ensure components work together correctly.
 """
 
+import os
+import sqlite3
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -227,7 +229,7 @@ class TestFollowIntegration:
         """Create a LetterboxdFollower with mocked dependencies."""
         with (
             patch("src.following.follow_users.DATA_DIR", temp_dir),
-            patch("src.rate_limiter.DATA_DIR", temp_dir),
+            patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}),
         ):
             from src.following.follow_users import LetterboxdFollower
 
@@ -318,9 +320,10 @@ class TestUnfollowIntegration:
     @pytest.fixture
     def unfollower_with_mocks(self, temp_dir, mock_env_vars):
         """Create a LetterboxdUnfollower with mocked dependencies."""
+        sqlite3.connect(temp_dir / "movie_database.db").close()
         with (
             patch("src.following.unfollow_users.DATA_DIR", temp_dir),
-            patch("src.rate_limiter.DATA_DIR", temp_dir),
+            patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}),
         ):
             from src.following.unfollow_users import LetterboxdUnfollower
 
@@ -744,7 +747,8 @@ class TestRateLimiterIntegration:
     @pytest.fixture
     def rate_limiter(self, temp_dir):
         """Create a RateLimiter with temporary database."""
-        with patch("src.rate_limiter.DATA_DIR", temp_dir):
+        with patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}):
+            sqlite3.connect(temp_dir / "movie_database.db").close()
             from src.rate_limiter import RateLimiter
 
             limiter = RateLimiter()
@@ -754,7 +758,8 @@ class TestRateLimiterIntegration:
 
     def test_rate_limit_persistence(self, temp_dir):
         """Test that rate limits persist across instances."""
-        with patch("src.rate_limiter.DATA_DIR", temp_dir):
+        with patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}):
+            sqlite3.connect(temp_dir / "movie_database.db").close()
             from src.rate_limiter import RateLimiter
 
             # First instance logs actions

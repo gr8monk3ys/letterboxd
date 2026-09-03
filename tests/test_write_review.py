@@ -1,6 +1,7 @@
 """Tests for src/reviewing/write_review.py - Review generation with mock Claude API."""
 
 import json
+import os
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -123,7 +124,7 @@ class TestReviewGenerator:
     def test_generate_review_returns_string(self, temp_dir, mock_provider, mock_env_vars):
         """Test that generate_review returns a string."""
         with (
-            patch("src.data_processing.create_database.DATA_DIR", temp_dir),
+            patch.dict(os.environ, {"DATABASE_FILE": str(temp_dir / "movie_database.db")}),
             patch("src.reviewing.write_review.get_provider") as mock_get_provider,
             patch("src.reviewing.write_review.MovieDatabase") as MockDB,
         ):
