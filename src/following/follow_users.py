@@ -15,7 +15,7 @@ from typing import Any, TextIO
 from src.config import DATA_DIR, get_config
 from src.growth.campaigns import record_campaign_action
 from src.rate_limiter import RateLimiter
-from src.utils.auth import PageLike, letterboxd_session, login_and_navigate
+from src.utils.auth import LetterboxdPage, letterboxd_session
 from src.utils.errors import format_rate_limit_message, handle_exception
 from src.utils.logs import configure
 
@@ -62,16 +62,21 @@ class LetterboxdFollower:
         self._csv_writer.writerow([timestamp, username])
         self._csv_file.flush()
 
-    def login(self, page: PageLike) -> bool:
-        """Log in to Letterboxd account and navigate to target page."""
-        result = login_and_navigate(page, self.config, self.config.base_url)
-        if result:
-            self.random_delay()
-        return result
+    def follow_users(self, page: LetterboxdPage) -> None:
+        """Follow the users listed at `config.base_url`.
 
-    def follow_users(self, page: PageLike) -> None:
-        """Follow users from the page."""
+        Opens the target page itself. It used to arrive already there,
+        because the caller went through `login_and_navigate`; when signing in
+        moved into `letterboxd_session` that navigation was lost, and page one
+        was scraped off whatever the sign-in left on screen -- which carries
+        no `.person-summary`, so `--url` was ignored and the first page always
+        found nobody.
+        """
         try:
+            if not page.open(self.config.base_url):
+                logging.error(f"Could not open {self.config.base_url}")
+                return
+
             current_page = 1
             consecutive_timeouts = 0
 
@@ -219,7 +224,7 @@ class LetterboxdFollower:
 
                     logging.info(f"Moving to page {current_page + 1}")
                     try:
-                        page.goto(next_url, timeout=10000)
+                        page.open(next_url, timeout=10000)
                         page.wait_for_selector(".person-summary", timeout=10000)
                         current_page += 1
                         self.random_delay()

@@ -954,23 +954,26 @@ class TestDraftBatchOwnsTheQualityControls:
 
         assert mock_provider.generate.call_count == 2
 
-    def test_the_avoid_cap_samples_rather_than_taking_the_alphabetical_head(
+    def test_the_avoid_cap_shows_the_most_recent_phrases_not_the_first(
         self, mock_provider, mock_env_vars
     ):
         """`sorted(avoid)[:40]` froze after film two on phrases starting a/and/at.
 
         The list is capped at 40 to keep the prompt from crowding out the
-        style examples, so with more than 40 banned phrases two calls must
-        show the model different ones -- otherwise wording from late in a
-        batch can never enter the ban list at all.
+        style examples. Capping the *alphabetical head* meant wording from
+        late in a batch could never enter the ban list at all; the cap now
+        keeps the most recently used phrases, which are the ones worth
+        banning.
         """
-        generator = self._generator(mock_provider, ["a review", "another review"])
+        generator = self._generator(mock_provider, ["a review"])
         film = {"letterboxd_uri": "u", "name": "F", "year": 2020, "rating": 4.0}
-        avoid = {f"banned phrase {i:03d} of many" for i in range(100)}
+        # Alphabetically first, but used long ago; and last, but used just now.
+        avoid = ["aaa stale phrase from long ago"]
+        avoid += [f"filler phrase number {i:03d}" for i in range(60)]
+        avoid += ["zzz the phrase just used"]
 
         generator.generate_review(film, avoid=avoid)
-        first = mock_provider.generate.call_args.kwargs["prompt"]
-        generator.generate_review(film, avoid=avoid)
-        second = mock_provider.generate.call_args.kwargs["prompt"]
+        prompt = mock_provider.generate.call_args.kwargs["prompt"]
 
-        assert first != second, "the cap is deterministic; late phrases can never appear"
+        assert "zzz the phrase just used" in prompt, "the most recent wording was dropped"
+        assert "aaa stale phrase from long ago" not in prompt, "the cap kept the alphabetical head"

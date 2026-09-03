@@ -63,7 +63,6 @@ class ReviewMetricsDB:
     def connect(self) -> None:
         """Connect to the SQLite database."""
         self._conn = connect_raw(self.db_path)
-        self._conn.row_factory = sqlite3.Row
         self._cursor = self._conn.cursor()
         self._create_tables()
 

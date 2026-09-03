@@ -19,12 +19,14 @@ from letterboxdpy.movie import Movie as LBMovie
 from letterboxdpy.search import Search as LBSearch
 from letterboxdpy.user import User as LBUser
 
+from src.utils.auth import CHALLENGE_TITLES
 from src.utils.engagement_selectors import (
     COMMENT_COUNT_SELECTORS,
     COMMENT_ELEMENT_SELECTORS,
     LIKES_SELECTORS,
     parse_count,
 )
+from src.utils.errors import BotChallengeError
 from src.utils.logs import configure
 
 
@@ -139,6 +141,16 @@ class ReviewData:
     date: str | None = None
 
 
+def _looks_like_a_challenge(body: str) -> bool:
+    """True when Letterboxd returned a Cloudflare interstitial, not a page.
+
+    Matched on the same titles the Playwright path uses, so the two agree
+    about what a block looks like.
+    """
+    head = body[:2000].lower()
+    return any(f"<title>{m}" in head or f">{m}" in head for m in CHALLENGE_TITLES)
+
+
 class LetterboxdScraper:
     """Scraper for Letterboxd data using letterboxdpy with httpx fallback."""
 
@@ -178,6 +190,14 @@ class LetterboxdScraper:
         self._wait()
         try:
             response = self.client.get(url)
+            # A Cloudflare block is an ordinary 403 with a challenge page in
+            # the body, so raise_for_status turns it into an HTTPError that
+            # this method reports as None -- indistinguishable from "this
+            # user has no followers". Every caller in growth/ reads None that
+            # way. Name it instead: this path never solves a challenge (only
+            # the Playwright path can), so the run must not report zeroes.
+            if response.status_code == 403 or _looks_like_a_challenge(response.text):
+                raise BotChallengeError(f"Cloudflare blocked the request for {url}")
             response.raise_for_status()
             return BeautifulSoup(response.text, "lxml")
         except httpx.HTTPError as e:

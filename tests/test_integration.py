@@ -235,24 +235,29 @@ class TestFollowIntegration:
             yield follower
             follower.cleanup()
 
-    def test_login_success_flow(self, follower_with_mocks, mock_page):
-        """Test successful login flow."""
-        # Mock the shared auth login_and_navigate function
-        with patch("src.following.follow_users.login_and_navigate") as mock_login:
-            mock_login.return_value = True
+    def test_it_opens_the_target_page_before_scraping(self, follower_with_mocks, mock_page):
+        """Signing in moved into letterboxd_session, which does not navigate.
 
-            result = follower_with_mocks.login(mock_page)
-            assert result is True
-            mock_login.assert_called_once()
+        The follower used to arrive on config.base_url via login_and_navigate.
+        When that went, page one was scraped off whatever the sign-in left on
+        screen -- which carries no `.person-summary` -- so `--url` was ignored
+        and the first page always found nobody.
+        """
+        mock_page.open.return_value = True
+        mock_page.locator.return_value.count.return_value = 0
+        follower_with_mocks.config.base_url = "https://letterboxd.com/members/popular/"
 
-    def test_login_failure_on_bad_credentials(self, follower_with_mocks, mock_page):
-        """Test login failure when credentials are rejected."""
-        # Mock the shared auth login_and_navigate function to return False
-        with patch("src.following.follow_users.login_and_navigate") as mock_login:
-            mock_login.return_value = False
+        follower_with_mocks.follow_users(mock_page)
 
-            result = follower_with_mocks.login(mock_page)
-            assert result is False
+        mock_page.open.assert_any_call("https://letterboxd.com/members/popular/")
+
+    def test_a_page_that_will_not_open_stops_the_run(self, follower_with_mocks, mock_page):
+        """A blocked or missing list must not read as 'nobody to follow'."""
+        mock_page.open.return_value = False
+
+        follower_with_mocks.follow_users(mock_page)
+
+        mock_page.locator.assert_not_called()
 
     def test_follow_button_interaction(self, follower_with_mocks, mock_page):
         """Test interaction with follow buttons on page."""
