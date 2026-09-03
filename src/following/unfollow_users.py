@@ -9,20 +9,11 @@ from pathlib import Path
 
 from playwright.sync_api import Page, sync_playwright
 
-from src.config import DATA_DIR, get_config, get_log_path
+from src.config import DATA_DIR, get_config
 from src.rate_limiter import RateLimiter
 from src.utils.auth import login, open_browser
 from src.utils.errors import handle_exception
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(get_log_path("unfollower"), encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
+from src.utils.logs import configure
 
 
 class LetterboxdUnfollower:
@@ -408,6 +399,7 @@ def list_protected_users() -> None:
 
 
 def main() -> None:
+    configure("unfollower")
     import argparse
 
     parser = argparse.ArgumentParser(

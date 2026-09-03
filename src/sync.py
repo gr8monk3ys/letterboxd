@@ -28,6 +28,7 @@ from src.config import DATA_DIR, get_config
 from src.data_processing.db import open_db
 from src.film_identity import film_key
 from src.utils.errors import DatabaseError
+from src.utils.logs import configure
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +263,7 @@ def _sync(conn: sqlite3.Connection, watches: list[Watch]) -> SyncResult:
 
 def main() -> None:
     """CLI: top the database up from the RSS feed."""
+    configure("sync")
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -274,8 +276,6 @@ def main() -> None:
         "--dry-run", action="store_true", help="Show what would change without writing"
     )
     args = parser.parse_args()
-
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
     watches = fetch_watches(args.username)
     if not watches:

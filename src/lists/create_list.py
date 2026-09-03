@@ -4,21 +4,13 @@ import logging
 
 from playwright.sync_api import Page, sync_playwright
 
-from src.config import get_config, get_log_path
+from src.config import get_config
 from src.lists.generate_lists import ListDefinition, ListGenerator
 from src.rate_limiter import RateLimiter
 from src.utils.auth import goto_with_retry, login, open_browser
 from src.utils.follow_actions import human_delay
+from src.utils.logs import configure
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(get_log_path("list_creation"), encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
 logger = logging.getLogger(__name__)
 
 
@@ -252,6 +244,7 @@ class ListCreator:
 
 def main() -> None:
     """CLI entry point for list creation."""
+    configure("list_creation")
     import argparse
     import asyncio
 

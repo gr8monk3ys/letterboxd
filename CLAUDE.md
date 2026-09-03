@@ -96,7 +96,13 @@ Environment variables (`.env`):
 ### Data Storage
 - `data/` - Letterboxd export ZIP, SQLite database, CSV logs
 - `data/protected_users.txt` - Usernames to never unfollow (one per line)
-- `logs/` - Per-module log files (follower.log, unfollower.log, review_generation.log)
+- `logs/` - Per-run log files (follower.log, unfollower.log, review_generation.log).
+  Each entry point calls `configure("<name>")` from `src/utils/logs.py` as the
+  first line of its `main()`. **Never call `logging.basicConfig` at module
+  scope**: it is a no-op once the root logger has handlers, so the first module
+  imported wins and every other file stays empty. That was the state until
+  2026-09-03 -- every per-module log listed here was 0 bytes and everything
+  landed in `import.log`.
 
 ### Cloudflare: the trap that blocks every browser path
 

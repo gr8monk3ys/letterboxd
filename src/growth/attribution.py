@@ -13,19 +13,11 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from src.config import DATA_DIR, get_config, get_log_path
+from src.config import DATA_DIR, get_config
 from src.data_processing.db import connect_raw
 from src.scraper import LetterboxdScraper
+from src.utils.logs import configure
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(get_log_path("attribution"), encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
 logger = logging.getLogger(__name__)
 
 
@@ -336,6 +328,7 @@ class ReviewAttributor:
 
 def main() -> None:
     """CLI entry point for attribution analysis."""
+    configure("attribution")
     import argparse
 
     parser = argparse.ArgumentParser(

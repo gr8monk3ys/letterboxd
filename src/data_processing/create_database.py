@@ -10,21 +10,11 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from src.config import DATA_DIR, get_log_path
+from src.config import DATA_DIR
 from src.data_processing.db import connect_raw
 from src.data_processing.import_letterboxd_export import LetterboxdImporter
 from src.film_identity import film_key
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(get_log_path("database"), encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
-
+from src.utils.logs import configure
 
 # An AI review's approval state. A draft is never posted; only 'approved'
 # rows reach Letterboxd, and rejection is recorded rather than implied by
@@ -755,6 +745,7 @@ class MovieDatabase:
 
 
 def main():
+    configure("database")
     # First, try to import from Letterboxd export
     importer = LetterboxdImporter()
 

@@ -5,13 +5,14 @@ import time
 
 from playwright.sync_api import Page, sync_playwright
 
-from src.config import get_config, get_log_path
+from src.config import get_config
 from src.data_processing.create_database import MovieDatabase
 from src.growth.attribution import ReviewAttributor
 from src.growth.campaigns import record_campaign_action
 from src.review_metrics import ReviewMetricsDB
 from src.utils.auth import goto_with_retry, login, open_browser, raise_if_challenged
 from src.utils.errors import handle_exception
+from src.utils.logs import configure
 
 # Editing an existing entry never creates a duplicate, so these win.
 EDIT_BUTTON_LABELS = ("edit or delete review", "edit entry or add review")
@@ -67,17 +68,6 @@ _CLICK_BUTTON_JS = (
 
 def _squash(text: str) -> str:
     return " ".join((text or "").split())
-
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(get_log_path("review_posting"), encoding="utf-8"),
-        logging.StreamHandler(),
-    ],
-)
 
 
 class ReviewPoster:
@@ -465,6 +455,7 @@ class ReviewPoster:
 
 
 def main() -> None:
+    configure("review_posting")
     import argparse
 
     parser = argparse.ArgumentParser(description="Post AI reviews to Letterboxd")
