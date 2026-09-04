@@ -1,0 +1,125 @@
+# Films worth reviewing
+
+115 films you rated 4.5+ with no review, best first. Regenerated 2026-08-28 from a fresh export.
+
+
+## 5.0 stars (3)
+
+- [ ] **For What's Worse** (2024) · watched 2024-11-08
+- [ ] **Mind Game** (2004) · watched 2026-08-20
+- [ ] **Andrei Rublev** (1966) · watched 2026-02-08
+
+## 4.5 stars (112)
+
+- [ ] **Hadestown: The Musical** (2026) · watched 2026-07-28
+- [ ] **The Drama** (2026) · watched 2026-04-04
+- [ ] **No Other Choice** (2025) · watched 2026-01-22
+- [ ] **Anora** (2024) · watched 2024-11-05
+- [ ] **The Substance** (2024) · watched 2024-10-03
+- [ ] **Dune: Part Two** (2024) · watched 2024-03-18
+- [ ] **Past Lives** (2023) · watched 2024-02-20
+- [ ] **Beau Is Afraid** (2023) · watched 2023-07-25
+- [ ] **Love, Death & Robots: Jibaro** (2022) · watched 2025-04-18
+- [ ] **Portrait of God** (2022) · watched 2023-08-25
+- [ ] **Movies** (2019) · watched 2026-08-15
+- [ ] **Little Women** (2019) · watched 2024-03-22
+- [ ] **Klaus** (2019) · watched 2023-07-25
+- [ ] **Climax** (2018) · watched 2023-07-25
+- [ ] **The Florida Project** (2017) · watched 2024-03-22
+- [ ] **Blue Planet II** (2017) · watched 2024-03-21
+- [ ] **Coco** (2017) · watched 2023-07-25
+- [ ] **Logan** (2017) · watched 2023-07-25
+- [ ] **history of the entire world, i guess** (2017) · watched 2023-07-25
+- [ ] **Arrival** (2016) · watched 2026-03-31
+- [ ] **Curve** (2016) · watched 2023-08-25
+- [ ] **Black Mirror: Shut Up and Dance** (2016) · watched 2023-07-26
+- [ ] **Hacksaw Ridge** (2016) · watched 2023-07-25
+- [ ] **The Lobster** (2015) · watched 2024-03-06
+- [ ] **The Grand Budapest Hotel** (2014) · watched 2023-07-25
+- [ ] **Ida** (2013) · watched 2026-05-28
+- [ ] **Before Midnight** (2013) · watched 2026-03-02
+- [ ] **Her** (2013) · watched 2023-07-25
+- [ ] **Silver Linings Playbook** (2012) · watched 2024-01-15
+- [ ] **The Master** (2012) · watched 2023-07-25
+- [ ] **Detachment** (2011) · watched 2023-07-25
+- [ ] **The Artist** (2011) · watched 2023-07-25
+- [ ] **The Skin I Live In** (2011) · watched 2023-07-25
+- [ ] **Les Misérables: 25th Anniversary in Concert** (2010) · watched 2023-08-02
+- [ ] **Shutter Island** (2010) · watched 2023-07-25
+- [ ] **Toy Story 3** (2010) · watched 2023-07-25
+- [ ] **The Dark Knight** (2008) · watched 2023-07-25
+- [ ] **Pan's Labyrinth** (2006) · watched 2024-09-02
+- [ ] **Paprika** (2006) · watched 2024-02-04
+- [ ] **The Departed** (2006) · watched 2023-07-25
+- [ ] **The Prestige** (2006) · watched 2023-07-25
+- [ ] **Pride & Prejudice** (2005) · watched 2023-07-25
+- [ ] **The Life Aquatic with Steve Zissou** (2004) · watched 2024-12-27
+- [ ] **Before Sunset** (2004) · watched 2024-03-24
+- [ ] **Eternal Sunshine of the Spotless Mind** (2004) · watched 2024-02-06
+- [ ] **Shrek 2** (2004) · watched 2023-07-25
+- [ ] **The Incredibles** (2004) · watched 2023-07-25
+- [ ] **Lost in Translation** (2003) · watched 2024-06-20
+- [ ] **Oldboy** (2003) · watched 2023-08-28
+- [ ] **Thirteen** (2003) · watched 2023-07-25
+- [ ] **City of God** (2002) · watched 2025-03-11
+- [ ] **Lilya 4-ever** (2002) · watched 2025-03-11
+- [ ] **The Strokes: MTV $2 Bill Concert** (2002) · watched 2025-01-12
+- [ ] **The Lord of the Rings: The Two Towers** (2002) · watched 2023-07-25
+- [ ] **The Pianist** (2002) · watched 2023-07-25
+- [ ] **Millennium Actress** (2001) · watched 2024-09-13
+- [ ] **Donnie Darko** (2001) · watched 2023-07-25
+- [ ] **Requiem for a Dream** (2000) · watched 2023-07-25
+- [ ] **Sleepy Hollow** (1999) · watched 2024-08-26
+- [ ] **Eyes Wide Shut** (1999) · watched 2023-07-25
+- [ ] **The Blair Witch Project** (1999) · watched 2023-07-25
+- [ ] **The Matrix** (1999) · watched 2023-07-25
+- [ ] **Cowboy Bebop** (1998) · watched 2023-07-25
+- [ ] **Fear and Loathing in Las Vegas** (1998) · watched 2023-07-25
+- [ ] **Trainspotting** (1996) · watched 2023-07-25
+- [ ] **Fallen Angels** (1995) · watched 2023-07-25
+- [ ] **La Haine** (1995) · watched 2023-07-25
+- [ ] **The Shawshank Redemption** (1994) · watched 2023-07-25
+- [ ] **Nirvana: Unplugged In New York** (1993) · watched 2025-01-12
+- [ ] **Schindler's List** (1993) · watched 2023-07-25
+- [ ] **Jamon Jamon** (1992) · watched 2025-06-04
+- [ ] **Dead Poets Society** (1989) · watched 2023-07-25
+- [ ] **Die Hard** (1988) · watched 2025-12-09
+- [ ] **Predator** (1987) · watched 2024-07-31
+- [ ] **Full Metal Jacket** (1987) · watched 2023-07-25
+- [ ] **Blue Velvet** (1986) · watched 2023-09-05
+- [ ] **The Breakfast Club** (1985) · watched 2024-06-20
+- [ ] **Stop Making Sense** (1984) · watched 2024-02-18
+- [ ] **Paris, Texas** (1984) · watched 2023-11-02
+- [ ] **Rocky III** (1982) · watched 2023-07-25
+- [ ] **The Thing** (1982) · watched 2023-07-25
+- [ ] **Possession** (1981) · watched 2026-06-30
+- [ ] **Son of the White Mare** (1981) · watched 2026-03-29
+- [ ] **The Evil Dead** (1981) · watched 2024-12-24
+- [ ] **Taxi Driver** (1976) · watched 2023-07-25
+- [ ] **Barry Lyndon** (1975) · watched 2024-12-07
+- [ ] **The Texas Chain Saw Massacre** (1974) · watched 2023-10-18
+- [ ] **The Holy Mountain** (1973) · watched 2023-07-25
+- [ ] **Solaris** (1972) · watched 2026-06-04
+- [ ] **Pink Floyd: Live at Pompeii** (1972) · watched 2025-06-26
+- [ ] **The Godfather** (1972) · watched 2023-07-25
+- [ ] **For a Few Dollars More** (1965) · watched 2024-08-31
+- [ ] **Dr. Strangelove or: How I Learned to Stop Worrying and Love the Bomb** (1964) · watched 2024-08-23
+- [ ] **High and Low** (1963) · watched 2024-02-17
+- [ ] **West Side Story** (1961) · watched 2023-07-25
+- [ ] **L'Avventura** (1960) · watched 2026-07-28
+- [ ] **Psycho** (1960) · watched 2023-10-02
+- [ ] **Some Like It Hot** (1959) · watched 2024-02-17
+- [ ] **What's Opera, Doc?** (1957) · watched 2026-01-12
+- [ ] **The Seventh Seal** (1957) · watched 2024-09-14
+- [ ] **Aparajito** (1956) · watched 2026-08-08
+- [ ] **Pather Panchali** (1955) · watched 2026-08-06
+- [ ] **Duck Amuck** (1953) · watched 2026-01-12
+- [ ] **Rashomon** (1950) · watched 2026-08-21
+- [ ] **Long-Haired Hare** (1949) · watched 2025-08-11
+- [ ] **It's a Wonderful Life** (1946) · watched 2023-07-25
+- [ ] **Casablanca** (1942) · watched 2023-07-25
+- [ ] **Fantasia** (1940) · watched 2023-07-25
+- [ ] **The Wizard of Oz** (1939) · watched 2023-07-25
+- [ ] **Bride of Frankenstein** (1935) · watched 2025-07-25
+- [ ] **City Lights** (1931) · watched 2023-07-25
+- [ ] **The Kid** (1921) · watched 2024-08-26
