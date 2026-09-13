@@ -208,4 +208,4 @@ the only path in, and it was never once used. `~/.music/rym.json` is set aside a
 Reversible: `gh repo unarchive gr8monk3ys/rym` + revert the sync-script commit.
 
 
-_Moved here from `~/code/CLAUDE.md` on 2026-09-01. Recovered from the `local-wip/2026-07-27` branch on 2026-09-13; spotify, goodreads and discogs do not currently carry it._
+_Moved here from `~/code/CLAUDE.md` on 2026-09-01; the same section lives in spotify, letterboxd, goodreads and discogs. It survived only on the `local-wip/2026-07-27` branches and was restored from there on 2026-09-13._
