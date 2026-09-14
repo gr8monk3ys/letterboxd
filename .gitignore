@@ -80,3 +80,6 @@ htmlcov/
 
 # Review campaign digests (generated text, one file per run)
 data/digests/
+
+# JSON database backups written by `src.data_processing.backup export`
+output/
