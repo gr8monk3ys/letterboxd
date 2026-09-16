@@ -5,7 +5,13 @@ on:
   schedule:
     - cron: "23 11 18 * *"  # monthly (minute-safe policy)
 
-permissions: read-all
+# The shared reusable-osv workflow (and Google's osv-scanner-reusable under it)
+# declares security-events: write. A caller that grants only read-all fails at
+# startup before any step runs -- every scheduled run since 2026-08 did.
+permissions:
+  actions: read
+  contents: read
+  security-events: write
 
 jobs:
   osv:
